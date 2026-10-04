@@ -44,10 +44,6 @@ func retirementFixture(t *testing.T) (context.Context, auth.Principal, data.Chro
 			t.Error(err)
 		}
 	})
-	// Materialization precedes the short-lived host-issued lifecycle capability.
-	if err := s.PrepareComponent(ctx, spec.Key{Kind: spec.KindComponent, Scope: "github.com/viant/mechanize/data/chromeretirementwrite", Name: "WriteChromeRetirement"}); err != nil {
-		t.Fatal(err)
-	}
 	a.Now = time.Now().UTC().Format(time.RFC3339Nano)
 	a.CreatedAt = a.Now
 	return ctx, p, a, s

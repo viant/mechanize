@@ -17,6 +17,7 @@ import (
 func TestGeneratedDatlyResumeReconstructsEndlyAndSkipsConfirmed(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	p, _ := auth.NewPrincipal("fixture:issuer", "", "resume-alice", []string{"desktop:control"})
+	p.ClientID = "fixture-client"
 	ctx := auth.WithPrincipal(context.Background(), p)
 	mutations := 0
 	stopped := true
@@ -39,7 +40,10 @@ func TestGeneratedDatlyResumeReconstructsEndlyAndSkipsConfirmed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan})
+	r, err := integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan, AttachInitialOperation: func(ctx context.Context, p auth.Principal, run string, revision int, session, operation string) error {
+		_, err := b.AttachOperation(ctx, p, run, revision, session, operation)
+		return err
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,6 +149,7 @@ func TestGeneratedDatlyResumeReconstructsEndlyAndSkipsConfirmed(t *testing.T) {
 func TestGeneratedResumeUnknownEffectBlocksAllNewDispatch(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	p, _ := auth.NewPrincipal("fixture:issuer", "", "resume-unknown", []string{"desktop:control"})
+	p.ClientID = "fixture-client"
 	ctx := auth.WithPrincipal(context.Background(), p)
 	calls := 0
 	b, err := New(Options{SourceRoot: filepath.Clean(filepath.Join(filepath.Dir(file), "../..")), StorageRoot: t.TempDir(), LeaseEpoch: func(context.Context, auth.Principal) (int, error) { return 1, nil }}, func(context.Context, auth.Principal, model.Step, map[string]model.Value) (integration.StepResult, error) {
@@ -155,7 +160,10 @@ func TestGeneratedResumeUnknownEffectBlocksAllNewDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer b.Close(ctx)
-	r, err := integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan, LoadResume: b.LoadResume, AttachOperation: func(context.Context, auth.Principal, string, int, string, string) error {
+	r, err := integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan, AttachInitialOperation: func(ctx context.Context, p auth.Principal, run string, revision int, session, operation string) error {
+		_, err := b.AttachOperation(ctx, p, run, revision, session, operation)
+		return err
+	}, LoadResume: b.LoadResume, AttachOperation: func(context.Context, auth.Principal, string, int, string, string) error {
 		t.Fatal("uncertain resume attached operation")
 		return nil
 	}})
@@ -203,6 +211,7 @@ func TestGeneratedResumeUnknownEffectBlocksAllNewDispatch(t *testing.T) {
 func TestKnownAbsentResumeRemainsPendingWithoutReplayingOldIntent(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	p, _ := auth.NewPrincipal("fixture:issuer", "", "resume-known-absent", []string{"desktop:control"})
+	p.ClientID = "fixture-client"
 	ctx := auth.WithPrincipal(context.Background(), p)
 	var orchestrator *integration.Runtime
 	var captured context.Context
@@ -218,7 +227,10 @@ func TestKnownAbsentResumeRemainsPendingWithoutReplayingOldIntent(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer b.Close(ctx)
-	orchestrator, err = integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan, CompleteObjective: b.CompleteObjective})
+	orchestrator, err = integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan, AttachInitialOperation: func(ctx context.Context, p auth.Principal, run string, revision int, session, operation string) error {
+		_, err := b.AttachOperation(ctx, p, run, revision, session, operation)
+		return err
+	}, CompleteObjective: b.CompleteObjective})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,6 +275,7 @@ func TestKnownAbsentResumeRemainsPendingWithoutReplayingOldIntent(t *testing.T) 
 func TestExplicitAbsentRetryCommitsNewIntentAndSurvivesRestart(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	p, _ := auth.NewPrincipal("fixture:issuer", "", "explicit-absent-retry", []string{"desktop:control"})
+	p.ClientID = "fixture-client"
 	ctx := auth.WithPrincipal(context.Background(), p)
 	var b *Builder
 	var orchestrator *integration.Runtime
@@ -337,7 +350,10 @@ func TestExplicitAbsentRetryCommitsNewIntentAndSurvivesRestart(t *testing.T) {
 				}
 			}
 			return b.Execute(c, p, step, values)
-		}, integration.Options{PreparePlan: b.PreparePlan, CompleteObjective: b.CompleteObjective, LoadResume: b.LoadResume, AttachOperation: func(c context.Context, p auth.Principal, run string, revision int, session, operation string) error {
+		}, integration.Options{PreparePlan: b.PreparePlan, AttachInitialOperation: func(ctx context.Context, p auth.Principal, run string, revision int, session, operation string) error {
+			_, err := b.AttachOperation(ctx, p, run, revision, session, operation)
+			return err
+		}, CompleteObjective: b.CompleteObjective, LoadResume: b.LoadResume, AttachOperation: func(c context.Context, p auth.Principal, run string, revision int, session, operation string) error {
 			if failAttach {
 				revision++
 			}

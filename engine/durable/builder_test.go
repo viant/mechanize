@@ -27,6 +27,7 @@ func TestEndlyDatlyIntentOutcomeAndRestartBarrier(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			p.ClientID = "fixture-client"
 			ctx := auth.WithPrincipal(context.Background(), p)
 			var builder *Builder
 			var captured context.Context
@@ -72,7 +73,10 @@ func TestEndlyDatlyIntentOutcomeAndRestartBarrier(t *testing.T) {
 				}()
 				return builder.Execute(ctx, p, s, v)
 			}
-			orchestration, err := integration.NewWithOptions(execute, integration.Options{PreparePlan: builder.PreparePlan})
+			orchestration, err := integration.NewWithOptions(execute, integration.Options{PreparePlan: builder.PreparePlan, AttachInitialOperation: func(ctx context.Context, p auth.Principal, run string, revision int, session, operation string) error {
+				_, err := builder.AttachOperation(ctx, p, run, revision, session, operation)
+				return err
+			}})
 			if err != nil {
 				t.Fatal(err)
 			}

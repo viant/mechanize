@@ -4,26 +4,9 @@ import (
 	"context"
 	"errors"
 	"github.com/viant/datly/exec"
-	"github.com/viant/datly/spec"
 	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/data"
-	"time"
 )
-
-// PrepareRepairAdmission materializes the fixed generated writer before the
-// host collects short-lived evidence. It performs no mutation and accepts no
-// caller-selected component or storage target.
-func (b *Builder) PrepareRepairAdmission(ctx context.Context, p auth.Principal) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	ctx, user, err := b.bound(ctx, p, 0)
-	if err != nil {
-		return err
-	}
-	user.mu.Lock()
-	defer user.mu.Unlock()
-	return user.server.PrepareComponent(ctx, spec.Key{Kind: spec.KindComponent, Scope: "github.com/viant/mechanize/data/repairadmit", Name: "AdmitRepair"})
-}
 
 // InvokePrivateComponent is a scoped infrastructure bridge for the selected
 // consent and scenario components. Their generated contracts own validation/reads/writes.

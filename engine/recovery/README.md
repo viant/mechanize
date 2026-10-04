@@ -66,8 +66,6 @@ Exact admission replay acquires the stopped runtime guard and reloads the curren
 revision before checking readiness. Guard cleanup errors retain the confirmed
 commit and immutable reference but clear readiness and report needsAttention.
 An acknowledged commit remains confirmed if subsequent lineage readback fails.
-PrepareAdmission materializes the fixed generated writer while the guard is held,
-before collecting fresh evidence; replay does not repeat writer preparation.
 
 Fixture evidence: redaction/default trust/unknown barriers; missing readonly
 prefix refusal; held-out locator and extra-dialog inspection proposals; changed

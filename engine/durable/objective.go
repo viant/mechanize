@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/viant/datly/spec"
 	manager "github.com/viant/endly/service/manager"
 	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/data"
@@ -16,23 +15,6 @@ import (
 	"reflect"
 	"time"
 )
-
-var errObjectiveTransitionPreparation = errors.New("objective transition preparation unavailable")
-
-// Keep preparation outside the fresh oracle's evidence window. Callbacks are
-// private composition boundaries; no caller can select a persistence component.
-func evaluatePreparedObjective(ctx context.Context, prepare func(context.Context) error, evaluate func(context.Context) (objective.Result, error)) (objective.Result, error) {
-	if err := ctx.Err(); err != nil {
-		return objective.Result{}, errors.Join(errObjectiveTransitionPreparation, err)
-	}
-	if err := prepare(ctx); err != nil {
-		return objective.Result{}, errors.Join(errObjectiveTransitionPreparation, err)
-	}
-	if err := ctx.Err(); err != nil {
-		return objective.Result{}, errors.Join(errObjectiveTransitionPreparation, err)
-	}
-	return evaluate(ctx)
-}
 
 func (b *Builder) EvaluatePostcondition(ctx context.Context, p auth.Principal, predicate model.Predicate, values map[string]model.Value) (objective.Result, error) {
 	if b.options.ObjectiveEvaluator == nil {
@@ -88,22 +70,7 @@ func (b *Builder) CompleteObjective(ctx context.Context, p auth.Principal, reque
 			break
 		}
 		if envelope.Plan.Objective != nil {
-			verified, evalErr := evaluatePreparedObjective(ctx, func(ctx context.Context) error {
-				// Metadata preparation invokes no writer or oracle and holds no
-				// product transaction. Serialize it with this user's generated host.
-				user.mu.Lock()
-				defer user.mu.Unlock()
-				prepareCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				defer cancel()
-				return user.server.PrepareComponent(prepareCtx, spec.Key{Kind: spec.KindComponent, Scope: "github.com/viant/mechanize/data/transitionrun", Name: "TransitionRun"})
-			}, func(ctx context.Context) (objective.Result, error) {
-				return b.EvaluatePostcondition(ctx, p, *envelope.Plan.Objective, request.Values)
-			})
-			if errors.Is(evalErr, errObjectiveTransitionPreparation) {
-				result.VerificationState = "unknown"
-				result.Reason = "objective persistence preparation unavailable; business outcome remains unverified"
-				return result, evalErr
-			}
+			verified, evalErr := b.EvaluatePostcondition(ctx, p, *envelope.Plan.Objective, request.Values)
 			if evalErr != nil {
 				// An unavailable/invalid oracle does not establish false business
 				// truth. Persist a stopped repair boundary without replaying input.

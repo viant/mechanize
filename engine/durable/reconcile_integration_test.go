@@ -18,6 +18,7 @@ import (
 func TestGeneratedLateEffectReconciliationNeverReplaysAndPreservesAudit(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	p, _ := auth.NewPrincipal("fixture:issuer", "", "late-effect", []string{"desktop:control"})
+	p.ClientID = "fixture-client"
 	ctx := auth.WithPrincipal(context.Background(), p)
 	reads, dispatches, releases := 0, 0, 0
 	value := "not-ready"
@@ -38,7 +39,10 @@ func TestGeneratedLateEffectReconciliationNeverReplaysAndPreservesAudit(t *testi
 		t.Fatal(err)
 	}
 	defer b.Close(ctx)
-	r, err := integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan, CompleteObjective: b.CompleteObjective})
+	r, err := integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan, AttachInitialOperation: func(ctx context.Context, p auth.Principal, run string, revision int, session, operation string) error {
+		_, err := b.AttachOperation(ctx, p, run, revision, session, operation)
+		return err
+	}, CompleteObjective: b.CompleteObjective})
 	if err != nil {
 		t.Fatal(err)
 	}

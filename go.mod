@@ -6,15 +6,15 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/mattn/go-sqlite3 v1.14.18
 	github.com/viant/afs v1.30.1-0.20260914155934-90e95d483861
-	github.com/viant/datly v0.16.1-0.20250428163746-0139a6defa80
-	github.com/viant/endly v0.0.0-00010101000000-000000000000
+	github.com/viant/datly v1.1.1-0.20261004024140-a3837f55687f
+	github.com/viant/endly v0.89.1-0.20261004025400-cfbe7fb225b9
 	github.com/viant/jsonrpc v0.25.0
-	github.com/viant/mcp v0.24.0
-	github.com/viant/mcp-protocol v0.19.0
+	github.com/viant/mcp v0.24.1-0.20261004125052-e39034d8394f
+	github.com/viant/mcp-protocol v0.19.1-0.20261004125051-011abe959ebd
 	github.com/viant/scy v0.35.1-0.20260914041206-699e6c909726
-	github.com/viant/sqlx v0.26.1-0.20261001153633-c707e294db3b
+	github.com/viant/sqlx v0.26.1-0.20261003124505-e725e2a580af
 	github.com/viant/x v0.5.1-0.20260915043005-1bc42b9eef47
-	github.com/viant/xdatly v1.0.1-0.20261001162605-e2b68d4babd9
+	github.com/viant/xdatly v1.0.1-0.20261004012855-455c8546f229
 	github.com/xeipuuv/gojsonschema v1.2.0
 	golang.org/x/sys v0.46.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -83,7 +83,7 @@ require (
 	github.com/viant/govalidator v0.3.4-0.20260913213120-027a9dd54d73 // indirect
 	github.com/viant/igo v0.2.1 // indirect
 	github.com/viant/parsly v0.3.3 // indirect
-	github.com/viant/sqlparser v0.13.1-0.20261001210110-82d5588e4251 // indirect
+	github.com/viant/sqlparser v0.13.1-0.20261003124328-b8c0b54602af // indirect
 	github.com/viant/structology v0.10.1-0.20260925145657-42c5a7e1d1d7 // indirect
 	github.com/viant/structql v0.5.4 // indirect
 	github.com/viant/tagly v0.3.1-0.20260914020630-eadee36c3630 // indirect
@@ -128,15 +128,3 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
-
-replace github.com/viant/datly => ../datly
-
-replace github.com/viant/endly => ../endly
-
-replace github.com/viant/mcp => ../mcp
-
-replace github.com/viant/mcp-protocol => ../mcp-protocol
-
-replace github.com/viant/scy => ../scy
-
-replace github.com/viant/sqlx => ../sqlx

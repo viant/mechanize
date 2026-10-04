@@ -16,6 +16,7 @@ import (
 func TestGeneratedLeaseNeverDispatchedCompleteOriginalOutcomes(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	p, _ := auth.NewPrincipal("fixture:issuer", "", "physical-cleanup-owner", []string{"desktop:control"})
+	p.ClientID = "fixture-client"
 	ctx := auth.WithPrincipal(context.Background(), p)
 	epoch := 22
 	calls := 0
@@ -43,7 +44,10 @@ func TestGeneratedLeaseNeverDispatchedCompleteOriginalOutcomes(t *testing.T) {
 	if err != nil || !proof.ProofKnown || !proof.NeverDispatched || proof.AttemptCount != 0 {
 		t.Fatalf("empty existing proof: %+v %v", proof, err)
 	}
-	orchestrator, err := integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan})
+	orchestrator, err := integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan, AttachInitialOperation: func(ctx context.Context, p auth.Principal, run string, revision int, session, operation string) error {
+		_, err := b.AttachOperation(ctx, p, run, revision, session, operation)
+		return err
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,6 +18,7 @@ import (
 
 func TestStatePatchWithVerifiedRepairLineagePreservesLedger(t *testing.T) {
 	p, _ := auth.NewPrincipal("fixture", "", "state-lineage-alice", []string{"desktop:control"})
+	p.ClientID = "fixture-client"
 	ctx := auth.WithPrincipal(context.Background(), p)
 	_, file, _, _ := runtime.Caller(0)
 	surface := model.Surface{Kind: "native", BundleID: "fixture.editor"}
@@ -59,7 +60,10 @@ func TestStatePatchWithVerifiedRepairLineagePreservesLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close(ctx)
-	orchestrator, err = integration.NewWithOptions(store.Execute, integration.Options{PreparePlan: store.PreparePlan, EvaluatePostcondition: store.EvaluatePostcondition, CompleteObjective: store.CompleteObjective, LoadResume: store.LoadResume, AttachOperation: func(ctx context.Context, p auth.Principal, id string, rev int, session, operation string) error {
+	orchestrator, err = integration.NewWithOptions(store.Execute, integration.Options{PreparePlan: store.PreparePlan, AttachInitialOperation: func(ctx context.Context, p auth.Principal, id string, rev int, session, operation string) error {
+		_, err := store.AttachOperation(ctx, p, id, rev, session, operation)
+		return err
+	}, EvaluatePostcondition: store.EvaluatePostcondition, CompleteObjective: store.CompleteObjective, LoadResume: store.LoadResume, AttachOperation: func(ctx context.Context, p auth.Principal, id string, rev int, session, operation string) error {
 		_, err := store.AttachResumedOperation(ctx, p, id, rev, session, operation)
 		return err
 	}})

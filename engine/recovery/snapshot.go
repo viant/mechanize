@@ -84,13 +84,10 @@ type Evidence struct {
 	ValidUntil   time.Time
 }
 type Options struct {
-	Invoke       func(context.Context, auth.Principal, exec.ComponentRequest) (any, error)
-	Authorize    func(context.Context, auth.Principal, model.Surface) error
-	Guard        func(context.Context, auth.Principal, RunReference) (func() error, error)
-	RuntimeReady func(context.Context, auth.Principal) error
-	// PrepareAdmission materializes the fixed writer under the stopped guard,
-	// before collection of short-lived evidence and its admission permit.
-	PrepareAdmission     func(context.Context, auth.Principal) error
+	Invoke               func(context.Context, auth.Principal, exec.ComponentRequest) (any, error)
+	Authorize            func(context.Context, auth.Principal, model.Surface) error
+	Guard                func(context.Context, auth.Principal, RunReference) (func() error, error)
+	RuntimeReady         func(context.Context, auth.Principal) error
 	PrepareEvidence      func(context.Context, auth.Principal, Snapshot) (Evidence, error)
 	VerifyEvidence       func(context.Context, auth.Principal, Snapshot, Evidence) error
 	IncidentMaxRepairs   int

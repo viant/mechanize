@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/viant/datly/exec"
-	"github.com/viant/datly/spec"
 	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/data"
 	datahost "github.com/viant/mechanize/data/host"
@@ -253,18 +252,10 @@ func TestGeneratedRepairAdmissionAtomicLineageCASBudgetAndAcknowledgement(t *tes
 	cleanupErr := errors.New("fixture guard cleanup unconfirmed")
 	var releaseErr error = cleanupErr
 	guardCalls, guardReleases := 0, 0
-	preparations := 0
-	opts.PrepareAdmission = func(ctx context.Context, _ auth.Principal) error {
-		if !guardHeld {
-			return errors.New("writer preparation outside admission guard")
-		}
-		preparations++
-		return server.PrepareComponent(ctx, spec.Key{Kind: spec.KindComponent, Scope: "github.com/viant/mechanize/data/repairadmit", Name: "AdmitRepair"})
-	}
 	prepareEvidence := opts.PrepareEvidence
 	opts.PrepareEvidence = func(ctx context.Context, p auth.Principal, snapshot Snapshot) (Evidence, error) {
-		if !guardHeld || preparations == 0 {
-			return Evidence{}, errors.New("evidence collected before guarded writer preparation")
+		if !guardHeld {
+			return Evidence{}, errors.New("evidence collected outside admission guard")
 		}
 		return prepareEvidence(ctx, p, snapshot)
 	}
@@ -300,7 +291,7 @@ func TestGeneratedRepairAdmissionAtomicLineageCASBudgetAndAcknowledgement(t *tes
 		t.Fatal("old ledger relabelled or budget not consumed")
 	}
 	replay, err := service.Admit(ctx, p, request)
-	if err != nil || !replay.CommitConfirmed || !replay.ReadyToResume || *replay.Reference != *admitted.Reference || guardCalls != 2 || guardReleases != 2 || preparations != 1 || guardHeld {
+	if err != nil || !replay.CommitConfirmed || !replay.ReadyToResume || *replay.Reference != *admitted.Reference || guardCalls != 2 || guardReleases != 2 || guardHeld {
 		t.Fatalf("repair replay %+v %v", replay, err)
 	}
 	t.Run("committed replay guard refusal preserves history", func(t *testing.T) {

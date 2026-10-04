@@ -239,9 +239,6 @@ func TestWindowFrameHostRetainedCapturePublishesAndDispatchesAfterRealCommittedI
 
 func TestWindowFrameHostCreationConcurrentCallsCancellationAndExpiryFailClosed(t *testing.T) {
 	h, f, helper, ctx, surface := newWindowFrameHostFixture(t)
-	if err := h.durable.PrepareWindowFrameDispatch(ctx, f.principal); err != nil {
-		t.Fatal(err)
-	}
 	helper.captured = make(chan struct{})
 	helper.continueCapture = make(chan struct{})
 	captureCtx, cancel := context.WithCancel(ctx)
@@ -403,10 +400,6 @@ func TestWindowFrameOwnedMCPSessionCloseCancelsReadyAndCreatingIntervals(t *test
 	for _, mode := range []string{"ready", "creating"} {
 		t.Run(mode, func(t *testing.T) {
 			h, f, helper, ctx, surface := newWindowFrameHostFixture(t)
-			// Cold generated preparation occurs outside the permit/blocked-call budget.
-			if err := h.durable.PrepareWindowFrameDispatch(ctx, f.principal); err != nil {
-				t.Fatal(err)
-			}
 			var old *windowFramePermit
 			done := make(chan error, 1)
 			if mode == "creating" {
@@ -523,9 +516,6 @@ func TestWindowFrameReservationRechecksSessionAfterPrewarmBoundary(t *testing.T)
 
 func TestWindowFrameHostShutdownDuringCreatingCaptureJoinsAndClosesAdmission(t *testing.T) {
 	h, f, helper, ctx, surface := newWindowFrameHostFixture(t)
-	if err := h.durable.PrepareWindowFrameDispatch(ctx, f.principal); err != nil {
-		t.Fatal(err)
-	}
 	helper.captured = make(chan struct{})
 	helper.continueCapture = make(chan struct{})
 	captureDone := make(chan error, 1)

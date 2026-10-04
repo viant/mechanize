@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/viant/datly/exec"
 	"github.com/viant/datly/spec"
@@ -148,12 +147,6 @@ func (b *Builder) StopBoundary(ctx context.Context, p auth.Principal, req StopBo
 		if *event.Sequence >= sequence {
 			sequence = *event.Sequence + 1
 		}
-	}
-	prepareCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	err = user.server.PrepareComponent(prepareCtx, spec.Key{Kind: spec.KindComponent, Scope: "github.com/viant/mechanize/data/stopboundary", Name: "StopBoundary"})
-	cancel()
-	if err != nil {
-		return result, err
 	}
 	ctx, err = data.WithStateMutationPermit(ctx, p.Namespace, req.RunID)
 	if err != nil {

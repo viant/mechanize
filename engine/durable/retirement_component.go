@@ -14,7 +14,6 @@ type RetirementComponentInvoker func(context.Context, auth.Principal, exec.Compo
 // WithChromeRetirementComponents holds the user admission lock across the trusted
 // lifecycle callback. Acquire the browser lifecycle lane inside this callback:
 // ordinary execution also acquires the user lock before the browser lane.
-// Materialization precedes the callback's collection of short-lived peer proof.
 func (b *Builder) WithChromeRetirementComponents(ctx context.Context, p auth.Principal, fn func(context.Context, RetirementComponentInvoker) error) error {
 	actual, err := auth.FromContext(ctx)
 	if b == nil || fn == nil || err != nil || p.Validate() != nil || actual.Namespace != p.Namespace || actual.ClientID != p.ClientID || actual.ClientID == "" || !actual.HasScope("desktop:control") {
@@ -31,11 +30,6 @@ func (b *Builder) WithChromeRetirementComponents(ctx context.Context, p auth.Pri
 	defer user.mu.Unlock()
 	if err = ctx.Err(); err != nil {
 		return err
-	}
-	for _, target := range []struct{ pkg, name string }{{"chromeretirementget", "LoadChromeRetirement"}, {"chromeretirementwrite", "WriteChromeRetirement"}, {"chromeattemptbindinglist", "ListChromeAttemptBindings"}, {"loadplan", "LoadPlan"}} {
-		if err = user.server.PrepareComponent(ctx, spec.Key{Kind: spec.KindComponent, Scope: "github.com/viant/mechanize/data/" + target.pkg, Name: target.name}); err != nil {
-			return err
-		}
 	}
 	held, revoke := b.withHeldUserLock(ctx, actual, user)
 	defer revoke()

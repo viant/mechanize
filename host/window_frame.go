@@ -56,9 +56,6 @@ func (h *Host) CaptureWindowFrame(ctx context.Context, requested auth.Principal,
 	if h.nativeControl == nil || !h.nativeControl.options.WindowFrameClick || h.artifacts == nil || h.durable == nil {
 		return imageRef, provenanceRef, frame, captureUnsupported("Capture-bound window clicks are not enrolled")
 	}
-	if err = h.durable.PrepareWindowFrameDispatch(ctx, p); err != nil {
-		return imageRef, provenanceRef, frame, err
-	}
 	if err = h.Runtime.CheckSession(ctx, p, binding.SessionID); err != nil {
 		return imageRef, provenanceRef, frame, err
 	}

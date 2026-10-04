@@ -279,7 +279,7 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 	if err != nil {
 		return fail(err)
 	}
-	recoveryOptions := repairs.Options{Invoke: h.durable.InvokePrivateComponent, Authorize: h.AuthorizeScenarioSurface, Guard: h.recoveryGuard, RuntimeReady: h.recoveryRuntimeReady, PrepareAdmission: h.durable.PrepareRepairAdmission}
+	recoveryOptions := repairs.Options{Invoke: h.durable.InvokePrivateComponent, Authorize: h.AuthorizeScenarioSurface, Guard: h.recoveryGuard, RuntimeReady: h.recoveryRuntimeReady}
 	if options.NativeRecoveryPolicy != nil {
 		if h.nativeControl == nil {
 			return fail(errors.New("native recovery policy requires native executor guard"))

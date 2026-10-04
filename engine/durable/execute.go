@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/viant/datly/spec"
 	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/data"
 	"github.com/viant/mechanize/data/beginattempt"
@@ -117,15 +116,6 @@ func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step
 	}
 	if previous != nil {
 		return *previous, nil
-	}
-	// Lazy component compilation belongs before intent/input, not inside the
-	// bounded final receipt write. This prepares metadata only: no handler or
-	// writer invocation, placeholder outcome, or product-row change occurs.
-	prepareCtx, prepareCancel := context.WithTimeout(ctx, time.Duration(step.TimeoutMs)*time.Millisecond)
-	err = user.server.PrepareComponent(prepareCtx, spec.Key{Kind: spec.KindComponent, Scope: "github.com/viant/mechanize/data/commitoutcome", Name: "CommitOutcome"})
-	prepareCancel()
-	if err != nil {
-		return integration.StepResult{DispatchState: "notDispatched", VerificationState: "unknown"}, fmt.Errorf("outcome persistence preparation: %w", err)
 	}
 	effectID := key("effect", attemptID)
 	if run.Revision == nil {

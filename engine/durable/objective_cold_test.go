@@ -2,9 +2,7 @@ package durable
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"sync/atomic"
 	"testing"
@@ -17,49 +15,8 @@ import (
 	"github.com/viant/mechanize/script"
 )
 
-func TestFinalObjectivePreparationPrecedesFreshReceiptAndFailsBeforeOracle(t *testing.T) {
-	clock := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
-	steps := []string{}
-	result, err := evaluatePreparedObjective(context.Background(), func(context.Context) error {
-		steps = append(steps, "prepare")
-		clock = clock.Add(45 * time.Second) // Cold setup exceeds the unchanged 30s freshness window.
-		return nil
-	}, func(context.Context) (objective.Result, error) {
-		steps = append(steps, "observe")
-		return objective.Result{ObservedAt: clock}, nil
-	})
-	if err != nil || !reflect.DeepEqual(steps, []string{"prepare", "observe"}) || clock.Sub(result.ObservedAt) != 0 {
-		t.Fatal("preparation consumed the fresh receipt window")
-	}
-	for _, mode := range []string{"prepare error", "cancelled before", "cancelled during"} {
-		t.Run(mode, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			if mode == "cancelled before" {
-				cancel()
-			}
-			prepares, reads := 0, 0
-			failure := errors.New("fixture metadata unavailable")
-			_, err := evaluatePreparedObjective(ctx, func(context.Context) error {
-				prepares++
-				if mode == "prepare error" {
-					return failure
-				}
-				cancel()
-				return nil
-			}, func(context.Context) (objective.Result, error) { reads++; return objective.Result{}, nil })
-			if err == nil || !errors.Is(err, errObjectiveTransitionPreparation) || reads != 0 || mode == "cancelled before" && prepares != 0 {
-				t.Fatal("failed preparation reached oracle")
-			}
-			if mode == "prepare error" && !errors.Is(err, failure) || mode != "prepare error" && !errors.Is(err, context.Canceled) {
-				t.Fatal("preparation error lost")
-			}
-		})
-	}
-}
-
-// No writer warming or setup completion is performed. The actual generated
-// TransitionRun materialization must precede this independent oracle timestamp.
+// Exercise generated finalization with lazy component loading and unchanged
+// evidence freshness requirements.
 func TestColdGeneratedObjectiveFinalizationFreshAndStaleReceipts(t *testing.T) {
 	for _, stale := range []bool{false, true} {
 		name := "fresh"

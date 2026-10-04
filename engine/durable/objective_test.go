@@ -21,6 +21,7 @@ func TestEndlyDurableIndependentObjectiveOracle(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			_, file, _, _ := runtime.Caller(0)
 			p, _ := auth.NewPrincipal("fixture:issuer", "", "business-alice", []string{"desktop:control"})
+			p.ClientID = "fixture-client"
 			ctx := auth.WithPrincipal(context.Background(), p)
 			store := fixture.New()
 			businessKey := "case-1"
@@ -54,7 +55,10 @@ func TestEndlyDurableIndependentObjectiveOracle(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer b.Close(ctx)
-			orchestrator, err = integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan, CompleteObjective: b.CompleteObjective, EvaluatePostcondition: b.EvaluatePostcondition})
+			orchestrator, err = integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan, AttachInitialOperation: func(ctx context.Context, p auth.Principal, run string, revision int, session, operation string) error {
+				_, err := b.AttachOperation(ctx, p, run, revision, session, operation)
+				return err
+			}, CompleteObjective: b.CompleteObjective, EvaluatePostcondition: b.EvaluatePostcondition})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,6 +127,7 @@ func TestEndlyDurableIndependentObjectiveOracle(t *testing.T) {
 func TestUnverifiedEffectPostconditionStaysUnknownAndCannotReplay(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	p, _ := auth.NewPrincipal("fixture:issuer", "", "effect-objective", []string{"desktop:control"})
+	p.ClientID = "fixture-client"
 	ctx := auth.WithPrincipal(context.Background(), p)
 	evaluator, _ := objective.New(map[string]objective.Enrollment{"fixture-receipts": fixture.New().Enrollment()})
 	calls := 0
@@ -136,7 +141,10 @@ func TestUnverifiedEffectPostconditionStaysUnknownAndCannotReplay(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer b.Close(ctx)
-	r, err := integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan, EvaluatePostcondition: b.EvaluatePostcondition, CompleteObjective: b.CompleteObjective})
+	r, err := integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan, AttachInitialOperation: func(ctx context.Context, p auth.Principal, run string, revision int, session, operation string) error {
+		_, err := b.AttachOperation(ctx, p, run, revision, session, operation)
+		return err
+	}, EvaluatePostcondition: b.EvaluatePostcondition, CompleteObjective: b.CompleteObjective})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,6 +194,7 @@ func TestExecutionFailurePreservesDurableRepairBoundary(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			_, file, _, _ := runtime.Caller(0)
 			p, _ := auth.NewPrincipal("fixture:issuer", "", "repair-"+mode, []string{"desktop:control"})
+			p.ClientID = "fixture-client"
 			ctx := auth.WithPrincipal(context.Background(), p)
 			var orchestrator *integration.Runtime
 			stopped := true
@@ -231,7 +240,10 @@ func TestExecutionFailurePreservesDurableRepairBoundary(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer b.Close(ctx)
-			orchestrator, err = integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan, CompleteObjective: b.CompleteObjective, EvaluatePostcondition: b.EvaluatePostcondition, LoadResume: b.LoadResume, AttachOperation: func(c context.Context, p auth.Principal, run string, rev int, session, operation string) error {
+			orchestrator, err = integration.NewWithOptions(b.Execute, integration.Options{PreparePlan: b.PreparePlan, AttachInitialOperation: func(ctx context.Context, p auth.Principal, run string, revision int, session, operation string) error {
+				_, err := b.AttachOperation(ctx, p, run, revision, session, operation)
+				return err
+			}, CompleteObjective: b.CompleteObjective, EvaluatePostcondition: b.EvaluatePostcondition, LoadResume: b.LoadResume, AttachOperation: func(c context.Context, p auth.Principal, run string, rev int, session, operation string) error {
 				_, err := b.AttachResumedOperation(c, p, run, rev, session, operation)
 				return err
 			}})

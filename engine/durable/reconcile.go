@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/viant/datly/spec"
 	"reflect"
 	"strings"
-	"time"
 
 	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/data"
@@ -134,14 +132,6 @@ func (b *Builder) ReconcileEffect(ctx context.Context, p auth.Principal, req Eff
 		return EffectReconcileResult{EffectID: req.EffectID, State: "unknown", Reason: "no qualified reconciliation contract", Run: reconciliationRunState(state)}, err
 	}
 	hash, err := contract.Hash()
-	if err != nil {
-		return EffectReconcileResult{}, err
-	}
-	// Resolve the generated writer before obtaining time-sensitive evidence.
-	// Preparation does not invoke it or mutate any row.
-	prepareCtx, prepareCancel := context.WithTimeout(ctx, 30*time.Second)
-	err = user.server.PrepareComponent(prepareCtx, spec.Key{Kind: spec.KindComponent, Scope: "github.com/viant/mechanize/data/reconcileeffect", Name: "ReconcileEffect"})
-	prepareCancel()
 	if err != nil {
 		return EffectReconcileResult{}, err
 	}

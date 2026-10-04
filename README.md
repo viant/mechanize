@@ -26,16 +26,20 @@ script does not imply that a live adapter can execute it.
 
 ## Quick start
 
-Mechanize is under active development. The checked-in `go.mod` replaces several
-Viant modules with sibling source directories (`../datly`, `../endly`,
-`../mcp`, `../mcp-protocol`, `../scy`, and `../sqlx`). A clean clone of this
-repository alone therefore does not currently provide a standalone build.
-Use the matching Viant source workspace with Go 1.25.8 or newer.
-
-From the `mechanize` module directory in that workspace:
+Mechanize is under active development. Dependencies are pinned to published Go
+module revisions; sibling Viant checkouts are not required. Use Go 1.25.8 or
+newer. Native automation and the permissions helper require macOS and the
+platform build tools described in the installation guide.
 
 ```sh
+git clone https://github.com/viant/mechanize.git
+cd mechanize
 go build -o ./mechanize ./cmd/mechanize
+```
+
+After installing the native helper and provisioning a private configuration:
+
+```sh
 ./mechanize doctor -helper /absolute/path/to/native-helper
 ./mechanize serve -config /absolute/path/to/private/config.json
 ```

@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/viant/datly/exec"
-	"github.com/viant/datly/spec"
 	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/data"
 	datahost "github.com/viant/mechanize/data/host"
@@ -33,9 +32,6 @@ func TestGeneratedRepairReadbackFailureRetainsConfirmedCommitAndCleanupError(t *
 			t.Error(err)
 		}
 	})
-	opts.PrepareAdmission = func(ctx context.Context, _ auth.Principal) error {
-		return server.PrepareComponent(ctx, spec.Key{Kind: spec.KindComponent, Scope: "github.com/viant/mechanize/data/repairadmit", Name: "AdmitRepair"})
-	}
 	readbackErr := errors.New("fixture generated readback unavailable")
 	cleanupErr := errors.New("fixture guard release unavailable")
 	committed := false
@@ -95,42 +91,5 @@ func TestGeneratedRepairReadbackFailureRetainsConfirmedCommitAndCleanupError(t *
 	final, err := service.Snapshot(ctx, p, "run")
 	if err != nil || final.Reference.Revision != after.Reference.Revision || value(final.Raw.Workflow.UsedRepairs) != 1 || len(final.Raw.Repairs) != 1 || len(final.Raw.Events) != 1 {
 		t.Fatal("exact adoption consumed another repair or audit")
-	}
-}
-
-func TestRepairPreparationFailureReleasesGuardWithoutMutationOrEvidence(t *testing.T) {
-	ctx, p, row, opts := recoveryFixture(t)
-	opts.Invoke = scopedMemory(row)
-	preparationErr := errors.New("fixture writer unavailable")
-	guardHeld, evidenceReads, releases := false, 0, 0
-	opts.Guard = func(context.Context, auth.Principal, RunReference) (func() error, error) {
-		guardHeld = true
-		return func() error { guardHeld = false; releases++; return nil }, nil
-	}
-	opts.PrepareAdmission = func(context.Context, auth.Principal) error {
-		if !guardHeld {
-			t.Error("preparation ran without guard")
-		}
-		return preparationErr
-	}
-	prepare := opts.PrepareEvidence
-	opts.PrepareEvidence = func(ctx context.Context, p auth.Principal, snapshot Snapshot) (Evidence, error) {
-		evidenceReads++
-		return prepare(ctx, p, snapshot)
-	}
-	service, _ := New(opts)
-	before, err := service.Snapshot(ctx, p, "run")
-	if err != nil {
-		t.Fatal(err)
-	}
-	patch, _ := json.Marshal(patchFrom(before))
-	prior, _ := json.Marshal(row)
-	result, err := service.Admit(ctx, p, AdmissionRequest{ContextRequest: requestFrom(before), Patch: patch})
-	if !errors.Is(err, preparationErr) || result.CommitConfirmed || result.ReadyToResume || guardHeld || releases != 1 || evidenceReads != 0 {
-		t.Fatalf("preparation failure: %+v %v releases=%d evidence=%d", result, err, releases, evidenceReads)
-	}
-	after, _ := json.Marshal(row)
-	if string(prior) != string(after) {
-		t.Fatal("failed preparation changed durable state")
 	}
 }

@@ -121,12 +121,6 @@ func (s *Service) Admit(ctx context.Context, requested auth.Principal, request A
 		result.Reason = "runtime repair lineage cannot safely resume"
 		return result, nil
 	}
-	if s.options.PrepareAdmission != nil {
-		if err = s.options.PrepareAdmission(ctx, p); err != nil {
-			result.Reason = "repair admission preparation unavailable"
-			return result, err
-		}
-	}
 	private, evidence, err := s.prepare(ctx, p, snapshot)
 	if err != nil {
 		result.Reason = err.Error()
