@@ -1,0 +1,431 @@
+---
+pipeline:
+  session:
+    action: mcp/runner:call
+    url: "$endpoint"
+    bearerTokenSecret: "$credentialResource"
+    name: mechanize_session_open
+    arguments:
+      name: Calculator DSL example
+    post:
+      sessionId: "$StructuredContent.sessionId"
+  read:
+    action: mcp/runner:call
+    url: "$endpoint"
+    bearerTokenSecret: "$credentialResource"
+    name: mechanize_script_run
+    arguments:
+      sessionId: "$sessionId"
+      purpose: Calculate 17 times 23 and verify every Calculator step
+      clientRequestId: "$requestId"
+      format: yaml
+      source: |
+        ---
+        schemaVersion: 1
+        name: Calculator 17 times 23
+        goal:
+          description: Use the visible macOS Calculator to calculate 17 times 23.
+          successCriteria:
+          - Each button changes the entry to the expected state.
+          - The displayed answer is 391.
+        surfaces:
+          calculator:
+            kind: native
+            bundleId: com.apple.calculator
+        requires:
+          adapters:
+          - native
+        steps:
+        - id: activate
+          purpose: Make Calculator visible.
+          command: calculator.activate()
+          effect:
+            businessKey:
+              application:
+                kind: string
+                string: com.apple.calculator
+              task:
+                kind: string
+                string: calculator-17-times-23
+        - id: clear
+          purpose: Press AllClear and verify the resulting entry.
+          command: 'calculator.window(title: "Calculator").getById("AllClear", exact: true).click()'
+          effect:
+            businessKey:
+              application:
+                kind: string
+                string: com.apple.calculator
+              task:
+                kind: string
+                string: calculator-17-times-23
+          postcondition:
+            kind: adapter
+            adapter: native
+            name: valueEquals
+            scope:
+              surfaceRef: calculator
+            timeoutMs: 10000
+            freshnessMs: 1000
+            requiredAuthority: observational
+            inputs:
+              bundleID:
+                kind: string
+                string: com.apple.calculator
+              strategy:
+                kind: string
+                string: role
+              selector:
+                kind: string
+                string: text
+              windowTitle:
+                kind: string
+                string: Calculator
+              ancestorID:
+                kind: string
+                string: StandardInputView
+              attribute:
+                kind: string
+                string: staticText
+              expected:
+                kind: string
+                string: "‎0"
+        - id: one
+          purpose: Press One and verify the resulting entry.
+          command: 'calculator.window(title: "Calculator").getById("One", exact: true).click()'
+          effect:
+            businessKey:
+              application:
+                kind: string
+                string: com.apple.calculator
+              task:
+                kind: string
+                string: calculator-17-times-23
+          postcondition:
+            kind: adapter
+            adapter: native
+            name: valueEquals
+            scope:
+              surfaceRef: calculator
+            timeoutMs: 10000
+            freshnessMs: 1000
+            requiredAuthority: observational
+            inputs:
+              bundleID:
+                kind: string
+                string: com.apple.calculator
+              strategy:
+                kind: string
+                string: role
+              selector:
+                kind: string
+                string: text
+              windowTitle:
+                kind: string
+                string: Calculator
+              ancestorID:
+                kind: string
+                string: StandardInputView
+              attribute:
+                kind: string
+                string: staticText
+              expected:
+                kind: string
+                string: "‎1"
+        - id: seven
+          purpose: Press Seven and verify the resulting entry.
+          command: 'calculator.window(title: "Calculator").getById("Seven", exact: true).click()'
+          effect:
+            businessKey:
+              application:
+                kind: string
+                string: com.apple.calculator
+              task:
+                kind: string
+                string: calculator-17-times-23
+          postcondition:
+            kind: adapter
+            adapter: native
+            name: valueEquals
+            scope:
+              surfaceRef: calculator
+            timeoutMs: 10000
+            freshnessMs: 1000
+            requiredAuthority: observational
+            inputs:
+              bundleID:
+                kind: string
+                string: com.apple.calculator
+              strategy:
+                kind: string
+                string: role
+              selector:
+                kind: string
+                string: text
+              windowTitle:
+                kind: string
+                string: Calculator
+              ancestorID:
+                kind: string
+                string: StandardInputView
+              attribute:
+                kind: string
+                string: staticText
+              expected:
+                kind: string
+                string: "‎17"
+        - id: multiply
+          purpose: Press Multiply and verify the resulting entry.
+          command: 'calculator.window(title: "Calculator").getById("Multiply", exact: true).click()'
+          effect:
+            businessKey:
+              application:
+                kind: string
+                string: com.apple.calculator
+              task:
+                kind: string
+                string: calculator-17-times-23
+          postcondition:
+            kind: adapter
+            adapter: native
+            name: valueEquals
+            scope:
+              surfaceRef: calculator
+            timeoutMs: 10000
+            freshnessMs: 1000
+            requiredAuthority: observational
+            inputs:
+              bundleID:
+                kind: string
+                string: com.apple.calculator
+              strategy:
+                kind: string
+                string: role
+              selector:
+                kind: string
+                string: text
+              windowTitle:
+                kind: string
+                string: Calculator
+              ancestorID:
+                kind: string
+                string: StandardInputView
+              attribute:
+                kind: string
+                string: staticText
+              expected:
+                kind: string
+                string: "‎17‎×"
+        - id: two
+          purpose: Press Two and verify the resulting entry.
+          command: 'calculator.window(title: "Calculator").getById("Two", exact: true).click()'
+          effect:
+            businessKey:
+              application:
+                kind: string
+                string: com.apple.calculator
+              task:
+                kind: string
+                string: calculator-17-times-23
+          postcondition:
+            kind: adapter
+            adapter: native
+            name: valueEquals
+            scope:
+              surfaceRef: calculator
+            timeoutMs: 10000
+            freshnessMs: 1000
+            requiredAuthority: observational
+            inputs:
+              bundleID:
+                kind: string
+                string: com.apple.calculator
+              strategy:
+                kind: string
+                string: role
+              selector:
+                kind: string
+                string: text
+              windowTitle:
+                kind: string
+                string: Calculator
+              ancestorID:
+                kind: string
+                string: StandardInputView
+              attribute:
+                kind: string
+                string: staticText
+              expected:
+                kind: string
+                string: "‎17‎×‎2"
+        - id: three
+          purpose: Press Three and verify the resulting entry.
+          command: 'calculator.window(title: "Calculator").getById("Three", exact: true).click()'
+          effect:
+            businessKey:
+              application:
+                kind: string
+                string: com.apple.calculator
+              task:
+                kind: string
+                string: calculator-17-times-23
+          postcondition:
+            kind: adapter
+            adapter: native
+            name: valueEquals
+            scope:
+              surfaceRef: calculator
+            timeoutMs: 10000
+            freshnessMs: 1000
+            requiredAuthority: observational
+            inputs:
+              bundleID:
+                kind: string
+                string: com.apple.calculator
+              strategy:
+                kind: string
+                string: role
+              selector:
+                kind: string
+                string: text
+              windowTitle:
+                kind: string
+                string: Calculator
+              ancestorID:
+                kind: string
+                string: StandardInputView
+              attribute:
+                kind: string
+                string: staticText
+              expected:
+                kind: string
+                string: "‎17‎×‎23"
+        - id: equals
+          purpose: Press Equals and verify the resulting entry.
+          command: 'calculator.window(title: "Calculator").getById("Equals", exact: true).click()'
+          effect:
+            businessKey:
+              application:
+                kind: string
+                string: com.apple.calculator
+              task:
+                kind: string
+                string: calculator-17-times-23
+          postcondition:
+            kind: adapter
+            adapter: native
+            name: valueEquals
+            scope:
+              surfaceRef: calculator
+            timeoutMs: 10000
+            freshnessMs: 1000
+            requiredAuthority: observational
+            inputs:
+              bundleID:
+                kind: string
+                string: com.apple.calculator
+              strategy:
+                kind: string
+                string: role
+              selector:
+                kind: string
+                string: text
+              windowTitle:
+                kind: string
+                string: Calculator
+              ancestorID:
+                kind: string
+                string: StandardInputView
+              attribute:
+                kind: string
+                string: staticText
+              expected:
+                kind: string
+                string: "‎391"
+        - id: read-answer
+          purpose: Return the independently observed native result.
+          command: 'let answer = calculator.window(title: "Calculator").getByRole("text",
+            exact: true).within(calculator.window(title: "Calculator").getById("StandardInputView",
+            exact: true)).read("staticText")'
+          postcondition:
+            kind: adapter
+            adapter: native
+            name: valueEquals
+            scope:
+              surfaceRef: calculator
+            timeoutMs: 10000
+            freshnessMs: 1000
+            requiredAuthority: observational
+            inputs:
+              bundleID:
+                kind: string
+                string: com.apple.calculator
+              strategy:
+                kind: string
+                string: role
+              selector:
+                kind: string
+                string: text
+              windowTitle:
+                kind: string
+                string: Calculator
+              ancestorID:
+                kind: string
+                string: StandardInputView
+              attribute:
+                kind: string
+                string: staticText
+              expected:
+                kind: string
+                string: "‎391"
+    post:
+      operationId: "$StructuredContent.operationId"
+      runId: "$StructuredContent.runId"
+  wait:
+    action: mcp/runner:call
+    url: "$endpoint"
+    bearerTokenSecret: "$credentialResource"
+    name: mechanize_operation_status
+    arguments:
+      sessionId: "$sessionId"
+      operationId: "$operationId"
+    repeat: 120
+    sleepTimeMs: 250
+    exit: "$calculatorOperationStatus:succeeded || $calculatorOperationStatus:failed
+      || $calculatorOperationStatus:cancelled"
+    post:
+      calculatorOperationStatus: "$StructuredContent.executionStatus"
+      operation: "$StructuredContent"
+  reportOperation:
+    action: print
+    message: "$AsJSON($operation)"
+  assertRead:
+    action: validator:assert
+    name: Native Calculator DSL read completed
+    actual: "$operation"
+    expect:
+      executionStatus: succeeded
+  outputs:
+    action: mcp/runner:call
+    url: "$endpoint"
+    bearerTokenSecret: "$credentialResource"
+    name: mechanize_operation_outputs
+    arguments:
+      sessionId: "$sessionId"
+      operationId: "$operationId"
+      bindings:
+      - answer
+    post:
+      readOutputs: "$StructuredContent"
+    when: "$calculatorOperationStatus:succeeded"
+  result:
+    action: print
+    message: "$AsJSON($readOutputs)"
+    when: "$calculatorOperationStatus:succeeded"
+  assertAnswer:
+    action: validator:assert
+    when: "$calculatorOperationStatus:succeeded"
+    name: Calculator displays 391
+    actual: "$readOutputs.outputs.answer"
+    expect:
+      kind: string
+      string: "‎391"

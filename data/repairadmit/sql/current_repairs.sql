@@ -1,0 +1,2 @@
+SELECT r.namespace, r.id, r.run_id, r.parent_plan_id, r.new_plan_id, r.parent_content_hash, r.parent_plan_hash, r.plan_hash, r.objective_hash, r.patch_hash, r.evidence_json, r.policy_hash, r.completed_steps, r.incident_id, r.run_revision, r.admitted_at FROM (SELECT * FROM (SELECT r.* FROM repair_revisions r WHERE r.namespace=:Namespace
+) repairs) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentRepairsParentKeys($CurrentRecords))

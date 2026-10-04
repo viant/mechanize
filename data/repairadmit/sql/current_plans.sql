@@ -1,0 +1,2 @@
+SELECT r.namespace, r.id, r.parent_id, r.objective_id, r.content_hash, r.content_json, r.created_at FROM (SELECT * FROM (SELECT r.* FROM plan_revisions r WHERE r.namespace=:Namespace AND r.parent_id=:ParentPlanID
+) plans) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentPlansParentKeys($CurrentAdmitRepair))

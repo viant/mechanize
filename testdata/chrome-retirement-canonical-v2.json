@@ -1,0 +1,72 @@
+{
+  "version": 2,
+  "cases": [
+    {
+      "name": "empty",
+      "manifest": {
+        "version": 2,
+        "identity": {
+          "profileChannel": "v2-fixture-channel",
+          "browserInstance": "v2-fixture-browser",
+          "tabId": 17,
+          "frameId": 0,
+          "documentId": "v2-fixture-document"
+        },
+        "receiptRevision": 0,
+        "receipts": [],
+        "readiness": {
+          "quiesced": true,
+          "controlLeaseHeld": false,
+          "recordingState": "none",
+          "recordingLastSequence": 0,
+          "recordingDroppedThrough": 0,
+          "recordingLeaseExpiresUnixMs": 0
+        }
+      },
+      "canonical": "{\"identity\":{\"browserInstance\":\"v2-fixture-browser\",\"documentId\":\"v2-fixture-document\",\"frameId\":0,\"profileChannel\":\"v2-fixture-channel\",\"tabId\":17},\"readiness\":{\"controlLeaseHeld\":false,\"quiesced\":true,\"recordingDroppedThrough\":0,\"recordingLastSequence\":0,\"recordingLeaseExpiresUnixMs\":0,\"recordingState\":\"none\"},\"receiptRevision\":0,\"receipts\":[],\"version\":2}",
+      "sha256": "eaca246ce214c5a4f7c8355dbf69174a72d05004ca9edd83aea24eae70936d52"
+    },
+    {
+      "name": "resolved-nonempty",
+      "manifest": {
+        "version": 2,
+        "identity": {
+          "profileChannel": "v2-fixture-channel",
+          "browserInstance": "v2-fixture-browser",
+          "tabId": 17,
+          "frameId": 0,
+          "documentId": "v2-fixture-document"
+        },
+        "receiptRevision": 2,
+        "receipts": [
+          {
+            "attemptId": "v2-attempt-fill",
+            "fingerprintSHA256": "093799cf6deada84c8b5d87039576423c1eb6ff81455182c5dabd9102da3da41",
+            "dispatchState": "notDispatched",
+            "effectState": "none",
+            "errorCode": "targetNotFound",
+            "errorDispatchState": "notDispatched",
+            "fingerprintVersion": 2
+          },
+          {
+            "attemptId": "v2-attempt-press",
+            "fingerprintSHA256": "6e70f718ceab1396b032041eec098929a55e249d5452a95773805c9fdefc9560",
+            "dispatchState": "dispatched",
+            "effectState": "unverified",
+            "fingerprintVersion": 2
+          }
+        ],
+        "readiness": {
+          "quiesced": true,
+          "controlLeaseHeld": false,
+          "recordingState": "none",
+          "recordingLastSequence": 0,
+          "recordingDroppedThrough": 0,
+          "recordingLeaseExpiresUnixMs": 0
+        }
+      },
+      "canonical": "{\"identity\":{\"browserInstance\":\"v2-fixture-browser\",\"documentId\":\"v2-fixture-document\",\"frameId\":0,\"profileChannel\":\"v2-fixture-channel\",\"tabId\":17},\"readiness\":{\"controlLeaseHeld\":false,\"quiesced\":true,\"recordingDroppedThrough\":0,\"recordingLastSequence\":0,\"recordingLeaseExpiresUnixMs\":0,\"recordingState\":\"none\"},\"receiptRevision\":2,\"receipts\":[{\"attemptId\":\"v2-attempt-fill\",\"dispatchState\":\"notDispatched\",\"effectState\":\"none\",\"errorCode\":\"targetNotFound\",\"errorDispatchState\":\"notDispatched\",\"fingerprintSHA256\":\"093799cf6deada84c8b5d87039576423c1eb6ff81455182c5dabd9102da3da41\",\"fingerprintVersion\":2},{\"attemptId\":\"v2-attempt-press\",\"dispatchState\":\"dispatched\",\"effectState\":\"unverified\",\"fingerprintSHA256\":\"6e70f718ceab1396b032041eec098929a55e249d5452a95773805c9fdefc9560\",\"fingerprintVersion\":2}],\"version\":2}",
+      "sha256": "c7095a8069655af72b99b1491d642d621546734c79a6414ba71fdba68e038ccd"
+    }
+  ]
+}

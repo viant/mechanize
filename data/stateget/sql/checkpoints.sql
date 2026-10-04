@@ -1,0 +1,2 @@
+SELECT * FROM (SELECT c.* FROM checkpoints c WHERE c.namespace = :Namespace
+) checkpoints

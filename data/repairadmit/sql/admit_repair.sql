@@ -1,0 +1,1 @@
+SELECT * FROM  (SELECT m.* FROM (milestones) m WHERE m.namespace=:Namespace AND m.run_id=:RunID AND m.id=:AnchorID AND m.state='verified')  scopes

@@ -1,0 +1,23 @@
+#package('github.com/viant/mechanize/data/repairadmit')
+#setting($_ = $input_type('AdmitRepairInput'))
+#setting($_ = $output_type('AdmitRepairOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/repairadmit', 'PATCH'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $RunID<string>(query/runId).Required())
+#define($_ = $ParentPlanID<string>(query/parentPlanId).Required())
+#define($_ = $AnchorID<string>(query/anchorId).Required())
+#define($_ = $Data<[]*RepairScope>(output/body))
+SELECT scopes.*,records.*,plans.*,workflow.*,incidents.*,repairs.*,lineage.*,events.*,unresolved.*,
+ type(scopes,'RepairScope'),type(records,'RepairRun'),type(plans,'PlanRevision'),type(workflow,'WorkflowBudget'),type(incidents,'IncidentBudget'),type(repairs,'RepairRevision'),type(lineage,'RepairLineage'),type(events,'Event'),type(unresolved,'UnresolvedEffect'),
+ lifecycle_type(records,'RepairRunLifecycle'),lifecycle_type(plans,'PlanRevisionLifecycle'),lifecycle_type(workflow,'WorkflowBudgetLifecycle'),lifecycle_type(incidents,'IncidentBudgetLifecycle'),lifecycle_type(repairs,'RepairRevisionLifecycle'),lifecycle_type(lineage,'RepairLineageLifecycle'),lifecycle_type(events,'EventLifecycle'),concurrency_token(records.revision),concurrency_token(workflow.revision),concurrency_token(incidents.revision)
+FROM (SELECT m.* FROM (milestones) m WHERE m.namespace=:Namespace AND m.run_id=:RunID AND m.id=:AnchorID AND m.state='verified') scopes
+JOIN (${embed:sql/root.sql}) records ON records.namespace=scopes.namespace AND records.id=scopes.run_id AND 1=1
+JOIN (${embed:sql/plans.sql}) plans ON plans.namespace=scopes.namespace
+JOIN (${embed:sql/workflow.sql}) workflow ON workflow.namespace=records.namespace AND workflow.run_id=records.id AND 1=1
+JOIN (${embed:sql/incidents.sql}) incidents ON incidents.namespace=records.namespace AND incidents.run_id=records.id
+JOIN (${embed:sql/repairs.sql}) repairs ON repairs.namespace=records.namespace AND repairs.run_id=records.id
+JOIN (${embed:sql/lineage.sql}) lineage ON lineage.namespace=repairs.namespace AND lineage.repair_id=repairs.id
+JOIN (${embed:sql/events.sql}) events ON events.namespace=records.namespace AND events.run_id=records.id
+JOIN (SELECT e.* FROM (effects) e WHERE e.namespace=:Namespace AND e.state IN ('intent','unknown')) unresolved ON unresolved.namespace=records.namespace AND unresolved.run_id=records.id

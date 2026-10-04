@@ -1,0 +1,15 @@
+init:
+  requestBody: $LoadJSON('${parentPath}/prepare/request.json')
+  expectedBody: $LoadJSON('${parentPath}/expect/result.json')
+pipeline:
+  request:
+    action: http/runner:send
+    requests:
+      - Method: POST
+        URL: http://127.0.0.1:18767/case
+        Header:
+          Content-Type: [application/json]
+        JSONBody: $requestBody
+        Expect:
+          Code: 200
+          JSONBody: $expectedBody

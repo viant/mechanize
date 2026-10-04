@@ -1,0 +1,1 @@
+SELECT r.* FROM recorded_events r WHERE r.namespace = :Namespace

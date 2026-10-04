@@ -1,0 +1,16 @@
+#package('github.com/viant/mechanize/data/beginattempt')
+#setting($_ = $input_type('BeginAttemptInput'))
+#setting($_ = $output_type('BeginAttemptOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/beginattempt', 'PATCH'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $Data<[]*Run>(output/body))
+SELECT records.*, attempts.*, intents.*, events.*, unresolved.*,
+ type(records,'Run'), type(attempts,'Attempt'), type(intents,'Intent'), type(events,'Event'), type(unresolved,'UnresolvedEffect'),
+ lifecycle_type(records,'RunLifecycle'), lifecycle_type(attempts,'AttemptLifecycle'), concurrency_token(records.revision)
+FROM (${embed:sql/root.sql}) records
+JOIN (SELECT a.* FROM attempts a WHERE a.namespace = :Namespace) attempts ON attempts.namespace = records.namespace AND attempts.run_id = records.id
+JOIN (SELECT e.* FROM effects e WHERE e.namespace = :Namespace) intents ON intents.namespace = attempts.namespace AND intents.attempt_id = attempts.id
+JOIN (SELECT e.* FROM events e WHERE e.namespace = :Namespace) events ON events.namespace = attempts.namespace AND events.attempt_id = attempts.id
+JOIN (SELECT e.* FROM (effects) e WHERE e.namespace = :Namespace AND e.state IN ('intent','unknown')) unresolved ON unresolved.namespace = records.namespace AND unresolved.run_id = records.id

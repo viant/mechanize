@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "Open Calculator for the visible demonstration",
+  "steps": [
+    {
+      "id": "open-calculator",
+      "action": "app.open",
+      "target": {
+        "surface": {"kind": "native", "bundleId": "com.apple.calculator"},
+        "scope": {},
+        "cardinality": "one"
+      },
+      "arguments": {},
+      "timeoutMs": 30000,
+      "effect": {
+        "class": "externalNonIdempotent",
+        "businessKey": {"application": {"kind": "string", "string": "com.apple.calculator"}}
+      }
+    }
+  ]
+}

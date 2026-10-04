@@ -1,0 +1,1 @@
+SELECT * FROM (SELECT a.* FROM (artifacts) a WHERE a.namespace=:Namespace AND a.id IN (:ArtifactIDs)) artifacts

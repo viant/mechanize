@@ -1,0 +1,2 @@
+SELECT r.revision, r.namespace, r.id, r.policy_json, r.created_at, r.updated_at FROM (SELECT records.* FROM  (SELECT p.* FROM application_policies p WHERE p.namespace=:Namespace AND p.id='application_access'
+)  records) r WHERE $criteria.CompositeIn("r", $ApplicationpolicywriteKeys)

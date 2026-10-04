@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mechanize OpenOffice"
+  short_description: "OpenOffice Writer, Calc, and PDF through Mechanize"
+  default_prompt: "Use $mechanize-openoffice to open, read, edit, save, or export an OpenOffice document through Mechanize."

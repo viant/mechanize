@@ -1,0 +1,1 @@
+SELECT * FROM (SELECT a.* FROM consent_audit a WHERE a.namespace = :Namespace) audit

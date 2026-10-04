@@ -1,0 +1,1 @@
+SELECT r.namespace, r.id, r.attempt_id, r.run_id, r.business_key, r.state, r.revision, r.evidence_json FROM (SELECT * FROM (SELECT e.* FROM (effects) e WHERE e.namespace=:Namespace AND e.state IN ('intent','unknown')) unresolved) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentUnresolvedKeys($AdmitRepair, $CurrentRecords))

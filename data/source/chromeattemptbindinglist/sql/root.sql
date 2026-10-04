@@ -1,0 +1,1 @@
+SELECT b.* FROM chrome_attempt_bindings b WHERE b.namespace=:Namespace AND b.client_id=:ClientID AND b.profile_channel=:ProfileChannel AND b.browser_instance=:BrowserInstance AND b.broker_epoch=:BrokerEpoch AND b.channel_epoch=:ChannelEpoch AND b.scope_hash=:ScopeHash ORDER BY b.id

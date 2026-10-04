@@ -1,0 +1,2 @@
+SELECT r.revision, r.namespace, r.run_id, r.id, r.max_repairs, r.used_repairs, r.max_elapsed_ms, r.elapsed_ms FROM (SELECT * FROM (SELECT r.* FROM repair_incident_budgets r WHERE r.namespace=:Namespace
+) incidents) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentIncidentsParentKeys($CurrentRecords))

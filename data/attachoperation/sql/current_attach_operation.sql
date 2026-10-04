@@ -1,0 +1,2 @@
+SELECT r.revision, r.namespace, r.id, r.plan_id, r.status, r.endly_session_id, r.endly_operation_id, r.created_at, r.updated_at FROM (SELECT * FROM  (SELECT r.* FROM runs r WHERE r.namespace = :Namespace
+)  records) r WHERE $criteria.CompositeIn("r", $AttachOperationKeys)

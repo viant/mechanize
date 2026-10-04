@@ -1,0 +1,8 @@
+{
+  "scenario": "isolation",
+  "persistedRun": true,
+  "foreignStateDenied": true,
+  "foreignOperationDenied": true,
+  "unguardedPatchDenied": true,
+  "dispatches": 1
+}

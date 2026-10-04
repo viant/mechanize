@@ -1,0 +1,14 @@
+#package('github.com/viant/mechanize/data/statepatch')
+#setting($_ = $input_type('StatePatchInput'))
+#setting($_ = $output_type('StatePatchOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/statepatch', 'PATCH'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $Data<[]*RunState>(output/body))
+SELECT records.*, variables.*, unresolved.*,
+ type(records,'RunState'),type(variables,'Variable'),type(unresolved,'UnresolvedEffect'),
+ lifecycle_type(records,'RunStateLifecycle'),lifecycle_type(variables,'VariableLifecycle'),concurrency_token(records.revision)
+FROM (${embed:sql/root.sql}) records
+JOIN (${embed:sql/variables.sql}) variables ON variables.namespace = records.namespace AND variables.run_id = records.id
+JOIN (SELECT e.* FROM (effects) e WHERE e.namespace = :Namespace AND e.state IN ('intent','unknown')) unresolved ON unresolved.namespace = records.namespace AND unresolved.run_id = records.id

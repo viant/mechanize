@@ -1,0 +1,11 @@
+#package('github.com/viant/mechanize/data/leaseeffects')
+#setting($_ = $input_type('LeaseEffectsInput'))
+#setting($_ = $output_type('LeaseEffectsOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/leaseeffects', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $LeaseEpoch<int>(query/leaseEpoch).Required())
+#define($_ = $Data<[]*LeaseAttempt>(output/view))
+SELECT records.*,type(records,'LeaseAttempt')
+FROM (${embed:sql/root.sql}) records

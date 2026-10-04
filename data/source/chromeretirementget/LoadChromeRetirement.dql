@@ -1,0 +1,14 @@
+#package('github.com/viant/mechanize/data/chromeretirementget')
+#setting($_ = $input_type('LoadChromeRetirementInput'))
+#setting($_ = $output_type('LoadChromeRetirementOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/chromeretirementget', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $ClientID<string>(query/clientId).Required())
+#define($_ = $TransitionID<string>(query/transitionId).Required())
+#define($_ = $Data<[]*Retirement>(output/view))
+SELECT records.*,manifests.*,audit.*,type(records,'Retirement'),type(manifests,'Manifest'),type(audit,'Audit')
+FROM (${embed:sql/root.sql}) records
+JOIN (${embed:sql/manifests.sql}) manifests ON manifests.namespace=records.namespace AND manifests.transition_id=records.id
+JOIN (${embed:sql/audit.sql}) audit ON audit.namespace=records.namespace AND audit.transition_id=records.id

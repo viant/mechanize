@@ -1,0 +1,11 @@
+#package('github.com/viant/mechanize/data/consenttrusted')
+#setting($_ = $input_type('ListTrustedInput'))
+#setting($_ = $output_type('ListTrustedOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/consenttrusted', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $ClientID<string>(query/clientID).Required())
+#define($_ = $Data<[]*Record>(output/view))
+SELECT records.*,type(records,'Record'),set_limit(records,257)
+FROM (${embed:sql/root.sql}) records

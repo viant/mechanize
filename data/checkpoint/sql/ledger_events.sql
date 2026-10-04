@@ -1,0 +1,1 @@
+SELECT * FROM (SELECT e.* FROM (events) e WHERE e.namespace=:Namespace) ledgerEvents

@@ -1,0 +1,186 @@
+pipeline:
+  session:
+    action: mcp/runner:call
+    url: "$endpoint"
+    bearerTokenSecret: "$credentialResource"
+    name: mechanize_session_open
+    arguments:
+      name: Session keyboard fixture qualification
+    post:
+      sessionId: "$StructuredContent.sessionId"
+  run:
+    action: mcp/runner:call
+    url: "$endpoint"
+    bearerTokenSecret: "$credentialResource"
+    name: mechanize_script_run
+    arguments:
+      sessionId: "$sessionId"
+      purpose: Open the fixture folder sheet and exercise its explicit session-key route once
+      clientRequestId: "$requestId"
+      format: yaml
+      inputs:
+        fixturePID:
+          kind: number
+          number: $AsInt($fixturePID)
+        fixtureBirth:
+          kind: string
+          string: "$fixtureBirth"
+      source: |
+        ---
+        schemaVersion: 1
+        name: Session keyboard fixture
+        goal:
+          description: Open the inert fixture's folder sheet, focus its file list, and verify the explicit Command-Shift-G session-key route.
+          successCriteria:
+          - The folder sheet exposes an enabled Cancel button.
+          - The Go to Folder window appears in the same exact fixture process.
+        inputs:
+          fixturePID: {type: number, required: true}
+          fixtureBirth: {type: string, required: true}
+        requires:
+          adapters: [native]
+        surfaces:
+          fixture:
+            kind: native
+            bundleId: com.viant.mechanize.keyboardfixture
+            processId: $fixturePID
+            processStartToken: "$fixtureBirth"
+        steps:
+        - id: open-folder-sheet
+          purpose: Click Choose folder exactly once and verify the sheet's Cancel button exists.
+          timeoutMs: 10000
+          command: 'fixture.getById("choose-folder", exact: true).click()'
+          effect:
+            businessKey:
+              application: {kind: string, string: com.viant.mechanize.keyboardfixture}
+              processId: {kind: reference, ref: input.fixturePID, expected: number}
+              processBirth: {kind: reference, ref: input.fixtureBirth, expected: string}
+              action: {kind: string, string: choose-folder-sheet}
+            reconcile:
+              kind: adapter
+              adapter: native
+              name: valueEquals
+              scope: {surfaceRef: fixture}
+              timeoutMs: 10000
+              freshnessMs: 1000
+              requiredAuthority: observational
+              inputs:
+                bundleID: {kind: string, string: com.viant.mechanize.keyboardfixture}
+                processId: {kind: reference, ref: input.fixturePID, expected: number}
+                processStartToken: {kind: reference, ref: input.fixtureBirth, expected: string}
+                strategy: {kind: string, string: id}
+                selector: {kind: string, string: CancelButton}
+                attribute: {kind: string, string: identifier}
+                expected: {kind: string, string: CancelButton}
+          postcondition:
+            kind: adapter
+            adapter: native
+            name: valueEquals
+            scope: {surfaceRef: fixture}
+            timeoutMs: 10000
+            freshnessMs: 1000
+            requiredAuthority: observational
+            inputs:
+              bundleID: {kind: string, string: com.viant.mechanize.keyboardfixture}
+              processId: {kind: reference, ref: input.fixturePID, expected: number}
+              processStartToken: {kind: reference, ref: input.fixtureBirth, expected: string}
+              strategy: {kind: string, string: id}
+              selector: {kind: string, string: CancelButton}
+              attribute: {kind: string, string: identifier}
+              expected: {kind: string, string: CancelButton}
+        - id: verify-cancel-enabled
+          purpose: Independently verify the visible sheet's Cancel button is enabled before continuing.
+          timeoutMs: 10000
+          command: 'expect(fixture.getById("CancelButton", exact: true)).toBeEnabled()'
+        - id: focus-list-view
+          purpose: Focus the exact file list and independently verify fresh focused=true before sending a session key.
+          timeoutMs: 10000
+          command: 'fixture.getById("ListView", exact: true).focus()'
+          effect:
+            businessKey:
+              application: {kind: string, string: com.viant.mechanize.keyboardfixture}
+              processId: {kind: reference, ref: input.fixturePID, expected: number}
+              processBirth: {kind: reference, ref: input.fixtureBirth, expected: string}
+              action: {kind: string, string: focus-list-view}
+          postcondition:
+            kind: adapter
+            adapter: native
+            name: valueEquals
+            scope: {surfaceRef: fixture}
+            timeoutMs: 10000
+            freshnessMs: 1000
+            requiredAuthority: observational
+            inputs:
+              bundleID: {kind: string, string: com.viant.mechanize.keyboardfixture}
+              processId: {kind: reference, ref: input.fixturePID, expected: number}
+              processStartToken: {kind: reference, ref: input.fixtureBirth, expected: string}
+              strategy: {kind: string, string: id}
+              selector: {kind: string, string: ListView}
+              attribute: {kind: string, string: focused}
+              expected: {kind: boolean, boolean: true}
+        - id: open-go-to-window
+          purpose: Send Command-Shift-G once through the explicit session-key route to the observed ListView.
+          timeoutMs: 10000
+          command: 'fixture.getById("ListView", exact: true).pressSessionKey("Cmd+Shift+G")'
+          effect:
+            businessKey:
+              application: {kind: string, string: com.viant.mechanize.keyboardfixture}
+              processId: {kind: reference, ref: input.fixturePID, expected: number}
+              processBirth: {kind: reference, ref: input.fixtureBirth, expected: string}
+              action: {kind: string, string: cmd-shift-g-go-to-window}
+            reconcile:
+              kind: adapter
+              adapter: native
+              name: valueEquals
+              scope: {surfaceRef: fixture}
+              timeoutMs: 10000
+              freshnessMs: 1000
+              requiredAuthority: observational
+              inputs:
+                bundleID: {kind: string, string: com.viant.mechanize.keyboardfixture}
+                processId: {kind: reference, ref: input.fixturePID, expected: number}
+                processStartToken: {kind: reference, ref: input.fixtureBirth, expected: string}
+                strategy: {kind: string, string: id}
+                selector: {kind: string, string: GoToWindow}
+                attribute: {kind: string, string: identifier}
+                expected: {kind: string, string: GoToWindow}
+          postcondition:
+            kind: adapter
+            adapter: native
+            name: valueEquals
+            scope: {surfaceRef: fixture}
+            timeoutMs: 10000
+            freshnessMs: 1000
+            requiredAuthority: observational
+            inputs:
+              bundleID: {kind: string, string: com.viant.mechanize.keyboardfixture}
+              processId: {kind: reference, ref: input.fixturePID, expected: number}
+              processStartToken: {kind: reference, ref: input.fixtureBirth, expected: string}
+              strategy: {kind: string, string: id}
+              selector: {kind: string, string: GoToWindow}
+              attribute: {kind: string, string: identifier}
+              expected: {kind: string, string: GoToWindow}
+    post:
+      operationId: "$StructuredContent.operationId"
+  wait:
+    action: mcp/runner:call
+    url: "$endpoint"
+    bearerTokenSecret: "$credentialResource"
+    name: mechanize_operation_status
+    arguments:
+      sessionId: "$sessionId"
+      operationId: "$operationId"
+    repeat: 160
+    sleepTimeMs: 250
+    exit: "$keyboardOperationStatus:succeeded || $keyboardOperationStatus:failed || $keyboardOperationStatus:cancelled"
+    post:
+      keyboardOperationStatus: "$StructuredContent.executionStatus"
+      operation: "$StructuredContent"
+  reportOperation:
+    action: print
+    message: "$AsJSON($operation)"
+  assertCompleted:
+    action: validator:assert
+    name: Session keyboard fixture postconditions passed
+    actual: "$keyboardOperationStatus"
+    expect: succeeded

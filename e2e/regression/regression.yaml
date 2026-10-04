@@ -1,0 +1,49 @@
+pipeline:
+  setup:
+    action: exec:run
+    checkError: true
+    commands:
+      - test -x ${appPath}/e2e/.bin/fixture
+  app:
+    action: run
+    request: '@app'
+  testGateway:
+    tag: $pathMatch
+    subPath: 'cases/gateway/${index}_*'
+    range: 001..002
+    template:
+      testMCP:
+        action: run
+        init:
+          parentPath: $path
+        request: '@test'
+  testIdentity:
+    tag: $pathMatch
+    subPath: 'cases/identity/${index}_*'
+    range: 001..001
+    template:
+      testMCP:
+        action: run
+        init:
+          parentPath: $path
+        request: '@test'
+  testDurability:
+    tag: $pathMatch
+    subPath: 'cases/durability/${index}_*'
+    range: 001..001
+    template:
+      testMCP:
+        action: run
+        init:
+          parentPath: $path
+        request: '@test'
+  testState:
+    tag: $pathMatch
+    subPath: 'cases/state/${index}_*'
+    range: 001..001
+    template:
+      testMCP:
+        action: run
+        init:
+          parentPath: $path
+        request: '@test'

@@ -1,0 +1,8 @@
+pipeline:
+  helper:
+    action: exec:run
+    checkError: true
+    TimeoutMs: 120000
+    commands:
+      - cd $appPath
+      - go build -o e2e/.bin/fixture ./e2e/tools/fixture

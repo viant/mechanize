@@ -1,0 +1,17 @@
+#package('github.com/viant/mechanize/data/loadrun')
+#setting($_ = $input_type('LoadRunInput'))
+#setting($_ = $output_type('LoadRunOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/loadrun', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $RunID<string>(query/runId).Required())
+#define($_ = $Data<[]*Run>(output/view))
+SELECT records.*, events.*, plan.*, attempts.*, effects.*, checkpoints.*, milestones.*, type(records,'Run'),type(events,'Event'), type(plan,'PlanRevision'), type(attempts,'Attempt'), type(effects,'Effect'), type(checkpoints,'Checkpoint'), type(milestones,'Milestone')
+FROM (${embed:sql/root.sql}) records
+JOIN (SELECT a.* FROM attempts a WHERE a.namespace = :Namespace) attempts ON attempts.namespace = records.namespace AND attempts.run_id = records.id
+JOIN (SELECT e.* FROM effects e WHERE e.namespace = :Namespace) effects ON effects.namespace = records.namespace AND effects.run_id = records.id
+JOIN (SELECT c.* FROM checkpoints c WHERE c.namespace = :Namespace) checkpoints ON checkpoints.namespace = records.namespace AND checkpoints.run_id = records.id
+JOIN (SELECT m.* FROM milestones m WHERE m.namespace = :Namespace) milestones ON milestones.namespace = records.namespace AND milestones.run_id = records.id
+JOIN (SELECT p.* FROM plan_revisions p WHERE p.namespace = :Namespace) plan ON plan.namespace = records.namespace AND plan.id = records.plan_id AND 1=1
+JOIN (SELECT e.* FROM events e WHERE e.namespace=:Namespace) events ON events.namespace=records.namespace AND events.run_id=records.id

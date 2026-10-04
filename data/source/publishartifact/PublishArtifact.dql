@@ -1,0 +1,10 @@
+#package('github.com/viant/mechanize/data/publishartifact')
+#setting($_ = $input_type('PublishArtifactInput'))
+#setting($_ = $output_type('PublishArtifactOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/publishartifact', 'POST'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $Data<[]*Artifact>(output/body))
+SELECT records.*,type(records,'Artifact'),lifecycle_type(records,'ArtifactLifecycle')
+FROM (${embed:sql/root.sql}) records

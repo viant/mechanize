@@ -1,0 +1,2 @@
+SELECT * FROM (SELECT a.* FROM effects a JOIN (SELECT b.* FROM chrome_attempt_bindings b WHERE b.namespace=:Namespace AND b.client_id=:ClientID AND b.browser_attempt_id=:BrowserAttemptID) selected ON a.namespace=selected.namespace AND a.id=selected.effect_id WHERE a.namespace=:Namespace
+) effect

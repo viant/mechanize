@@ -1,0 +1,90 @@
+{
+  "status": "in_progress",
+  "topic": "Freddie Mac weekly U.S. national average mortgage rates",
+  "source": {
+    "name": "Freddie Mac Primary Mortgage Market Survey (PMMS)",
+    "url": "https://www.freddiemac.com/pmms",
+    "release_date": "2026-10-01",
+    "survey_period": {
+      "start": "2026-09-24",
+      "end": "2026-09-30"
+    },
+    "prior_release_date": "2026-09-24",
+    "limitations": "Weekly survey averages; not daily rates, APRs, or borrower-specific quotes."
+  },
+  "rates": {
+    "units": "annual rate as decimal fraction",
+    "current": {
+      "date": "2026-10-01",
+      "30_year_fixed": 0.0728,
+      "15_year_fixed": 0.066
+    },
+    "prior": {
+      "date": "2026-09-24",
+      "30_year_fixed": 0.0703,
+      "15_year_fixed": 0.0642
+    },
+    "calculated": {
+      "30_year_change_percentage_points": 0.25,
+      "30_year_change_basis_points": 25,
+      "15_year_change_percentage_points": 0.18,
+      "15_year_change_basis_points": 18,
+      "current_30_minus_15_spread_basis_points": 68,
+      "prior_30_minus_15_spread_basis_points": 61,
+      "spread_change_basis_points": 7
+    }
+  },
+  "writer_summary": "Freddie Mac’s October 1, 2026, weekly survey reported U.S. average mortgage rates of 7.28% for a 30-year fixed loan and 6.60% for a 15-year fixed loan. Compared with the September 24 release, the 30-year average rose 0.25 percentage points (25 basis points), while the 15-year average rose 0.18 points (18 basis points). The gap between the two terms widened from 0.61 to 0.68 percentage points. The October 1 release covers the survey period September 24–30. These figures are weekly survey averages, not daily rates, APRs, or a quote for an individual borrower. Source: Freddie Mac Primary Mortgage Market Survey, https://www.freddiemac.com/pmms.",
+  "calc_table_plan": {
+    "sheet_name": "Sheet1",
+    "columns": [
+      "Date",
+      "30yr fixed",
+      "15yr fixed",
+      "Spread bp"
+    ],
+    "rows": [
+      {
+        "row": 2,
+        "date": "2026-09-24",
+        "30_year_fixed": 0.0703,
+        "15_year_fixed": 0.0642
+      },
+      {
+        "row": 3,
+        "date": "2026-10-01",
+        "30_year_fixed": 0.0728,
+        "15_year_fixed": 0.066
+      }
+    ],
+    "formulas": {
+      "D2": "=ROUND((B2-C2)*10000;0)",
+      "D3": "=ROUND((B3-C3)*10000;0)",
+      "B4": "=ROUND((B3-B2)*10000;0)",
+      "C4": "=ROUND((C3-C2)*10000;0)",
+      "D4": "=D3-D2"
+    },
+    "expected_formula_results": {
+      "D2": 61,
+      "D3": 68,
+      "B4": 25,
+      "C4": 18,
+      "D4": 7
+    },
+    "labels": {
+      "A4": "Change bp"
+    },
+    "notes": {
+      "A6": "Source: https://www.freddiemac.com/pmms",
+      "A7": "Weekly survey averages; not daily rates, APRs, or individual quotes.",
+      "A8": "October 1 release covers September 24-30, 2026."
+    }
+  },
+  "intended_output": {
+    "directory": "/Users/awitas/Documents/Mechanize Examples/Mortgage Rates 2026-10-01",
+    "writer_file": "Mortgage Rates 2026-10-01.odt",
+    "calc_file": "Mortgage Rates 2026-10-01.ods",
+    "creation_method": "Mechanize UI automation orchestrated by Endly; do not generate headlessly",
+    "actual_save_path_must_be_verified": true
+  }
+}

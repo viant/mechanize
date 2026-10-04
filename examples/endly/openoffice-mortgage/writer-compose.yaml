@@ -1,0 +1,178 @@
+# Reusable compose stage for one newly created, empty Writer document.
+# The summary default mirrors data.json: writer_summary (public text, under 180 words).
+# This is a staged UI workflow, not an end-to-end qualification for save/export.
+init:
+  - name: endpoint
+    from: endpoint
+    required: true
+  - name: credentialResource
+    from: credentialResource
+    required: true
+  - name: officePid
+    from: officePid
+    required: true
+  - name: officeBirth
+    from: officeBirth
+    required: true
+  - name: requestId
+    from: requestId
+    required: true
+  - name: sessionId
+    from: sessionId
+    value: ''
+  - name: writerSummary
+    from: writerSummary
+    value: 'Freddie Mac’s October 1, 2026, weekly survey reported U.S. average mortgage rates of 7.28% for a 30-year fixed loan and 6.60% for a 15-year fixed loan. Compared with the September 24 release, the 30-year average rose 0.25 percentage points (25 basis points), while the 15-year average rose 0.18 points (18 basis points). The gap between the two terms widened from 0.61 to 0.68 percentage points. The October 1 release covers the survey period September 24–30. These figures are weekly survey averages, not daily rates, APRs, or a quote for an individual borrower. Source: Freddie Mac Primary Mortgage Market Survey, https://www.freddiemac.com/pmms.'
+  - name: writerPlan
+    value:
+      schemaVersion: 1
+      name: Compose the mortgage summary in a new empty Writer document
+      goal:
+        description: Enter the source-checked public mortgage summary into the exact focused textbox of a newly created empty Writer document.
+        successCriteria:
+          - The exact summary is present in the focused Writer text element.
+      inputs:
+        writerSummary: {type: string, required: true}
+      bindings:
+        - name: summary
+          type: value
+          value: {kind: reference, ref: input.writerSummary, expected: string}
+      surfaces:
+        office:
+          kind: native
+          bundleId: org.openoffice.script
+          processId: $AsInt($officePid)
+          processStartToken: $officeBirth
+      requires:
+        adapters: [native]
+      steps:
+        - id: activate-writer
+          purpose: Activate the exact OpenOffice process that owns the newly created blank Writer document.
+          timeoutMs: 10000
+          command: office.activate()
+          effect:
+            businessKey:
+              task: {kind: string, string: mortgage-writer-compose}
+              processId: {kind: number, number: $AsInt($officePid)}
+              processStartToken: {kind: string, string: $officeBirth}
+        - id: guard-writer-kind
+          purpose: Confirm the observed Writer Table menu is enabled before editing.
+          timeoutMs: 10000
+          command: 'expect(office.menuBar().getByRole("menuitem", name: "Table", exact: true)).toBeEnabled()'
+        - id: replace-empty-writer-text
+          purpose: Replace the text only when the exact focused Writer textbox is empty, then compare the literal text independently.
+          timeoutMs: 10000
+          command: 'office.focusedElement().getByRole("textbox", exact: true).replaceText(summary)'
+          effect:
+            businessKey:
+              task: {kind: string, string: mortgage-writer-summary-compose}
+              processId: {kind: number, number: $AsInt($officePid)}
+              processStartToken: {kind: string, string: $officeBirth}
+            reconcile:
+              kind: adapter
+              adapter: native
+              name: literalValueMatches
+              scope: {surfaceRef: office}
+              timeoutMs: 10000
+              freshnessMs: 1000
+              requiredAuthority: observational
+              inputs:
+                bundleID: {kind: string, string: org.openoffice.script}
+                processId: {kind: number, number: $AsInt($officePid)}
+                processStartToken: {kind: string, string: $officeBirth}
+                strategy: {kind: string, string: role}
+                selector: {kind: string, string: textbox}
+                nativeRoot: {kind: string, string: focusedElement}
+                attribute: {kind: string, string: value}
+                expected: {kind: reference, ref: input.writerSummary, expected: string}
+          precondition:
+            kind: adapter
+            adapter: native
+            name: literalValueMatches
+            scope: {surfaceRef: office}
+            timeoutMs: 10000
+            freshnessMs: 1000
+            requiredAuthority: observational
+            inputs:
+              bundleID: {kind: string, string: org.openoffice.script}
+              processId: {kind: number, number: $AsInt($officePid)}
+              processStartToken: {kind: string, string: $officeBirth}
+              strategy: {kind: string, string: role}
+              selector: {kind: string, string: textbox}
+              nativeRoot: {kind: string, string: focusedElement}
+              attribute: {kind: string, string: value}
+              expected: {kind: string, string: ""}
+          postcondition:
+            kind: adapter
+            adapter: native
+            name: literalValueMatches
+            scope: {surfaceRef: office}
+            timeoutMs: 10000
+            freshnessMs: 1000
+            requiredAuthority: observational
+            inputs:
+              bundleID: {kind: string, string: org.openoffice.script}
+              processId: {kind: number, number: $AsInt($officePid)}
+              processStartToken: {kind: string, string: $officeBirth}
+              strategy: {kind: string, string: role}
+              selector: {kind: string, string: textbox}
+              nativeRoot: {kind: string, string: focusedElement}
+              attribute: {kind: string, string: value}
+              expected: {kind: reference, ref: input.writerSummary, expected: string}
+  - name: writerRequest
+    value:
+      format: json
+      source: $AsJSON($writerPlan)
+      inputs:
+        writerSummary: {kind: string, string: $writerSummary}
+
+pipeline:
+  preview:
+    action: print
+    message: "$AsJSON($writerRequest)"
+
+  session:
+    when: '$Len($sessionId) == 0'
+    action: mcp/runner:call
+    url: "$endpoint"
+    bearerTokenSecret: "$credentialResource"
+    name: mechanize_session_open
+    arguments:
+      name: Compose the source-checked public mortgage summary in Writer
+    post:
+      sessionId: "$StructuredContent.sessionId"
+
+  stage:
+    action: mcp/runner:call
+    url: "$endpoint"
+    bearerTokenSecret: "$credentialResource"
+    name: mechanize_script_run
+    arguments:
+      sessionId: "$sessionId"
+      purpose: Compose the source-checked public mortgage summary in a new empty Writer document
+      clientRequestId: "$requestId"
+      format: "$writerRequest.format"
+      inputs: "$writerRequest.inputs"
+      source: "$writerRequest.source"
+    post:
+      operationId: "$StructuredContent.operationId"
+      runId: "$StructuredContent.runId"
+
+  wait:
+    action: mcp/runner:call
+    url: "$endpoint"
+    bearerTokenSecret: "$credentialResource"
+    name: mechanize_operation_status
+    arguments:
+      sessionId: "$sessionId"
+      operationId: "$operationId"
+    repeat: 120
+    sleepTimeMs: 250
+    exit: "$operationStatus:succeeded || $operationStatus:failed || $operationStatus:cancelled || $operationStatus:unknown"
+    post:
+      operationStatus: "$StructuredContent.executionStatus"
+      operation: "$StructuredContent"
+
+  report:
+    action: print
+    message: "$AsJSON($operation)"

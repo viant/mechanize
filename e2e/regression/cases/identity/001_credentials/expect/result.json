@@ -1,0 +1,5 @@
+{
+  "scenario": "auth",
+  "deniedCredentials": 3,
+  "dispatches": 0
+}

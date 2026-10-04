@@ -1,0 +1,1 @@
+SELECT a.* FROM attempts a WHERE a.namespace=:Namespace AND a.id=:AttemptID

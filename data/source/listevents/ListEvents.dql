@@ -1,0 +1,11 @@
+#package('github.com/viant/mechanize/data/listevents')
+#setting($_ = $input_type('ListEventsInput'))
+#setting($_ = $output_type('ListEventsOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/listevents', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $RunID<string>(query/runId).Required())
+#define($_ = $Data<[]*Event>(output/view))
+SELECT records.*,set_limit(records,200),type(records,'Event')
+FROM (${embed:sql/root.sql}) records

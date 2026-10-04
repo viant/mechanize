@@ -1,0 +1,16 @@
+pipeline:
+  start:
+    action: exec:run
+    checkError: true
+    commands:
+      - cd ${appPath}/e2e
+      - ./.bin/fixture start
+  readiness:
+    action: http/runner:send
+    requests:
+      - Method: GET
+        URL: http://127.0.0.1:18767/health
+        Expect:
+          Code: 200
+          JSONBody:
+            ready: true

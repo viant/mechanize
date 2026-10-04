@@ -1,0 +1,11 @@
+#package('github.com/viant/mechanize/data/applicationpolicywrite')
+#setting($_ = $input_type('WriteApplicationPolicyInput'))
+#setting($_ = $output_type('WriteApplicationPolicyOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/applicationpolicywrite', 'PATCH'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $ExpectedRevision<int>(query/expectedRevision).Required())
+#define($_ = $Data<[]*PolicyRecord>(output/body))
+SELECT records.*,type(records,'PolicyRecord'),lifecycle_type(records,'PolicyRecordLifecycle'),concurrency_token(records.revision)
+FROM (${embed:sql/root.sql}) records

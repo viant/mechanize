@@ -1,0 +1,1 @@
+SELECT r.namespace, r.id, r.run_id, r.attempt_id, r.sequence, r.kind, r.payload_json, r.created_at FROM (SELECT * FROM (SELECT e.* FROM events e WHERE e.namespace = :Namespace) events) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentEventsParentKeys($CurrentCommitOutcome))

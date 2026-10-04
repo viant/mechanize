@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "empty",
+      "manifest": {
+        "version": 1,
+        "identity": {
+          "profileChannel": "fixture-channel",
+          "browserInstance": "fixture-browser",
+          "tabId": 7,
+          "frameId": 0,
+          "documentId": "fixture-document"
+        },
+        "receiptRevision": 0,
+        "receipts": [],
+        "readiness": {
+          "quiesced": true,
+          "controlLeaseHeld": false,
+          "recordingState": "none",
+          "recordingLastSequence": 0,
+          "recordingDroppedThrough": 0,
+          "recordingLeaseExpiresUnixMs": 0
+        }
+      },
+      "canonical": "{\"identity\":{\"browserInstance\":\"fixture-browser\",\"documentId\":\"fixture-document\",\"frameId\":0,\"profileChannel\":\"fixture-channel\",\"tabId\":7},\"readiness\":{\"controlLeaseHeld\":false,\"quiesced\":true,\"recordingDroppedThrough\":0,\"recordingLastSequence\":0,\"recordingLeaseExpiresUnixMs\":0,\"recordingState\":\"none\"},\"receiptRevision\":0,\"receipts\":[],\"version\":1}",
+      "sha256": "ea0ffd8bd69a04335fb0ee8402ee7299be2b8cb19844c2b47e139a6caaa2a895"
+    },
+    {
+      "name": "resolved-nonempty",
+      "manifest": {
+        "version": 1,
+        "identity": {
+          "profileChannel": "fixture-channel",
+          "browserInstance": "fixture-browser",
+          "tabId": 7,
+          "frameId": 0,
+          "documentId": "fixture-document"
+        },
+        "receiptRevision": 2,
+        "receipts": [
+          {
+            "attemptId": "attempt-a",
+            "fingerprintSHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "dispatchState": "dispatched",
+            "effectState": "unverified"
+          },
+          {
+            "attemptId": "attempt-b",
+            "fingerprintSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "dispatchState": "notDispatched",
+            "effectState": "none",
+            "errorCode": "targetNotFound",
+            "errorDispatchState": "notDispatched"
+          }
+        ],
+        "readiness": {
+          "quiesced": true,
+          "controlLeaseHeld": false,
+          "recordingState": "none",
+          "recordingLastSequence": 0,
+          "recordingDroppedThrough": 0,
+          "recordingLeaseExpiresUnixMs": 0
+        }
+      },
+      "canonical": "{\"identity\":{\"browserInstance\":\"fixture-browser\",\"documentId\":\"fixture-document\",\"frameId\":0,\"profileChannel\":\"fixture-channel\",\"tabId\":7},\"readiness\":{\"controlLeaseHeld\":false,\"quiesced\":true,\"recordingDroppedThrough\":0,\"recordingLastSequence\":0,\"recordingLeaseExpiresUnixMs\":0,\"recordingState\":\"none\"},\"receiptRevision\":2,\"receipts\":[{\"attemptId\":\"attempt-a\",\"dispatchState\":\"dispatched\",\"effectState\":\"unverified\",\"fingerprintSHA256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"attemptId\":\"attempt-b\",\"dispatchState\":\"notDispatched\",\"effectState\":\"none\",\"errorCode\":\"targetNotFound\",\"errorDispatchState\":\"notDispatched\",\"fingerprintSHA256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}],\"version\":1}",
+      "sha256": "7a1f56f987feb4b336ce6a4c60d9a4b34f03df344185badb5323922b1211b2b7"
+    }
+  ]
+}

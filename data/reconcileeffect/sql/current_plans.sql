@@ -1,0 +1,1 @@
+SELECT r.namespace, r.id, r.parent_id, r.objective_id, r.content_hash, r.content_json, r.created_at FROM (SELECT * FROM (SELECT p.* FROM (plan_revisions) p WHERE p.namespace=:Namespace) plans) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentPlansKeys($ReconcileEffect, $CurrentReconcileEffect))

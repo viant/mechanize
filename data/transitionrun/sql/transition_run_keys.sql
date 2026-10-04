@@ -1,0 +1,1 @@
+SELECT Namespace AS Namespace, Id AS Id FROM `/`

@@ -1,0 +1,1 @@
+SELECT r.namespace, r.id, r.content_hash, r.size_bytes, r.media_type, r.key_reference, r.publication_state FROM (SELECT * FROM (SELECT a.* FROM (artifacts) a WHERE a.namespace=:Namespace AND a.id IN (:ArtifactIDs)) artifacts) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentArtifactsKeys($PublishCheckpoint, $CurrentPublishCheckpoint))

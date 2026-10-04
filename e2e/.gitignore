@@ -1,0 +1,6 @@
+.bin/
+.fixture.pid
+.fixture.log
+.*-output.log
+logs/
+reports/

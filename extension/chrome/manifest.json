@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Mechanize",
+  "version": "0.1.0",
+  "description": "Explicitly enrolled semantic browser transport for Mechanize.",
+  "permissions": ["nativeMessaging", "storage", "scripting", "webNavigation"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "background": {"service_worker": "worker.js", "type": "module"},
+  "options_page": "options.html",
+  "action": {"default_title": "Mechanize scoped browser automation"},
+  "minimum_chrome_version": "106",
+  "incognito": "not_allowed"
+}

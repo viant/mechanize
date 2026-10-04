@@ -1,0 +1,27 @@
+#package('github.com/viant/mechanize/data/chromeattemptbindingcreate')
+#setting($_ = $input_type('CreateChromeAttemptBindingInput'))
+#setting($_ = $output_type('CreateChromeAttemptBindingOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/chromeattemptbindingcreate', 'POST'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $ClientID<string>(query/clientId).Required())
+#define($_ = $AttemptID<string>(query/attemptId).Required())
+#define($_ = $EffectID<string>(query/effectId).Required())
+#define($_ = $RunID<string>(query/runId).Required())
+#define($_ = $PlanID<string>(query/planId).Required())
+#define($_ = $IntentRead<[]*IntentReadRow>(view/IntentRead) /* SELECT e.* FROM effects e WHERE e.namespace=:Namespace AND e.id=:EffectID AND e.attempt_id=:AttemptID */)
+#define($_ = $AttemptRead<[]*AttemptReadRow>(view/AttemptRead) /* SELECT a.* FROM attempts a WHERE a.namespace=:Namespace AND a.id=:AttemptID */)
+#define($_ = $RunRead<[]*RunReadRow>(view/RunRead) /* SELECT r.* FROM runs r WHERE r.namespace=:Namespace AND r.id=:RunID */)
+#define($_ = $PlanRead<[]*PlanReadRow>(view/PlanRead) /* SELECT p.* FROM plan_revisions p WHERE p.namespace=:Namespace AND p.id=:PlanID */)
+#define($_ = $IntentEventRead<[]*IntentEventRead>(view/IntentEventRead) /* SELECT e.* FROM events e WHERE e.namespace=:Namespace AND e.attempt_id=:AttemptID AND e.kind='intent' */)
+#define($_ = $Data<[]*Binding>(output/body))
+SELECT bindings.*,scopes.*,attempt.*,run.*,plan.*,intentEvent.*,
+ type(bindings,'Binding'),type(scopes,'CommittedIntent'),type(attempt,'CommittedAttempt'),type(run,'CommittedRun'),type(plan,'ImmutablePlan'),type(intentEvent,'IntentEvent'),
+ lifecycle_type(bindings,'BindingLifecycle')
+FROM (${embed:sql/bindings.sql}) bindings
+JOIN (effects) scopes ON scopes.namespace=bindings.namespace AND scopes.id=bindings.effect_id AND 1=1
+JOIN (attempts) attempt ON attempt.namespace=bindings.namespace AND attempt.id=bindings.durable_attempt_id AND 1=1
+JOIN (runs) run ON run.namespace=bindings.namespace AND run.id=bindings.run_id AND 1=1
+JOIN (plan_revisions) plan ON plan.namespace=bindings.namespace AND plan.id=bindings.plan_id AND 1=1
+JOIN (events) intentEvent ON intentEvent.namespace=bindings.namespace AND intentEvent.attempt_id=bindings.durable_attempt_id

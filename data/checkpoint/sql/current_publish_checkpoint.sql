@@ -1,0 +1,2 @@
+SELECT r.revision, r.namespace, r.id, r.plan_id, r.status FROM (SELECT * FROM  (SELECT r.namespace,r.id,r.plan_id,r.status,r.revision FROM runs r WHERE r.namespace=:Namespace
+)  records) r WHERE $criteria.CompositeIn("r", $PublishCheckpointKeys)

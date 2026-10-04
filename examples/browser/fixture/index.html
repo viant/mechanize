@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mechanize browser fixture</title>
+  <script src="/fixture.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>Mechanize browser fixture</h1>
+
+    <section aria-labelledby="counter-heading">
+      <h2 id="counter-heading">Counter</h2>
+      <button id="increment" type="button">Increment counter</button>
+      <p>Count: <output id="counter" aria-live="polite">0</output></p>
+    </section>
+
+    <section aria-labelledby="report-heading">
+      <h2 id="report-heading">Report title</h2>
+      <label for="report-title">Report title</label>
+      <input id="report-title" name="report-title" type="text" autocomplete="off">
+      <p>
+        <label for="echo">Echo</label>
+        <output id="echo" for="report-title" aria-live="polite"></output>
+      </p>
+    </section>
+  </main>
+</body>
+</html>

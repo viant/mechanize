@@ -1,0 +1,1 @@
+SELECT * FROM (SELECT a.* FROM attempts a WHERE a.namespace = :Namespace) attempts

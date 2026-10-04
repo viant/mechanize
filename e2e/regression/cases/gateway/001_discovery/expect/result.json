@@ -1,0 +1,7 @@
+{
+  "scenario": "discovery",
+  "transport": "MCP HTTP",
+  "schemaVersion": 1,
+  "skillCount": 3,
+  "skillsRead": 3
+}

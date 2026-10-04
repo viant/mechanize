@@ -1,0 +1,8 @@
+{
+  "name": "com.viant.mechanize",
+  "description": "Mechanize enrolled native messaging transport",
+  "path": "/absolute/path/to/mechanize-native-host",
+  "type": "stdio",
+  "supports_native_initiated_connections": true,
+  "allowed_origins": ["chrome-extension://REPLACE_WITH_EXACT_32_CHARACTER_EXTENSION_ID/"]
+}

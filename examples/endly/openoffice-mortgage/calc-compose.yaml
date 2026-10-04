@@ -1,0 +1,2111 @@
+# Prerequisite: saved Calc workbook with only A1=Date verified, selection A2.
+# Run verify-artifacts.py separately after save; UI success alone does not prove content.
+init:
+- {name: calcOperationId, value: ''}
+- {name: saveOperationId, value: ''}
+- {name: calcOperationStatus, value: ''}
+- {name: saveOperationStatus, value: ''}
+- {name: endpoint, from: endpoint, required: true}
+- {name: credentialResource, from: credentialResource, required: true}
+- {name: officePid, from: officePid, required: true}
+- {name: officeBirth, from: officeBirth, required: true}
+- {name: windowId, from: windowId, required: true}
+- {name: requestId, from: requestId, required: true}
+- {name: sessionId, from: sessionId, value: ''}
+- {name: calcRequestId, value: '${requestId}-calc-data'}
+- {name: saveRequestId, value: '${requestId}-calc-save'}
+- name: calcPlan
+  value:
+    schemaVersion: 1
+    name: Compose the mortgage comparison into a prequalified Calc workbook
+    goal:
+      description: 'Enter the verified mortgage comparison data into the already-saved blank Calc workbook. Prerequisite:
+        A1 contains the independently verified string Date and the current selection is A2.'
+      successCriteria: [The 106-step data-entry plan verifies each expected edit control and committed cell transition.,
+        'After a separate save run, the saved ODS passes the read-only artifact verifier.']
+    surfaces: &id075
+      office: {kind: native, bundleId: org.openoffice.script, processId: $AsInt($officePid), processStartToken: $officeBirth}
+    steps:
+    - id: activate-calc
+      purpose: Refresh foreground without changing cell contents
+      command: office.activate()
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-batch-activate-headers-commit-v2}
+          requestId: &id001 {kind: string, string: $calcRequestId}
+    - id: return-a1
+      purpose: Move from E1 to A1
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "Cmd+Home")'
+      effect:
+        businessKey:
+          task: {kind: string, string: calc-return-a1-repair-commit-v2}
+          requestId: *id001
+      precondition: &id024
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: &id002 {surfaceRef: office}
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: &id003 {kind: string, string: org.openoffice.script}
+          processStartToken: &id004 {kind: string, string: $officeBirth}
+          strategy: &id005 {kind: string, string: role}
+          selector: &id006 {kind: string, string: textbox}
+          nativeRoot: &id007 {kind: string, string: focusedElement}
+          attribute: &id008 {kind: string, string: name}
+          processId: &id009 {kind: number, number: $AsInt($officePid)}
+          expected: {kind: string, string: A2}
+      postcondition: &id010
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: A1}
+    - id: next-b1
+      purpose: Move from E1 to A1
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "ArrowRight")'
+      effect:
+        businessKey:
+          task: {kind: string, string: calc-next-b1-repair-commit-v2}
+          requestId: *id001
+      precondition: *id010
+      postcondition: &id011
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: B1}
+    - id: edit-B1
+      purpose: Enter the confirmed B1 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B1-edit-commit-v2}
+          requestId: *id001
+      precondition: *id011
+      postcondition: &id016
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: {kind: string, string: focused}
+          processId: *id009
+          expected: {kind: boolean, boolean: true}
+    - id: write-B1
+      purpose: Enter and verify the literal or formula in B1
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("30yr
+        fixed")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B1-write-commit-v2}
+          requestId: *id001
+      precondition: &id017
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: &id012 {kind: string, string: value}
+          processId: *id009
+          expected: {kind: string, string: ''}
+      postcondition: &id013
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: 30yr fixed}
+    - id: write-B1-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B1-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id013
+      postcondition: &id014
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' 30yr fixed'}
+    - id: write-B1-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B1-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id014
+      postcondition: *id013
+    - id: commit-B1
+      purpose: Commit B1 and verify selection at C1
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B1-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id015
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: C1}
+    - id: edit-C1
+      purpose: Enter the confirmed C1 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C1-edit-commit-v2}
+          requestId: *id001
+      precondition: *id015
+      postcondition: *id016
+    - id: write-C1
+      purpose: Enter and verify the literal or formula in C1
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("15yr
+        fixed")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C1-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id018
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: 15yr fixed}
+    - id: write-C1-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C1-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id018
+      postcondition: &id019
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' 15yr fixed'}
+    - id: write-C1-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C1-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id019
+      postcondition: *id018
+    - id: commit-C1
+      purpose: Commit C1 and verify selection at D1
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C1-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id020
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: D1}
+    - id: edit-D1
+      purpose: Enter the confirmed D1 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D1-edit-commit-v2}
+          requestId: *id001
+      precondition: *id020
+      postcondition: *id016
+    - id: write-D1
+      purpose: Enter and verify the literal or formula in D1
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("Spread
+        bp")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D1-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id021
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: Spread bp}
+    - id: write-D1-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D1-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id021
+      postcondition: &id022
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' Spread bp'}
+    - id: write-D1-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D1-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id022
+      postcondition: *id021
+    - id: commit-D1
+      purpose: Commit D1 and verify selection at E1
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D1-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id023
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: E1}
+    - id: row2-home
+      purpose: Move from E1 to A1
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "Home")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-row2-home-commit-v2}
+          requestId: *id001
+      precondition: *id023
+      postcondition: *id010
+    - id: row2-down
+      purpose: Move from A1 to A2
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "ArrowDown")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-row2-down-commit-v2}
+          requestId: *id001
+      precondition: *id010
+      postcondition: *id024
+    - id: edit-A2
+      purpose: Enter the confirmed A2 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A2-edit-commit-v2}
+          requestId: *id001
+      precondition: *id024
+      postcondition: *id016
+    - id: write-A2
+      purpose: Enter and verify the literal or formula in A2
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("2026-09-24")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A2-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id025
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: '2026-09-24'}
+    - id: write-A2-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A2-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id025
+      postcondition: &id026
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' 2026-09-24'}
+    - id: write-A2-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A2-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id026
+      postcondition: *id025
+    - id: commit-A2
+      purpose: Commit A2 and verify selection at B2
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A2-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id027
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: B2}
+    - id: edit-B2
+      purpose: Enter the confirmed B2 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B2-edit-commit-v2}
+          requestId: *id001
+      precondition: *id027
+      postcondition: *id016
+    - id: write-B2
+      purpose: Enter and verify the literal or formula in B2
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("7.03%")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B2-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id028
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: 7.03%}
+    - id: write-B2-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B2-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id028
+      postcondition: &id029
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' 7.03%'}
+    - id: write-B2-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B2-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id029
+      postcondition: *id028
+    - id: commit-B2
+      purpose: Commit B2 and verify selection at C2
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B2-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id030
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: C2}
+    - id: edit-C2
+      purpose: Enter the confirmed C2 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C2-edit-commit-v2}
+          requestId: *id001
+      precondition: *id030
+      postcondition: *id016
+    - id: write-C2
+      purpose: Enter and verify the literal or formula in C2
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("6.42%")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C2-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id031
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: 6.42%}
+    - id: write-C2-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C2-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id031
+      postcondition: &id032
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' 6.42%'}
+    - id: write-C2-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C2-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id032
+      postcondition: *id031
+    - id: commit-C2
+      purpose: Commit C2 and verify selection at D2
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C2-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id033
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: D2}
+    - id: edit-D2
+      purpose: Enter the confirmed D2 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D2-edit-commit-v2}
+          requestId: *id001
+      precondition: *id033
+      postcondition: *id016
+    - id: write-D2
+      purpose: Enter and verify the literal or formula in D2
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("=ROUND((B2-C2)*10000;0)")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D2-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id034
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: =ROUND((B2-C2)*10000;0)}
+    - id: write-D2-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D2-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id034
+      postcondition: &id035
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' =ROUND((B2-C2)*10000;0)'}
+    - id: write-D2-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D2-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id035
+      postcondition: *id034
+    - id: commit-D2
+      purpose: Commit D2 and verify selection at E2
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D2-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id036
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: E2}
+    - id: row3-home
+      purpose: Move from E2 to A2
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "Home")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-row3-home-commit-v2}
+          requestId: *id001
+      precondition: *id036
+      postcondition: *id024
+    - id: row3-down
+      purpose: Move from A2 to A3
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "ArrowDown")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-row3-down-commit-v2}
+          requestId: *id001
+      precondition: *id024
+      postcondition: &id037
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: A3}
+    - id: edit-A3
+      purpose: Enter the confirmed A3 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A3-edit-commit-v2}
+          requestId: *id001
+      precondition: *id037
+      postcondition: *id016
+    - id: write-A3
+      purpose: Enter and verify the literal or formula in A3
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("2026-10-01")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A3-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id038
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: '2026-10-01'}
+    - id: write-A3-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A3-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id038
+      postcondition: &id039
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' 2026-10-01'}
+    - id: write-A3-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A3-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id039
+      postcondition: *id038
+    - id: commit-A3
+      purpose: Commit A3 and verify selection at B3
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A3-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id040
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: B3}
+    - id: edit-B3
+      purpose: Enter the confirmed B3 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B3-edit-commit-v2}
+          requestId: *id001
+      precondition: *id040
+      postcondition: *id016
+    - id: write-B3
+      purpose: Enter and verify the literal or formula in B3
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("7.28%")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B3-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id041
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: 7.28%}
+    - id: write-B3-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B3-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id041
+      postcondition: &id042
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' 7.28%'}
+    - id: write-B3-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B3-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id042
+      postcondition: *id041
+    - id: commit-B3
+      purpose: Commit B3 and verify selection at C3
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B3-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id043
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: C3}
+    - id: edit-C3
+      purpose: Enter the confirmed C3 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C3-edit-commit-v2}
+          requestId: *id001
+      precondition: *id043
+      postcondition: *id016
+    - id: write-C3
+      purpose: Enter and verify the literal or formula in C3
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("6.60%")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C3-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id044
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: 6.60%}
+    - id: write-C3-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C3-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id044
+      postcondition: &id045
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' 6.60%'}
+    - id: write-C3-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C3-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id045
+      postcondition: *id044
+    - id: commit-C3
+      purpose: Commit C3 and verify selection at D3
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C3-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id046
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: D3}
+    - id: edit-D3
+      purpose: Enter the confirmed D3 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D3-edit-commit-v2}
+          requestId: *id001
+      precondition: *id046
+      postcondition: *id016
+    - id: write-D3
+      purpose: Enter and verify the literal or formula in D3
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("=ROUND((B3-C3)*10000;0)")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D3-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id047
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: =ROUND((B3-C3)*10000;0)}
+    - id: write-D3-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D3-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id047
+      postcondition: &id048
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' =ROUND((B3-C3)*10000;0)'}
+    - id: write-D3-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D3-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id048
+      postcondition: *id047
+    - id: commit-D3
+      purpose: Commit D3 and verify selection at E3
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D3-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id049
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: E3}
+    - id: row4-home
+      purpose: Move from E3 to A3
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "Home")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-row4-home-commit-v2}
+          requestId: *id001
+      precondition: *id049
+      postcondition: *id037
+    - id: row4-down
+      purpose: Move from A3 to A4
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "ArrowDown")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-row4-down-commit-v2}
+          requestId: *id001
+      precondition: *id037
+      postcondition: &id050
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: A4}
+    - id: edit-A4
+      purpose: Enter the confirmed A4 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A4-edit-commit-v2}
+          requestId: *id001
+      precondition: *id050
+      postcondition: *id016
+    - id: write-A4
+      purpose: Enter and verify the literal or formula in A4
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("Change
+        bp")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A4-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id051
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: Change bp}
+    - id: write-A4-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A4-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id051
+      postcondition: &id052
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' Change bp'}
+    - id: write-A4-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A4-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id052
+      postcondition: *id051
+    - id: commit-A4
+      purpose: Commit A4 and verify selection at B4
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A4-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id053
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: B4}
+    - id: edit-B4
+      purpose: Enter the confirmed B4 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B4-edit-commit-v2}
+          requestId: *id001
+      precondition: *id053
+      postcondition: *id016
+    - id: write-B4
+      purpose: Enter and verify the literal or formula in B4
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("=ROUND((B3-B2)*10000;0)")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B4-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id054
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: =ROUND((B3-B2)*10000;0)}
+    - id: write-B4-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B4-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id054
+      postcondition: &id055
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' =ROUND((B3-B2)*10000;0)'}
+    - id: write-B4-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B4-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id055
+      postcondition: *id054
+    - id: commit-B4
+      purpose: Commit B4 and verify selection at C4
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-B4-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id056
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: C4}
+    - id: edit-C4
+      purpose: Enter the confirmed C4 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C4-edit-commit-v2}
+          requestId: *id001
+      precondition: *id056
+      postcondition: *id016
+    - id: write-C4
+      purpose: Enter and verify the literal or formula in C4
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("=ROUND((C3-C2)*10000;0)")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C4-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id057
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: =ROUND((C3-C2)*10000;0)}
+    - id: write-C4-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C4-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id057
+      postcondition: &id058
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' =ROUND((C3-C2)*10000;0)'}
+    - id: write-C4-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C4-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id058
+      postcondition: *id057
+    - id: commit-C4
+      purpose: Commit C4 and verify selection at D4
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-C4-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id059
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: D4}
+    - id: edit-D4
+      purpose: Enter the confirmed D4 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D4-edit-commit-v2}
+          requestId: *id001
+      precondition: *id059
+      postcondition: *id016
+    - id: write-D4
+      purpose: Enter and verify the literal or formula in D4
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("=D3-D2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D4-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id060
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: =D3-D2}
+    - id: write-D4-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D4-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id060
+      postcondition: &id061
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' =D3-D2'}
+    - id: write-D4-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D4-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id061
+      postcondition: *id060
+    - id: commit-D4
+      purpose: Commit D4 and verify selection at E4
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-D4-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id062
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: E4}
+    - id: notes-home
+      purpose: Move from E4 to A4
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "Home")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-notes-home-commit-v2}
+          requestId: *id001
+      precondition: *id062
+      postcondition: *id050
+    - id: notes-down5
+      purpose: Move from A4 to A5
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "ArrowDown")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-notes-down5-commit-v2}
+          requestId: *id001
+      precondition: *id050
+      postcondition: &id063
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: A5}
+    - id: notes-down6
+      purpose: Move from A5 to A6
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "ArrowDown")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-notes-down6-commit-v2}
+          requestId: *id001
+      precondition: *id063
+      postcondition: &id064
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: A6}
+    - id: edit-A6
+      purpose: Enter the confirmed A6 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A6-edit-commit-v2}
+          requestId: *id001
+      precondition: *id064
+      postcondition: *id016
+    - id: write-A6
+      purpose: Enter and verify the literal or formula in A6
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("Source:
+        https://www.freddiemac.com/pmms")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A6-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id065
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: 'Source: https://www.freddiemac.com/pmms'}
+    - id: write-A6-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A6-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id065
+      postcondition: &id066
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' Source: https://www.freddiemac.com/pmms'}
+    - id: write-A6-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A6-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id066
+      postcondition: *id065
+    - id: commit-A6
+      purpose: Commit A6 and verify selection at B6
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A6-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id067
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: B6}
+    - id: notes-home6
+      purpose: Move from B6 to A6
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "Home")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-notes-home6-commit-v2}
+          requestId: *id001
+      precondition: *id067
+      postcondition: *id064
+    - id: notes-down7
+      purpose: Move from A6 to A7
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "ArrowDown")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-notes-down7-commit-v2}
+          requestId: *id001
+      precondition: *id064
+      postcondition: &id068
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: A7}
+    - id: edit-A7
+      purpose: Enter the confirmed A7 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A7-edit-commit-v2}
+          requestId: *id001
+      precondition: *id068
+      postcondition: *id016
+    - id: write-A7
+      purpose: Enter and verify the literal or formula in A7
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("Weekly
+        survey averages; not daily rates, APRs, or individual quotes.")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A7-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id069
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: 'Weekly survey averages; not daily rates, APRs, or individual quotes.'}
+    - id: write-A7-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A7-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id069
+      postcondition: &id070
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' Weekly survey averages; not daily rates, APRs, or individual quotes.'}
+    - id: write-A7-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A7-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id070
+      postcondition: *id069
+    - id: commit-A7
+      purpose: Commit A7 and verify selection at B7
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A7-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id071
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: B7}
+    - id: notes-home7
+      purpose: Move from B7 to A7
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "Home")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-notes-home7-commit-v2}
+          requestId: *id001
+      precondition: *id071
+      postcondition: *id068
+    - id: notes-down8
+      purpose: Move from A7 to A8
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "ArrowDown")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-notes-down8-commit-v2}
+          requestId: *id001
+      precondition: *id068
+      postcondition: &id072
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: A8}
+    - id: edit-A8
+      purpose: Enter the confirmed A8 editor
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "F2")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A8-edit-commit-v2}
+          requestId: *id001
+      precondition: *id072
+      postcondition: *id016
+    - id: write-A8
+      purpose: Enter and verify the literal or formula in A8
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).replaceText("October
+        1 release covers September 24-30, 2026.")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A8-write-commit-v2}
+          requestId: *id001
+      precondition: *id017
+      postcondition: &id073
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: 'October 1 release covers September 24-30, 2026.'}
+    - id: write-A8-space
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Space")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A8-write-commit-v2-Space}
+          requestId: *id001
+      precondition: *id073
+      postcondition: &id074
+        kind: adapter
+        adapter: native
+        name: literalValueMatches
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id012
+          processId: *id009
+          expected: {kind: string, string: ' October 1 release covers September 24-30, 2026.'}
+    - id: write-A8-backspace
+      purpose: Apply and verify native edit notification before cell commit
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Backspace")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A8-write-commit-v2-Backspace}
+          requestId: *id001
+      precondition: *id074
+      postcondition: *id073
+    - id: commit-A8
+      purpose: Commit A8 and verify selection at B8
+      command: 'office.focusedElement().getByRole("textbox", name: "Paragraph 0", exact: true).pressSessionKey("Tab")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-A8-commit-commit-v2}
+          requestId: *id001
+      postcondition: &id078
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: *id002
+        timeoutMs: 10000
+        freshnessMs: 2000
+        requiredAuthority: observational
+        inputs:
+          bundleID: *id003
+          processStartToken: *id004
+          strategy: *id005
+          selector: *id006
+          nativeRoot: *id007
+          attribute: *id008
+          processId: *id009
+          expected: {kind: string, string: B8}
+    requires: &id076
+      adapters: [native]
+- {name: calcSource, value: $AsJSON($calcPlan)}
+- name: savePlan
+  value:
+    schemaVersion: 1
+    name: Save the populated mortgage comparison workbook
+    goal:
+      description: Send Cmd+S once after the table plan leaves Calc selected at B8; the downstream artifact verifier
+        checks saved bytes.
+      successCriteria: [Calc returns to the expected B8 selection after the save command.]
+    surfaces: *id075
+    requires: *id076
+    steps:
+    - id: activate-calc-for-save
+      purpose: Activate the exact Calc process before saving its populated workbook.
+      timeoutMs: 10000
+      command: office.activate()
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-save-activate}
+          requestId: &id077 {kind: string, string: $saveRequestId}
+    - id: save-calc
+      purpose: Send Cmd+S once from the already-saved workbook and verify Calc returns to B8; saved bytes are checked
+        by the separate artifact verifier.
+      timeoutMs: 10000
+      command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "Cmd+S")'
+      effect:
+        businessKey:
+          task: {kind: string, string: mortgage-calc-save-ods}
+          requestId: *id077
+      precondition: *id078
+      postcondition: *id078
+- {name: saveSource, value: $AsJSON($savePlan)}
+- name: previewRequest
+  value: {calcSource: $calcSource, saveSource: $saveSource}
+pipeline:
+  preview: {action: print, message: $AsJSON($previewRequest)}
+  validateCalc:
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    name: mechanize_script_validate
+    arguments: {format: json, source: $calcSource}
+    post: {calcPlanValid: $StructuredContent.valid, calcValidation: $StructuredContent}
+  validateSave:
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    name: mechanize_script_validate
+    arguments: {format: json, source: $saveSource}
+    post: {savePlanValid: $StructuredContent.valid, saveValidation: $StructuredContent}
+  session:
+    when: $calcPlanValid:true && $savePlanValid:true && $Len($sessionId) == 0
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    name: mechanize_session_open
+    arguments: {name: Compose the mortgage comparison in Calc}
+    post: {sessionId: $StructuredContent.sessionId}
+  runCalc:
+    when: $calcPlanValid:true && $savePlanValid:true
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    name: mechanize_script_run
+    arguments: {sessionId: $sessionId, purpose: Populate the mortgage comparison in the prequalified saved Calc
+        workbook, clientRequestId: $calcRequestId, format: json, source: $calcSource}
+    post: {calcOperationId: $StructuredContent.operationId, calcRunId: $StructuredContent.runId}
+  waitCalc:
+    when: $Len($calcOperationId) > 0
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    name: mechanize_operation_status
+    arguments: {sessionId: $sessionId, operationId: $calcOperationId}
+    repeat: 2400
+    sleepTimeMs: 250
+    exit: $calcOperationStatus:succeeded || $calcOperationStatus:failed || $calcOperationStatus:cancelled || $calcOperationStatus:unknown
+    post: {calcOperationStatus: $StructuredContent.executionStatus, calcOperation: $StructuredContent}
+  runSave:
+    when: $calcOperationStatus:succeeded
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    name: mechanize_script_run
+    arguments: {sessionId: $sessionId, purpose: Save the populated mortgage comparison and verify its saved ODS
+        artifact, clientRequestId: $saveRequestId, format: json, source: $saveSource}
+    post: {saveOperationId: $StructuredContent.operationId, saveRunId: $StructuredContent.runId}
+  waitSave:
+    when: $Len($saveOperationId) > 0
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    name: mechanize_operation_status
+    arguments: {sessionId: $sessionId, operationId: $saveOperationId}
+    repeat: 1200
+    sleepTimeMs: 250
+    exit: $saveOperationStatus:succeeded || $saveOperationStatus:failed || $saveOperationStatus:cancelled || $saveOperationStatus:unknown
+    post: {saveOperationStatus: $StructuredContent.executionStatus, saveOperation: $StructuredContent}
+  reportCalc: {when: $Len($calcOperationId) > 0, action: print, message: $AsJSON($calcOperation)}
+  reportSave: {when: $Len($saveOperationId) > 0, action: print, message: $AsJSON($saveOperation)}

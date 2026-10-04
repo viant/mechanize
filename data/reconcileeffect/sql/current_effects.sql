@@ -1,0 +1,1 @@
+SELECT r.revision, r.namespace, r.id, r.attempt_id, r.run_id, r.business_key, r.state, r.evidence_json FROM (SELECT * FROM (SELECT e.* FROM effects e WHERE e.namespace=:Namespace) effects) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentEffectsParentKeys($CurrentReconcileEffect))

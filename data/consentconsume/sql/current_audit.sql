@@ -1,0 +1,1 @@
+SELECT r.namespace, r.id, r.request_id, r.kind, r.actor_id, r.created_at, r.payload_json FROM (SELECT * FROM (SELECT a.* FROM consent_audit a WHERE a.namespace = :Namespace) audit) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentAuditParentKeys($CurrentConsentconsume))

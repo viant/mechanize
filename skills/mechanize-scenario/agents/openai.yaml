@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mechanize Scenario Selection"
+  short_description: "Choose only a qualified workflow that matches the request"
+  default_prompt: "Use $mechanize-scenario to check whether an existing qualified scenario matches this objective and its verification needs."

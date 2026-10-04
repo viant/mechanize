@@ -1,0 +1,2 @@
+SELECT r.revision, r.namespace, r.run_id, r.max_repairs, r.used_repairs, r.max_elapsed_ms, r.elapsed_ms FROM (SELECT * FROM (SELECT r.* FROM repair_workflow_budgets r WHERE r.namespace=:Namespace
+) workflow) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentWorkflowParentKeys($CurrentRecords))

@@ -1,0 +1,1 @@
+SELECT * FROM (SELECT e.* FROM effects e WHERE e.namespace = :Namespace) effects

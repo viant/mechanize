@@ -1,0 +1,11 @@
+#package('github.com/viant/mechanize/data/consentconsume')
+#setting($_ = $input_type('ConsumeOnceInput'))
+#setting($_ = $output_type('ConsumeOnceOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/consentconsume', 'PATCH'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $Data<[]*Record>(output/body))
+SELECT records.*,type(records,'Record'),audit.*,type(audit,'Audit'),lifecycle_type(audit,'AuditLifecycle'),lifecycle_type(records,'RecordLifecycle'),concurrency_token(records.revision)
+FROM (${embed:sql/root.sql}) records
+JOIN (SELECT a.* FROM consent_audit a WHERE a.namespace = :Namespace) audit ON audit.namespace=records.namespace AND audit.request_id=records.id

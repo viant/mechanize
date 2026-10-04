@@ -1,0 +1,15 @@
+#package('github.com/viant/mechanize/data/chromeattemptbindingget')
+#setting($_ = $input_type('LoadChromeAttemptBindingInput'))
+#setting($_ = $output_type('LoadChromeAttemptBindingOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/chromeattemptbindingget', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $ClientID<string>(query/clientId).Required())
+#define($_ = $BrowserAttemptID<string>(query/browserAttemptId).Required())
+#define($_ = $Data<[]*Binding>(output/view))
+SELECT bindings.*,attempt.*,effect.*,outcomes.*,type(bindings,'Binding'),type(attempt,'Attempt'),type(effect,'Effect'),type(outcomes,'Outcome')
+FROM (${embed:sql/root.sql}) bindings
+JOIN (${embed:sql/attempt.sql}) attempt ON attempt.namespace=bindings.namespace AND attempt.id=bindings.durable_attempt_id AND 1=1
+JOIN (${embed:sql/effect.sql}) effect ON effect.namespace=bindings.namespace AND effect.id=bindings.effect_id AND 1=1
+JOIN (${embed:sql/outcomes.sql}) outcomes ON outcomes.namespace=bindings.namespace AND outcomes.attempt_id=bindings.durable_attempt_id

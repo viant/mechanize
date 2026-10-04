@@ -1,0 +1,2 @@
+SELECT r.namespace, r.transition_id, r.id, r.document_identity_json, r.receipt_revision, r.receipt_count, r.canonical_manifest_json, r.manifest_digest, r.created_at FROM (SELECT * FROM (SELECT m.* FROM chrome_retirement_manifests m WHERE m.namespace=:Namespace AND m.transition_id=:TransitionID
+) manifests) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentManifestsParentKeys($CurrentWriteChromeRetirement))

@@ -1,0 +1,16 @@
+#package('github.com/viant/mechanize/data/stateget')
+#setting($_ = $input_type('StateGetInput'))
+#setting($_ = $output_type('StateGetOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/stateget', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $RunID<string>(query/runId).Required())
+#define($_ = $Data<[]*RunState>(output/view))
+SELECT records.*, variables.*, milestones.*, unresolved.*, checkpoints.*,
+ type(records,'RunState'),type(variables,'Variable'),type(milestones,'Milestone'),type(unresolved,'UnresolvedEffect'),type(checkpoints,'Checkpoint')
+FROM (${embed:sql/root.sql}) records
+JOIN (${embed:sql/variables.sql}) variables ON variables.namespace = records.namespace AND variables.run_id = records.id
+JOIN (${embed:sql/milestones.sql}) milestones ON milestones.namespace = records.namespace AND milestones.run_id = records.id
+JOIN (${embed:sql/unresolved.sql}) unresolved ON unresolved.namespace = records.namespace AND unresolved.run_id = records.id
+JOIN (${embed:sql/checkpoints.sql}) checkpoints ON checkpoints.namespace = records.namespace AND checkpoints.run_id = records.id

@@ -1,0 +1,2 @@
+SELECT r.revision, r.namespace, r.id, r.attempt_id, r.run_id, r.business_key, r.state, r.evidence_json FROM (SELECT * FROM  (SELECT r.* FROM effects r WHERE r.namespace = :Namespace
+)  records) r WHERE $criteria.CompositeIn("r", $CommitOutcomeKeys)

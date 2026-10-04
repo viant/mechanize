@@ -1,0 +1,2 @@
+SELECT r.namespace, r.id, r.run_id, r.repair_id, r.new_plan_id, r.step_id, r.step_index, r.original_plan_id, r.original_step_id, r.attempt_id, r.effect_id, r.business_key, r.result_hash, r.state FROM (SELECT * FROM (SELECT r.* FROM repair_lineage r WHERE r.namespace=:Namespace
+) lineage) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentLineageParentKeys($CurrentRepairs))

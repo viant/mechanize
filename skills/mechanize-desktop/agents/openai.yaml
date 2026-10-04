@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mechanize Desktop"
+  short_description: "Inspect and automate authorized macOS and Chrome surfaces"
+  default_prompt: "Use $mechanize-desktop to inspect an authorized app or tab and verify the requested result."

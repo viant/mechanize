@@ -1,0 +1,22 @@
+#package('github.com/viant/mechanize/data/recoveryload')
+#setting($_ = $input_type('LoadRecoveryInput'))
+#setting($_ = $output_type('LoadRecoveryOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/recoveryload', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $RunID<string>(query/runId).Required())
+#define($_ = $Data<[]*RecoveryRun>(output/view))
+SELECT records.*,plans.*,attempts.*,effects.*,milestones.*,variables.*,events.*,workflow.*,incidents.*,repairs.*,lineage.*,
+ type(records,'RecoveryRun'),type(plans,'PlanRevision'),type(attempts,'Attempt'),type(effects,'Effect'),type(milestones,'Milestone'),type(variables,'Variable'),type(events,'Event'),type(workflow,'WorkflowBudget'),type(incidents,'IncidentBudget'),type(repairs,'RepairRevision'),type(lineage,'RepairLineage')
+FROM (${embed:sql/root.sql}) records
+JOIN (${embed:sql/plans.sql}) plans ON plans.namespace=records.namespace AND plans.objective_id=records.objective_id
+JOIN (${embed:sql/attempts.sql}) attempts ON attempts.namespace=records.namespace AND attempts.run_id=records.id
+JOIN (${embed:sql/effects.sql}) effects ON effects.namespace=records.namespace AND effects.run_id=records.id
+JOIN (${embed:sql/milestones.sql}) milestones ON milestones.namespace=records.namespace AND milestones.run_id=records.id
+JOIN (${embed:sql/variables.sql}) variables ON variables.namespace=records.namespace AND variables.run_id=records.id
+JOIN (${embed:sql/events.sql}) events ON events.namespace=records.namespace AND events.run_id=records.id
+JOIN (${embed:sql/workflow.sql}) workflow ON workflow.namespace=records.namespace AND workflow.run_id=records.id AND 1=1
+JOIN (${embed:sql/incidents.sql}) incidents ON incidents.namespace=records.namespace AND incidents.run_id=records.id
+JOIN (${embed:sql/repairs.sql}) repairs ON repairs.namespace=records.namespace AND repairs.run_id=records.id
+JOIN (${embed:sql/lineage.sql}) lineage ON lineage.namespace=records.namespace AND lineage.run_id=records.id

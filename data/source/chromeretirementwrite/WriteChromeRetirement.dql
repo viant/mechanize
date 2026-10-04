@@ -1,0 +1,15 @@
+#package('github.com/viant/mechanize/data/chromeretirementwrite')
+#setting($_ = $input_type('WriteChromeRetirementInput'))
+#setting($_ = $output_type('WriteChromeRetirementOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/chromeretirementwrite', 'PATCH'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $ClientID<string>(query/clientId).Required())
+#define($_ = $TransitionID<string>(query/transitionId).Required())
+#define($_ = $Data<[]*Retirement>(output/body))
+SELECT records.*,manifests.*,audit.*,type(records,'Retirement'),type(manifests,'Manifest'),type(audit,'Audit'),
+ lifecycle_type(records,'RetirementLifecycle'),lifecycle_type(manifests,'ManifestLifecycle'),lifecycle_type(audit,'AuditLifecycle'),concurrency_token(records.revision)
+FROM (${embed:sql/root.sql}) records
+JOIN (${embed:sql/manifests.sql}) manifests ON manifests.namespace=records.namespace AND manifests.transition_id=records.id
+JOIN (${embed:sql/audit.sql}) audit ON audit.namespace=records.namespace AND audit.transition_id=records.id

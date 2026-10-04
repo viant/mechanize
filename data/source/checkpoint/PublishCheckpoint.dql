@@ -1,0 +1,17 @@
+#package('github.com/viant/mechanize/data/checkpoint')
+#setting($_ = $input_type('PublishCheckpointInput'))
+#setting($_ = $output_type('PublishCheckpointOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/checkpoint', 'PATCH'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $ArtifactIDs<[]string>(query/artifactIds).Required())
+#define($_ = $Data<[]*CheckpointRun>(output/body))
+SELECT records.*,ledgerEvents.*,checkpoints.*,artifacts.*,unresolved.*,
+ type(records,'CheckpointRun'),type(ledgerEvents,'LedgerEvent'),type(checkpoints,'Checkpoint'),type(artifacts,'Artifact'),type(unresolved,'UnresolvedEffect'),
+ lifecycle_type(records,'CheckpointRunLifecycle'),lifecycle_type(checkpoints,'CheckpointLifecycle'),concurrency_token(records.revision)
+FROM (${embed:sql/root.sql}) records
+JOIN (SELECT c.* FROM checkpoints c WHERE c.namespace=:Namespace) checkpoints ON checkpoints.namespace=records.namespace AND checkpoints.run_id=records.id
+JOIN (SELECT a.* FROM (artifacts) a WHERE a.namespace=:Namespace AND a.id IN (:ArtifactIDs)) artifacts ON artifacts.namespace=records.namespace
+JOIN (SELECT e.* FROM (effects) e WHERE e.namespace=:Namespace AND e.state IN ('intent','unknown')) unresolved ON unresolved.namespace=records.namespace AND unresolved.run_id=records.id
+JOIN (SELECT e.* FROM (events) e WHERE e.namespace=:Namespace) ledgerEvents ON ledgerEvents.namespace=records.namespace AND ledgerEvents.run_id=records.id

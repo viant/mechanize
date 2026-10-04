@@ -1,0 +1,1 @@
+SELECT r.* FROM scenario_revisions r WHERE r.namespace = :Namespace AND (:ScenarioID = '*' OR r.scenario_id = :ScenarioID) AND (:Revision = '*' OR r.revision = :Revision) AND (:ObjectiveHash = '*' OR r.objective_hash = :ObjectiveHash) AND (r.scenario_id > :AfterID OR (r.scenario_id = :AfterID AND r.revision > :AfterRevision)) ORDER BY r.scenario_id,r.revision LIMIT 101

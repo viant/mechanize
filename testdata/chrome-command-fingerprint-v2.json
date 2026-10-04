@@ -1,0 +1,202 @@
+{
+  "version": 2,
+  "cases": [
+    {
+      "name": "press",
+      "command": {
+        "action": "element.press",
+        "identity": {
+          "profileChannel": "profile-1",
+          "browserInstance": "browser-1",
+          "tabId": 7,
+          "frameId": 0,
+          "documentId": "doc-1",
+          "documentGeneration": 1
+        },
+        "brokerEpoch": "broker-1",
+        "channelEpoch": "channel-1",
+        "scopeHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "controlLease": {
+          "id": "lease-1",
+          "generation": 1
+        },
+        "attemptId": "attempt-1",
+        "locator": {
+          "strategy": "id",
+          "value": "save",
+          "exact": true
+        },
+        "requestId": "request-original",
+        "deadlineUnixMs": 1000
+      },
+      "canonical": "{\"action\":\"element.press\",\"args\":{},\"attemptId\":\"attempt-1\",\"brokerEpoch\":\"broker-1\",\"channelEpoch\":\"channel-1\",\"controlLease\":{\"generation\":1,\"id\":\"lease-1\"},\"identity\":{\"browserInstance\":\"browser-1\",\"documentGeneration\":1,\"documentId\":\"doc-1\",\"frameId\":0,\"profileChannel\":\"profile-1\",\"tabId\":7},\"locator\":{\"exact\":true,\"name\":null,\"strategy\":\"id\",\"value\":\"save\"},\"scopeHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"version\":2}",
+      "sha256": "6e70f718ceab1396b032041eec098929a55e249d5452a95773805c9fdefc9560"
+    },
+    {
+      "name": "fill-unicode-html-separators",
+      "command": {
+        "action": "element.fill",
+        "identity": {
+          "profileChannel": "profile-1",
+          "browserInstance": "browser-1",
+          "tabId": 7,
+          "frameId": 0,
+          "documentId": "doc-1",
+          "documentGeneration": 1
+        },
+        "brokerEpoch": "broker-1",
+        "channelEpoch": "channel-1",
+        "scopeHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "controlLease": {
+          "id": "lease-1",
+          "generation": 1
+        },
+        "attemptId": "attempt-1",
+        "locator": {
+          "strategy": "role",
+          "value": "textbox",
+          "name": "Public <Ω😀> field",
+          "exact": true
+        },
+        "requestId": "request-original",
+        "deadlineUnixMs": 1000,
+        "args": {
+          "value": "Greek Ω; supplementary 😀; HTML <>&; line paragraph ; quote \" and slash \\"
+        }
+      },
+      "canonical": "{\"action\":\"element.fill\",\"args\":{\"value\":\"Greek Ω; supplementary 😀; HTML <>&; line\\u2028paragraph\\u2029; quote \\\" and slash \\\\\"},\"attemptId\":\"attempt-1\",\"brokerEpoch\":\"broker-1\",\"channelEpoch\":\"channel-1\",\"controlLease\":{\"generation\":1,\"id\":\"lease-1\"},\"identity\":{\"browserInstance\":\"browser-1\",\"documentGeneration\":1,\"documentId\":\"doc-1\",\"frameId\":0,\"profileChannel\":\"profile-1\",\"tabId\":7},\"locator\":{\"exact\":true,\"name\":\"Public <Ω😀> field\",\"strategy\":\"role\",\"value\":\"textbox\"},\"scopeHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"version\":2}",
+      "sha256": "093799cf6deada84c8b5d87039576423c1eb6ff81455182c5dabd9102da3da41"
+    },
+    {
+      "name": "press-reordered",
+      "command": {
+        "deadlineUnixMs": 1000,
+        "requestId": "request-original",
+        "locator": {
+          "exact": true,
+          "name": null,
+          "value": "save",
+          "strategy": "id"
+        },
+        "attemptId": "attempt-1",
+        "controlLease": {
+          "generation": 1,
+          "id": "lease-1"
+        },
+        "scopeHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "channelEpoch": "channel-1",
+        "brokerEpoch": "broker-1",
+        "identity": {
+          "documentGeneration": 1,
+          "documentId": "doc-1",
+          "frameId": 0,
+          "tabId": 7,
+          "browserInstance": "browser-1",
+          "profileChannel": "profile-1"
+        },
+        "action": "element.press",
+        "args": null
+      },
+      "canonical": "{\"action\":\"element.press\",\"args\":{},\"attemptId\":\"attempt-1\",\"brokerEpoch\":\"broker-1\",\"channelEpoch\":\"channel-1\",\"controlLease\":{\"generation\":1,\"id\":\"lease-1\"},\"identity\":{\"browserInstance\":\"browser-1\",\"documentGeneration\":1,\"documentId\":\"doc-1\",\"frameId\":0,\"profileChannel\":\"profile-1\",\"tabId\":7},\"locator\":{\"exact\":true,\"name\":null,\"strategy\":\"id\",\"value\":\"save\"},\"scopeHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"version\":2}",
+      "sha256": "6e70f718ceab1396b032041eec098929a55e249d5452a95773805c9fdefc9560"
+    },
+    {
+      "name": "press-excluded-fields",
+      "command": {
+        "action": "element.press",
+        "identity": {
+          "profileChannel": "profile-1",
+          "browserInstance": "browser-1",
+          "tabId": 7,
+          "frameId": 0,
+          "documentId": "doc-1",
+          "documentGeneration": 1
+        },
+        "brokerEpoch": "broker-1",
+        "channelEpoch": "channel-1",
+        "scopeHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "controlLease": {
+          "id": "lease-1",
+          "generation": 1
+        },
+        "attemptId": "attempt-1",
+        "locator": {
+          "strategy": "id",
+          "value": "save",
+          "exact": true
+        },
+        "requestId": "different-request",
+        "deadlineUnixMs": 9007199254740991,
+        "args": {}
+      },
+      "canonical": "{\"action\":\"element.press\",\"args\":{},\"attemptId\":\"attempt-1\",\"brokerEpoch\":\"broker-1\",\"channelEpoch\":\"channel-1\",\"controlLease\":{\"generation\":1,\"id\":\"lease-1\"},\"identity\":{\"browserInstance\":\"browser-1\",\"documentGeneration\":1,\"documentId\":\"doc-1\",\"frameId\":0,\"profileChannel\":\"profile-1\",\"tabId\":7},\"locator\":{\"exact\":true,\"name\":null,\"strategy\":\"id\",\"value\":\"save\"},\"scopeHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"version\":2}",
+      "sha256": "6e70f718ceab1396b032041eec098929a55e249d5452a95773805c9fdefc9560"
+    },
+    {
+      "name": "fill-logical-value-change",
+      "command": {
+        "action": "element.fill",
+        "identity": {
+          "profileChannel": "profile-1",
+          "browserInstance": "browser-1",
+          "tabId": 7,
+          "frameId": 0,
+          "documentId": "doc-1",
+          "documentGeneration": 1
+        },
+        "brokerEpoch": "broker-1",
+        "channelEpoch": "channel-1",
+        "scopeHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "controlLease": {
+          "id": "lease-1",
+          "generation": 1
+        },
+        "attemptId": "attempt-1",
+        "locator": {
+          "strategy": "role",
+          "value": "textbox",
+          "name": "Public <Ω😀> field",
+          "exact": true
+        },
+        "requestId": "request-original",
+        "deadlineUnixMs": 1000,
+        "args": {
+          "value": "Greek Ω; supplementary 😀; HTML <>&; line paragraph ; quote \" and slash \\ changed"
+        }
+      },
+      "canonical": "{\"action\":\"element.fill\",\"args\":{\"value\":\"Greek Ω; supplementary 😀; HTML <>&; line\\u2028paragraph\\u2029; quote \\\" and slash \\\\ changed\"},\"attemptId\":\"attempt-1\",\"brokerEpoch\":\"broker-1\",\"channelEpoch\":\"channel-1\",\"controlLease\":{\"generation\":1,\"id\":\"lease-1\"},\"identity\":{\"browserInstance\":\"browser-1\",\"documentGeneration\":1,\"documentId\":\"doc-1\",\"frameId\":0,\"profileChannel\":\"profile-1\",\"tabId\":7},\"locator\":{\"exact\":true,\"name\":\"Public <Ω😀> field\",\"strategy\":\"role\",\"value\":\"textbox\"},\"scopeHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"version\":2}",
+      "sha256": "8da08def28b7d9fb44f57adbaf46c3dcf4c7081cdc22ade978f53ac9b3aedaac"
+    },
+    {
+      "name": "safe-integer-boundary",
+      "command": {
+        "action": "element.press",
+        "identity": {
+          "profileChannel": "profile-1",
+          "browserInstance": "browser-1",
+          "tabId": 7,
+          "frameId": 0,
+          "documentId": "doc-1",
+          "documentGeneration": 9007199254740991
+        },
+        "brokerEpoch": "broker-1",
+        "channelEpoch": "channel-1",
+        "scopeHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "controlLease": {
+          "id": "lease-1",
+          "generation": 9007199254740991
+        },
+        "attemptId": "attempt-1",
+        "locator": {
+          "strategy": "id",
+          "value": "save",
+          "exact": true
+        },
+        "requestId": "request-original",
+        "deadlineUnixMs": 1000
+      },
+      "canonical": "{\"action\":\"element.press\",\"args\":{},\"attemptId\":\"attempt-1\",\"brokerEpoch\":\"broker-1\",\"channelEpoch\":\"channel-1\",\"controlLease\":{\"generation\":9007199254740991,\"id\":\"lease-1\"},\"identity\":{\"browserInstance\":\"browser-1\",\"documentGeneration\":9007199254740991,\"documentId\":\"doc-1\",\"frameId\":0,\"profileChannel\":\"profile-1\",\"tabId\":7},\"locator\":{\"exact\":true,\"name\":null,\"strategy\":\"id\",\"value\":\"save\"},\"scopeHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"version\":2}",
+      "sha256": "e931a8c40e6b255c730f81d03dd14838e07de6da939e734e7af50dc45b208fd0"
+    }
+  ]
+}

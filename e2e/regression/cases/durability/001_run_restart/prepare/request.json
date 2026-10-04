@@ -1,0 +1,4 @@
+{
+  "scenario": "durability",
+  "source": "app(\"com.example.Fixture\").getById(\"save\").click()"
+}

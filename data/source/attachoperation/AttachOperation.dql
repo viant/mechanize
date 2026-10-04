@@ -1,0 +1,12 @@
+#package('github.com/viant/mechanize/data/attachoperation')
+#setting($_ = $input_type('AttachOperationInput'))
+#setting($_ = $output_type('AttachOperationOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/attachoperation', 'PATCH'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $Data<[]*Run>(output/body))
+SELECT records.*,unresolved.*,type(unresolved,'UnresolvedEffect'),events.*,type(events,'Event'),type(records,'Run'),lifecycle_type(records,'RunLifecycle'),concurrency_token(records.revision)
+FROM (${embed:sql/root.sql}) records
+JOIN (SELECT e.* FROM events e WHERE e.namespace = :Namespace) events ON events.namespace=records.namespace AND events.run_id=records.id
+JOIN (SELECT e.* FROM (effects) e WHERE e.namespace = :Namespace AND e.state IN ('intent','unknown')) unresolved ON unresolved.namespace=records.namespace AND unresolved.run_id=records.id

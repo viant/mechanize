@@ -1,0 +1,28 @@
+# Record an already-stopped, owned native run. No desktop input is dispatched.
+# Supply endpoint, credentialResource, sessionId, runId, planId, requestId,
+# expectedRunRevision and purpose. Preserve these values for reply-loss retries.
+pipeline:
+  stopBoundary:
+    action: mcp/runner:call
+    URL: $endpoint
+    BearerTokenSecret: $credentialResource
+    Name: mechanize_state_stop_boundary
+    Arguments:
+      sessionId: $sessionId
+      purpose: $purpose
+      runId: $runId
+      planId: $planId
+      requestId: $requestId
+      expectedRunRevision: $AsInt($expectedRunRevision)
+    post:
+      boundary: $StructuredContent
+  report:
+    action: print
+    message: $AsJSON($boundary)
+  assertBoundary:
+    action: validator:assert
+    name: Boundary committed without admitting input or resume
+    actual: $boundary
+    expect:
+      commitConfirmed: true
+      resumeAdmitted: false

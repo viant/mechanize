@@ -1,0 +1,1 @@
+SELECT r.namespace, r.id, r.run_id, r.plan_id, r.run_revision, r.event_sequence, r.manifest_hash, r.manifest_json, r.publication_state, r.created_at FROM (SELECT * FROM (SELECT c.* FROM checkpoints c WHERE c.namespace=:Namespace) checkpoints) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentCheckpointsParentKeys($CurrentPublishCheckpoint))

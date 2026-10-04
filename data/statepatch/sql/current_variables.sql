@@ -1,0 +1,2 @@
+SELECT r.namespace, r.run_id, r.name, r.value_json FROM (SELECT * FROM (SELECT v.* FROM run_variables v WHERE v.namespace = :Namespace
+) variables) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentVariablesParentKeys($CurrentStatePatch))

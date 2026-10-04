@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mechanize App Discovery"
+  short_description: "Learn and reuse verified macOS app procedures"
+  default_prompt: "Use $mechanize-app-discovery to qualify this app's workflow and save the verified procedure as an app skill."

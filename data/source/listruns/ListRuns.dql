@@ -1,0 +1,10 @@
+#package('github.com/viant/mechanize/data/listruns')
+#setting($_ = $input_type('ListRunsInput'))
+#setting($_ = $output_type('ListRunsOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/listruns', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $Data<[]*Run>(output/view))
+SELECT records.*,set_limit(records,200),type(records,'Run')
+FROM (${embed:sql/root.sql}) records

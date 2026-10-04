@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mechanize Recording"
+  short_description: "Turn a supervised demonstration into a reusable script"
+  default_prompt: "Use $mechanize-recording to plan or review an explicitly requested, safely scoped demonstration recording."

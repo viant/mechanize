@@ -1,0 +1,456 @@
+{
+  "status": "in_progress",
+  "app": {
+    "bundleId": "org.openoffice.script",
+    "version": "4.1.16"
+  },
+  "last_verified_stage": "calc_named_sheet_copy_content_verified",
+  "writer": {
+    "creationRunId": "2a5215dfa26a18ab2515aea986dc3ab8da9dc078f1c514fd0004ae096e2d322e",
+    "creationReconciled": true,
+    "replacementRunId": "7091bb08b0ba7588f399e47accd4724b723e732d712ccb1e442963a3a5f00b98",
+    "replacementUnresolvedCount": 0,
+    "replacementVerifiedProgressCount": 2,
+    "literalSHA256": "b707593f16bf7653743fbf2cdd8020b90ba08e7d156cf8bd43d8a74db0c7dc4c",
+    "captureArtifact": {
+      "contentHash": "9de848349e29f985848f6394db424892cd5628c5344d341dd17efb7d80811f1e",
+      "id": "d684f55730d439ddce9737bae3dc676a",
+      "keyReference": "development-v1",
+      "mediaType": "image/png",
+      "sizeBytes": 1509180
+    },
+    "saved": true,
+    "path": "/Users/awitas/Documents/Mechanize Examples/Mortgage Rates 2026-10-01/Mortgage Rates 2026-10-01.odt",
+    "sha256": "0452592858b9e53224f1b60adb09be9bfeac4a22a913ce1257f2374fd488b9ab",
+    "mediaType": "application/vnd.oasis.opendocument.text",
+    "exactSavedParagraphVerified": true,
+    "saveRunId": "68d06ca0ea628e98c8a8d30f307ee143fef8504a3ef128103cb41c8230871fb2"
+  },
+  "existingWriterCopyEditQualification": {
+    "date": "2026-10-03",
+    "qualification": "one-existing-odt-single-paragraph-text-edit-and-bold-style-artifact-verified",
+    "sourcePath": "/Users/awitas/Documents/Mechanize Examples/Mortgage Rates 2026-10-01/Mortgage Rates 2026-10-01.odt",
+    "sourceSHA256": "0452592858b9e53224f1b60adb09be9bfeac4a22a913ce1257f2374fd488b9ab",
+    "open": {
+      "route": "Mechanize+Endly Open panel using the exact owned path",
+      "windowId": 9919,
+      "capturePath": "/private/tmp/mechanize-office-edit.png",
+      "originalReportVisible": true,
+      "earlierOpenRun": {
+        "runId": "3ee60f9590cc0fd2a851ec52d9fc492321f8533dd95fc2c83e8c081566e3648f",
+        "expectedCharacters": 648,
+        "observedCharacters": 695,
+        "state": "unresolved"
+      }
+    },
+    "edit": {
+      "control": "single focused AXTextArea",
+      "prePostLiteralValueMatchesPassed": true,
+      "method": "replaceText replaced the entire verified single paragraph with its original text plus one exact suffix",
+      "appendedText": " Automation check: this existing report was reopened, copied, and edited through Mechanize.",
+      "runId": "4651d804262f0c04c47c641c00782ab60045964404506c825d14ed152c045e1c"
+    },
+    "savedCopy": {
+      "path": "/Users/awitas/Documents/Mechanize Examples/Mortgage Rates 2026-10-01/Mechanize Writer Editing Qualification.odt",
+      "mediaType": "application/vnd.oasis.opendocument.text",
+      "preFormattingSHA256": "fe188a57f434e13047386f41827ef7a47c5424ced0edc2aee81dbf779f6c2d96",
+      "sha256": "156a162edfc54e972f10cee810e1c9e816fbd92e7af0f1d7ccb6ea2a18d8b30d",
+      "exactEditedParagraphVerifiedInContentXML": true,
+      "boldStyleVerifiedInContentXML": {
+        "paragraphStyle": "P1",
+        "fontWeight": "bold",
+        "asianFontWeight": "bold",
+        "complexFontWeight": "bold"
+      }
+    },
+    "formatting": {
+      "selectionRunId": "ce4261d0c13b646b75c25e4699336ff30e8fdec286a3824be85bdb41b38cbdee",
+      "boldRunId": "a1c10415939050a481a3cd520016b73beadb8d2e7a8137147179e376c9118147",
+      "saveRunId": "627d7a6b7260f111874b8d6be4a717946a61555c81cf6923f07ac68e5403fe24",
+      "textPrePostconditionsPassed": true,
+      "stylePostconditionPassed": false,
+      "styleEvidence": "Independent saved content.xml inspection only",
+      "capturePath": "/private/tmp/mechanize-office-formatted.png",
+      "captureObservation": "Whole paragraph selected, bold toolbar selected, full text visible on one page; visual state is supplementary to saved XML proof."
+    },
+    "saveAsCopyConfirmation": {
+      "runId": "573e804d2a9edb99f7acc2600807458ffa028cfd96896733595dbd807dadaae1",
+      "state": "dispatched_unknown",
+      "resolvedByFileEvidence": false
+    },
+    "businessStatus": "unverified",
+    "limitations": [
+      "File inspection does not resolve the Save As operation receipt or establish business success.",
+      "Qualification is limited to this existing ODT, one focused paragraph, its exact appended text, and persisted bold style.",
+      "No general existing-document, multi-paragraph, heading, table, page-layout, or Save As operation qualification is claimed."
+    ],
+    "readOnlyVerifier": {
+      "path": "verify-existing-writer-edit.py",
+      "passed": true,
+      "sourceText": "hash-pinned original ODT paragraph",
+      "skillValidationPassed": true
+    }
+  },
+  "known_failures": [
+    {
+      "route": "AXValue fill",
+      "runId": "7ac074b4c370781d9d2a953e82c9cf343f7ca656c6ff31741c0efb05326c9b78",
+      "state": "dispatched_unknown",
+      "observation": "Page remained blank; original effect was not relabeled."
+    },
+    {
+      "route": "AXPress Save As menu",
+      "runId": "7c61aa2ea618d8d9a2a72f9cc66a391917d7612719c010a1f805bbdfd58bb1b5",
+      "state": "unresolved",
+      "observation": "Save panel visible; subsequent OpenOffice and AppKit-panel AX observations incomplete/unresponsive."
+    }
+  ],
+  "pending": [
+    "resolve_or_report_mcp_businessStatus_unverified",
+    "verify_calc_sheet_format_and_layout",
+    "reconcile_or_report_unresolved_pdf_export_effects",
+    "reconcile_or_report_unknown_calc_sheet_menu_effect",
+    "report_openoffice_crash_and_unresolved_recovery_receipts"
+  ],
+  "scope": "Evidence from this local authorized demonstration; run/artifact IDs are not reusable selectors or portable authorization.",
+  "calc": {
+    "created": true,
+    "creationRunId": "3d165d395fa7747dde221ee5853b09a92da8680c96d0089fd064def1049f0858",
+    "creationReconciled": true,
+    "earlierCellEntryAttempt": {
+      "runId": "2d2fe9d8332c95a0cfa1e490f49072ec58c0120e0c93d28d981e74e75273f235",
+      "targetCell": "A1",
+      "editControlLiteral": "Date",
+      "editControlValueVerified": true,
+      "tabMovedToNextCell": true,
+      "cellCommitVerified": false,
+      "qualification": "failed",
+      "observation": "F2, replaceText, and Tab verified the edit-control value and next-cell focus only; they did not verify a committed A1 value."
+    },
+    "earlierEmptyWorkbookSave": {
+      "runId": "c8bd013b76ab10b3eb271b0358a8aa0da7a17c05ec5217f255bd680bae0233b5",
+      "path": "/Users/awitas/Documents/Mechanize Examples/Mortgage Rates 2026-10-01/Mortgage Rates 2026-10-01.ods",
+      "sha256": "bca67935ca1b8bee8cda6c1e6962b245588faf602c4b0ad4ddcb00ec80902b42",
+      "sizeBytes": 7444,
+      "sheetCount": 3,
+      "allSheetsEmpty": true,
+      "freshMechanizeCaptureConfirmedEmpty": true
+    },
+    "verifiedCell": {
+      "cellAddress": "A1",
+      "storedText": "Date",
+      "officeValueType": "string",
+      "replaceTextAlonePersisted": false,
+      "commitSequence": "A leading Space was inserted, Backspace removed it, then Return committed the edit.",
+      "revisitRunId": "1ab7bab80fea348adb140bf3b7173770660b5392caa96064a93e42c605660454",
+      "revisitObservation": "ArrowUp followed by F2 revisited A1; the exact value matcher returned Date.",
+      "saveRunId": "68583ba05cdf92cd88ed304f0152a887fabb0903d6d5b6c399ac09c85eb1d9d3",
+      "saveSequence": "Return followed by Cmd+S.",
+      "saved": true,
+      "path": "/Users/awitas/Documents/Mechanize Examples/Mortgage Rates 2026-10-01/Mortgage Rates 2026-10-01.ods",
+      "contentXMLIndependentlyVerified": true,
+      "contentXMLCell": "A1",
+      "contentXMLOfficeValueType": "string",
+      "contentXMLText": "Date",
+      "qualification": "narrow_single_cell_only"
+    },
+    "fullWorksheetRun": {
+      "runId": "648f59ef0ecddcc1023f4754e331cb239d90d60d338124e491468341cac7393d",
+      "executionStatus": "succeeded",
+      "stepCount": 106,
+      "saveRunId": "96984bd1b1f4977e003c6c90bd5a76d867bd3e0cc7fc55c3cb33d813466270b9",
+      "saveExecutionStatus": "succeeded",
+      "path": "/Users/awitas/Documents/Mechanize Examples/Mortgage Rates 2026-10-01/Mortgage Rates 2026-10-01.ods",
+      "sizeBytes": 16419,
+      "sha256": "dd5ddce6afaa9cf836d7356e67a7d4665137718c7893bea9d5d8c0808a47fbc6"
+    },
+    "artifactContentVerification": {
+      "script": "verify-artifacts.py",
+      "result": "passed",
+      "source": "saved ODS package content.xml",
+      "checks": [
+        "summary",
+        "headers",
+        "dates",
+        "rates",
+        "stored formulas",
+        "cached results",
+        "source URL"
+      ],
+      "cachedFormulaResults": {
+        "D2": 61,
+        "D3": 68,
+        "B4": 25,
+        "C4": 18,
+        "D4": 7
+      },
+      "savedArtifactContentVerified": true,
+      "mechanizeBusinessStatus": "unverified",
+      "mechanizeBusinessObjectiveVerified": false,
+      "sheetFormattingVerified": false,
+      "pdfVerified": true,
+      "pdfWorkflowEffectStatus": "Options-menu dispatch remains unknown; artifact verification is independent"
+    }
+  },
+  "writerPdfExport": {
+    "artifactVerified": true,
+    "path": "/Users/awitas/Documents/Mechanize Examples/Mortgage Rates 2026-10-01/Mortgage Rates 2026-10-01.pdf",
+    "bytes": 35263,
+    "sha256": "002aaf0fc7351a803ab7dda93ad4e76e5adf96585076a858a49530d181d49779",
+    "pages": 1,
+    "validation": [
+      "pypdf extracted full summary and source URL",
+      "Poppler rendered page; manually inspected for clipping and legibility"
+    ],
+    "optionsRun": "3d6e12432c36147cc0dfdc32bfe96823396d680808449f40242db21f2aec30c3",
+    "acceptOptionsRun": "761c7693accf343be61a291c351d9cdfbb6d811f593eb0dde0123584b4989543",
+    "stageRun": "5feecd1c85706d18c22cc41566feb8c47f80025c57959615bee1084de169c167",
+    "exportRun": "255e5d3cbca6badcea0f8d52d3ff760bbc6c5cf2d53423a92c6dd2649073f11a",
+    "workflowResult": "unresolved: expected focused Writer text postcondition was not verified; artifact verification does not relabel ledger",
+    "formatting": "Plain single-paragraph report; polished heading/paragraph formatting not qualified"
+  },
+  "calcPdfArtifact": {
+    "artifactVerified": true,
+    "businessStatus": "unverified",
+    "sourceWorkbookSnapshotAtExport": {
+      "path": "/Users/awitas/Documents/Mechanize Examples/Mortgage Rates 2026-10-01/Mechanize Calc Qualification.xls",
+      "sha256": "c31a1eb6703ac0e883c311bb5f05768f29f160bfd74fb58103d372ebbcda7e63",
+      "sameBytesAsOriginalXlsAtExport": true,
+      "laterUpdatedBy": "calcNamedSheetEdit",
+      "validation": [
+        "all cells",
+        "sheet names",
+        "stored BIFF formulas"
+      ]
+    },
+    "sourceWindowSwitchRunId": "b168141a060191f33e2d03d9349a5120b6f6f6900f7a84d2efc5b8bdb14c8305",
+    "saveAsWindowId": 9762,
+    "saveCopyRunId": "7bee9f35bbd56618fc1d3f2695600a598d0f02dcaf67b4a07044fe2ca6872de8",
+    "optionsMenuRun": {
+      "runId": "808736d43c7b953570abd188cd479ca46bf8fb4f93880dbfc4a89dccd1050639",
+      "state": "dispatched_unknown",
+      "postcondition": "none",
+      "laterObservation": "Options window 9979 capture showed All selected and default Export; later observation does not resolve the original effect."
+    },
+    "export": {
+      "optionsWindowId": 9979,
+      "optionsCapturePath": "/private/tmp/mechanize-calc-pdf-options.png",
+      "allPagesSelected": true,
+      "defaultExportSelected": true,
+      "saveFilenameRunId": "987d70fa07ee39b9ef23a8f61f6077a7801159968f118d053e4d6da800f91450",
+      "saveRunId": "fab91ec02d6034c1dbf5109bf284f652b1172c8e0e23f5a02af7869d9331883f",
+      "savePostcondition": "menuData enabled; does not independently prove artifact bytes"
+    },
+    "pdf": {
+      "path": "/Users/awitas/Documents/Mechanize Examples/Mortgage Rates 2026-10-01/Mechanize Calc Qualification.pdf",
+      "bytes": 24158,
+      "sha256": "de67b8ba453124d013b15d62a483021928285bfba1e4bccb82c74d6bba64ae7c",
+      "pages": 1,
+      "textChecks": [
+        "headers",
+        "date",
+        "rates",
+        "spread",
+        "changes",
+        "source URL"
+      ],
+      "textExtraction": "pypdf",
+      "renderPath": "/private/tmp/mechanize-calc-pdf-page-1.png",
+      "renderInspection": "Poppler; one-page plain table visually legible and unclipped with ample whitespace"
+    },
+    "limitations": [
+      "The unknown Options-menu effect is not cleared by later UI or artifact evidence.",
+      "Artifact verification does not establish Mechanize business success.",
+      "This verifies one PDF output from one copied workbook, not general PDF export support or multi-page layout."
+    ],
+    "readOnlyVerifier": {
+      "path": "verify-calc-pdf.py",
+      "passed": true,
+      "checks": [
+        "pinned visually reviewed bytes",
+        "one page",
+        "exact table rows",
+        "source notes"
+      ],
+      "layoutReview": "Poppler-rendered page independently inspected"
+    }
+  },
+  "calcNamedSheetEdit": {
+    "artifactVerified": true,
+    "businessStatus": "unverified",
+    "path": "/Users/awitas/Documents/Mechanize Examples/Mortgage Rates 2026-10-01/Mechanize Calc Qualification.xls",
+    "originalXlsPath": "/Users/awitas/Documents/Mechanize Examples/Mortgage Rates 2026-10-01/Mortgage Rates 2026-10-01.xls",
+    "originalXlsSHA256Unchanged": "c31a1eb6703ac0e883c311bb5f05768f29f160bfd74fb58103d372ebbcda7e63",
+    "copySHA256AfterSheetEdit": "127a1fca045d1d2b67544237a59e3cbef7ef1f80cd28cce9839ca2c94baf4767",
+    "sheetMenuDispatch": {
+      "runId": "231eac618045db64d42b19423b39e79c39453c5c26685c4b710cb7ed0952bc63",
+      "state": "dispatched_unknown",
+      "postcondition": "none",
+      "optionsWindowId": 9989,
+      "capturePath": "/private/tmp/mechanize-calc-sheet-options.png",
+      "observedDefaults": "NewSheet1, BeforeCurrent, NameSheet4"
+    },
+    "edit": {
+      "readonlyScopeRunId": "ac3b7cf570d1fe40d13e317137890044dd994c259204125afa493ea8561b1d93",
+      "readonlyExpectedName": "Sheet4",
+      "replaceRunId": "b53a2cea0c84a7acc9e6f1b01e1312f68dc1c39ef726496f34b546a4d732a0f0",
+      "preLiteral": "Sheet4",
+      "postLiteral": "Automation Checkpoint",
+      "prePostLiteralChecksPassed": true,
+      "commitRunId": "2672c5fa4a7df3eadc5507814364acfd76e28836e79813c2335df8ed3f987c84",
+      "commitPreLiteralMatched": true,
+      "commitPostcondition": "menuData enabled",
+      "saveRunId": "64a608e3405e7ebf0dcd115c979da66cb728b1e15fda2d708d14509c31ea89c2"
+    },
+    "independentXlsValidation": {
+      "sheetNames": [
+        "Automation Checkpoint",
+        "Sheet1",
+        "Sheet2",
+        "Sheet3"
+      ],
+      "oneSheetAdded": true,
+      "originalValuesPreservedBySheetName": true,
+      "storedFormulasPreserved": {
+        "sheet": "Sheet1",
+        "cells": [
+          "B4",
+          "C4",
+          "D2",
+          "D3",
+          "D4"
+        ]
+      },
+      "readOnlyVerifier": "verify-calc-checkpoint.py",
+      "verifierResult": "passed",
+      "validator": "xlrd cell values plus indexed BIFF formula records"
+    },
+    "postRecoveryWriterArtifactsUnchanged": {
+      "verified": true,
+      "originalODTSHA256": "0452592858b9e53224f1b60adb09be9bfeac4a22a913ce1257f2374fd488b9ab",
+      "editedCopySHA256": "156a162edfc54e972f10cee810e1c9e816fbd92e7af0f1d7ccb6ea2a18d8b30d"
+    },
+    "limitations": [
+      "The initial sheet-menu dispatch remains unknown; later literal and file checks do not resolve it.",
+      "Qualification covers one named sheet in this copy and preserved values by sheet name; no general sheet-management claim is made.",
+      "File verification does not establish Mechanize business success or application stability."
+    ]
+  },
+  "openOfficeCrashAndRecovery": {
+    "process": {
+      "pid": 98512,
+      "state": "exited"
+    },
+    "crash": {
+      "reportPath": "/Users/awitas/Library/Logs/DiagnosticReports/soffice-2026-10-03-165645.ips",
+      "exception": "SIGSEGV EXC_BAD_ACCESS at 0x20",
+      "stackExcerpt": "CopyAttributeValue / _AXXMIGCopyAttributeValue / autoreleasePool",
+      "causalAttribute": "unproven"
+    },
+    "restart": {
+      "runId": "fad568a1fb750bcabef244dcbfca9a762d1e4110d2e38b5dd79d9705f97879e6",
+      "pid": 41850,
+      "birth": "1791071872:733705"
+    },
+    "recovery": {
+      "startRunId": "cda3ca28b6aa1cfd290c215364a82f57580c95c82ab3f89a9a6f1163e837d926",
+      "nextRunId": "1ac3089973fac02b2b6485a16a9ff771b9c10dcb63940579e320ebe2a5492013",
+      "observed": "Three documents reported Successfully recovered; subsequent window observations restored DOC/XLS/ODT.",
+      "startAndNextReceipts": "dispatched_unknown",
+      "laterRecoveryDoesNotClearReceipts": true
+    },
+    "limitations": [
+      "Do not claim app stability or that every recovery action is qualified."
+    ]
+  },
+  "wordExport": {
+    "artifactVerified": true,
+    "path": "/Users/awitas/Documents/Mechanize Examples/Mortgage Rates 2026-10-01/Mortgage Rates 2026-10-01.doc",
+    "format": "Microsoft Word 97/2000/XP (.doc)",
+    "bytes": 10752,
+    "sha256": "876733115c0e9c667ae5360c14c4aa46d329100914c5d11eb21c5f961befb823",
+    "validation": [
+      "CFB binary signature",
+      "macOS textutil read-only extraction matches complete summary after whitespace normalization"
+    ],
+    "method": "Mechanize+Endly Save As; selected observed format menu; accepted Keep Current Format",
+    "limitations": [
+      "No DOCX save option observed",
+      "Input receipts without declared postconditions remain unresolved; file verification is independent"
+    ]
+  },
+  "excelExport": {
+    "artifactVerified": true,
+    "path": "/Users/awitas/Documents/Mechanize Examples/Mortgage Rates 2026-10-01/Mortgage Rates 2026-10-01.xls",
+    "format": "Microsoft Excel 97/2000/XP (.xls), BIFF8",
+    "bytes": 7168,
+    "sha256": "c31a1eb6703ac0e883c311bb5f05768f29f160bfd74fb58103d372ebbcda7e63",
+    "validation": [
+      "compound file signature",
+      "xlrd headers/dates/rates/cached formula results",
+      "actual BIFF formula tokens decompiled and compared for D2 D3 B4 C4 D4",
+      "all source notes"
+    ],
+    "method": "Mechanize+Endly Save As and observed Keep Current Format",
+    "limitations": [
+      "No XLSX save option observed",
+      "Unresolved input receipts are not relabeled by independent file verification"
+    ]
+  },
+  "finderFolderVerification": {
+    "folderNavigationVerified": true,
+    "windowMoveVerified": true,
+    "captureVerified": true,
+    "visibleFiles": [
+      "Mortgage Rates 2026-10-01.doc",
+      "Mortgage Rates 2026-10-01.ods",
+      "Mortgage Rates 2026-10-01.odt",
+      "Mortgage Rates 2026-10-01.pdf",
+      "Mortgage Rates 2026-10-01.xls"
+    ],
+    "capturePath": "/private/tmp/mechanize-finder-mortgage-verified.png",
+    "captureSHA256": "a4afa924ec22768f772ad5c1b2705e9c397dc28ac5829340c4f2451cba64fa5e",
+    "moveRun": "84d3a06fdf502872735afc2ce582a0522bb27badb39fe7c1fc48548c8348c201",
+    "limitation": "Visual filename identification; semantic row selection and file opening not yet qualified"
+  },
+  "existingWriterEditStage": {
+    "path": "writer-edit.yaml",
+    "endlyPreviewPassed": true,
+    "mechanizeTypedValidationPassed": true,
+    "steps": 2,
+    "parameterizedLiveReplayQualified": false,
+    "scope": "already inspected single focused paragraph in a separate editing copy; no open/copy/save/format"
+  },
+  "desktopStabilityUpdate": {
+    "installed": true,
+    "sourceRoot": "/Users/awitas/Library/Application Support/Mechanize/sources/runtime-20261003-office-stability",
+    "brokerPID": 47282,
+    "backup": "/Users/awitas/Library/Application Support/Mechanize/development/20261002T034524Z-89d66cc8/runtime-backup-1791073924-ae4d551b",
+    "stateSchemaVersion": 6,
+    "additionalMacOSPermissionGrants": false,
+    "exactWindowObserve": {
+      "scopeEchoVerified": true,
+      "processIdentityVerified": true,
+      "initialNodes": 623,
+      "truncated": false,
+      "valueBearingNodes": 0,
+      "windowTitle": "Mechanize Calc Qualification.xls - OpenOffice Calc"
+    }
+  },
+  "remainingControlFailures": [
+    {
+      "control": "Sheet1 tab",
+      "runId": "77450b281cf2302ceb85f5e211121d8b3b3c8acc9568e94065435bae8e85b9fe",
+      "reason": "focusNotObserved",
+      "state": "unknown",
+      "replayed": false
+    },
+    {
+      "control": "Name Box",
+      "runId": "3f2ab08e55cc041410ea9ee26d746d716f85ab51fb22ff7511fc29d35b08be59",
+      "reason": "focusNotObserved",
+      "state": "unknown",
+      "replayed": false
+    }
+  ]
+}

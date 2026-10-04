@@ -1,0 +1,20 @@
+# Requires an MCP endpoint accepting tokens from the configured OAuth provider.
+pipeline:
+  describe:
+    action: mcp/runner:call
+    url: $endpoint
+    timeoutMs: 60000
+    oauth:
+      authFlow: OOB
+      configURL: $oauthConfig
+      secretsURL: $oobCredentials
+    name: mechanize_describe
+    arguments: {}
+    post:
+      discovery: $StructuredContent
+  assertContract:
+    action: validator:assert
+    name: Mechanize discovery through Scy OOB authorization
+    actual: $discovery
+    expect:
+      schemaVersion: 1

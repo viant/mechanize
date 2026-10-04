@@ -1,0 +1,13 @@
+#package('github.com/viant/mechanize/data/stopboundary')
+#setting($_ = $input_type('StopBoundaryInput'))
+#setting($_ = $output_type('StopBoundaryOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/stopboundary', 'PATCH'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $Data<[]*Run>(output/body))
+SELECT records.*,events.*,type(records,'Run'),type(events,'Event'),
+ lifecycle_type(records,'RunLifecycle'),lifecycle_type(events,'EventLifecycle'),
+ concurrency_token(records.revision)
+FROM (${embed:sql/root.sql}) records
+JOIN (SELECT e.* FROM events e WHERE e.namespace=:Namespace) events ON events.namespace=records.namespace AND events.run_id=records.id

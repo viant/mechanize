@@ -1,0 +1,212 @@
+# One capture-bound click to select an already inspected Calc sheet tab.
+# Does not capture, save, change cell data, or verify business completion.
+# Use only when the live catalog exposes native:windowFrameClick and the frame
+# capture producer; captureRef, purpose, process and window must be the same.
+# Preview echoes its supplied request. Use public dummy captureRef and point
+# values for preview; never preview a live permit or credential resource.
+init:
+- name: endpoint
+  from: endpoint
+  required: true
+- name: credentialResource
+  from: credentialResource
+  required: true
+- name: sessionId
+  from: sessionId
+  required: true
+- name: grantId
+  from: grantId
+  required: true
+- name: purpose
+  from: purpose
+  required: true
+- name: requestId
+  from: requestId
+  required: true
+- name: officePid
+  from: officePid
+  required: true
+- name: officeBirth
+  from: officeBirth
+  required: true
+- name: windowTitle
+  from: windowTitle
+  required: true
+- name: sheetName
+  from: sheetName
+  required: true
+- name: captureRef
+  from: captureRef
+  required: true
+- name: x
+  from: x
+  required: true
+- name: "y"
+  from: "y"
+  required: true
+- name: previewPublic
+  from: previewPublic
+  value: ''
+- name: sheetTabLabel
+  value: 'Sheet ${sheetName}'
+- name: sheetSelectPlan
+  value:
+    schemaVersion: 1
+    name: Select one inspected Calc sheet tab
+    goal:
+      description: Select the named Calc sheet with one click at the pixel position from the inspected exact-window capture.
+      successCriteria:
+      - The requested sheet becomes displayed, with its exact AXTable enabled in the exact window after the single click.
+    inputs:
+      captureRef: {type: string, required: true}
+      x: {type: number, required: true}
+      "y": {type: number, required: true}
+      windowTitle: {type: string, required: true}
+      sheetName: {type: string, required: true}
+      sheetTabLabel: {type: string, required: true}
+    bindings:
+    - name: capturePermit
+      type: value
+      value: {kind: reference, ref: input.captureRef, expected: string}
+    - name: frameX
+      type: value
+      value: {kind: reference, ref: input.x, expected: number}
+    - name: frameY
+      type: value
+      value: {kind: reference, ref: input.y, expected: number}
+    surfaces:
+      office:
+        kind: native
+        bundleId: org.openoffice.script
+        processId: $AsInt($officePid)
+        processStartToken: $officeBirth
+    requires:
+      adapters: [native]
+    steps:
+    - id: click-inspected-sheet-tab
+      purpose: Use the one-use permit from the inspected exact Calc window to click the requested named sheet tab once.
+      timeoutMs: 10000
+      command: 'office.clickWindowFrame(captureRef: capturePermit, x: frameX, y: frameY)'
+      effect:
+        businessKey:
+          task: {kind: string, string: openoffice-hybrid-sheet-select}
+          requestId: {kind: string, string: $requestId}
+          processId: {kind: number, number: $AsInt($officePid)}
+          processStartToken: {kind: string, string: $officeBirth}
+          documentTitle: {kind: string, string: $windowTitle}
+          sheetName: {kind: string, string: $sheetName}
+        reconcile:
+          kind: adapter
+          adapter: native
+          name: valueEquals
+          scope: {surfaceRef: office}
+          timeoutMs: 10000
+          freshnessMs: 1000
+          requiredAuthority: observational
+          inputs:
+            bundleID: {kind: string, string: org.openoffice.script}
+            processId: {kind: number, number: $AsInt($officePid)}
+            processStartToken: {kind: string, string: $officeBirth}
+            strategy: {kind: string, string: role}
+            selector: {kind: string, string: AXTable}
+            name: {kind: reference, ref: input.sheetTabLabel, expected: string}
+            windowTitle: {kind: reference, ref: input.windowTitle, expected: string}
+            attribute: {kind: string, string: enabled}
+            expected: {kind: boolean, boolean: true}
+      postcondition:
+        kind: adapter
+        adapter: native
+        name: valueEquals
+        scope: {surfaceRef: office}
+        timeoutMs: 10000
+        freshnessMs: 1000
+        requiredAuthority: observational
+        inputs:
+          bundleID: {kind: string, string: org.openoffice.script}
+          processId: {kind: number, number: $AsInt($officePid)}
+          processStartToken: {kind: string, string: $officeBirth}
+          strategy: {kind: string, string: role}
+          selector: {kind: string, string: AXTable}
+          name: {kind: reference, ref: input.sheetTabLabel, expected: string}
+          windowTitle: {kind: reference, ref: input.windowTitle, expected: string}
+          attribute: {kind: string, string: enabled}
+          expected: {kind: boolean, boolean: true}
+- name: sheetSelectSource
+  value:
+    format: yaml
+    source: $AsJSON($sheetSelectPlan)
+- name: publicMCPRequest
+  value:
+    sessionId: public-preview-session
+    grantId: public-preview-grant
+    purpose: Public preview purpose
+    clientRequestId: public-preview-request
+    format: yaml
+    inputs:
+      captureRef: {kind: string, string: public-preview-capture-ref}
+      x: {kind: number, number: 320}
+      "y": {kind: number, number: 900}
+      windowTitle: {kind: string, string: Calc public preview window}
+      sheetName: {kind: string, string: PreviewSheet}
+      sheetTabLabel: {kind: string, string: Sheet PreviewSheet}
+    source: $sheetSelectSource.source
+
+pipeline:
+  preview:
+    action: print
+    message: One capture-bound click plan. Preview does not print the permit or frame pixels.
+  previewPublicRequest:
+    when: '$Len($previewPublic) > 0 && $framePixels.FailedCount == 0'
+    action: print
+    message: $AsJSON($publicMCPRequest)
+  framePixels:
+    action: validator:assert
+    name: framePixels
+    actual:
+      x: $x
+      y: $y
+    expect:
+      x: '~/^(0|[1-9][0-9]{0,3}|[12][0-9]{4}|3[01][0-9]{3}|32[0-6][0-9]{2}|327[0-5][0-9]|3276[0-7])$/'
+      y: '~/^(0|[1-9][0-9]{0,3}|[12][0-9]{4}|3[01][0-9]{3}|32[0-6][0-9]{2}|327[0-5][0-9]|3276[0-7])$/'
+  stage:
+    when: '$Len($previewPublic) == 0 && $framePixels.FailedCount == 0'
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    name: mechanize_script_run
+    arguments:
+      sessionId: $sessionId
+      grantId: $grantId
+      purpose: $purpose
+      clientRequestId: $requestId
+      format: yaml
+      inputs:
+        captureRef: {kind: string, string: $captureRef}
+        x: {kind: number, number: $AsInt($x)}
+        "y": {kind: number, number: $AsInt($y)}
+        windowTitle: {kind: string, string: $windowTitle}
+        sheetName: {kind: string, string: $sheetName}
+        sheetTabLabel: {kind: string, string: $sheetTabLabel}
+      source: $sheetSelectSource.source
+    post:
+      operationId: $StructuredContent.operationId
+      runId: $StructuredContent.runId
+  wait:
+    when: '$Len($previewPublic) == 0 && $framePixels.FailedCount == 0'
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    name: mechanize_operation_status
+    arguments:
+      sessionId: $sessionId
+      operationId: $operationId
+    repeat: 120
+    sleepTimeMs: 250
+    exit: '$operationStatus:succeeded || $operationStatus:failed || $operationStatus:cancelled || $operationStatus:unknown'
+    post:
+      operationStatus: $StructuredContent.executionStatus
+      operation: $StructuredContent
+  report:
+    when: '$Len($previewPublic) == 0 && $framePixels.FailedCount == 0'
+    action: print
+    message: $AsJSON($operation)

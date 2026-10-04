@@ -1,0 +1,18 @@
+#package('github.com/viant/mechanize/data/reconcileeffect')
+#setting($_ = $input_type('ReconcileEffectInput'))
+#setting($_ = $output_type('ReconcileEffectOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/reconcileeffect', 'PATCH'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $Data<[]*Run>(output/body))
+SELECT records.*,effects.*,milestones.*,events.*,plans.*,attempts.*,
+ type(records,'Run'),type(effects,'Effect'),type(milestones,'Milestone'),type(events,'Event'),type(plans,'OriginalPlan'),type(attempts,'OriginalAttempt'),
+ lifecycle_type(records,'RunLifecycle'),lifecycle_type(effects,'EffectLifecycle'),lifecycle_type(milestones,'MilestoneLifecycle'),lifecycle_type(events,'EventLifecycle'),
+ concurrency_token(records.revision),concurrency_token(effects.revision)
+FROM (${embed:sql/root.sql}) records
+JOIN (SELECT e.* FROM effects e WHERE e.namespace=:Namespace) effects ON effects.namespace=records.namespace AND effects.run_id=records.id
+JOIN (SELECT m.* FROM milestones m WHERE m.namespace=:Namespace) milestones ON milestones.namespace=effects.namespace AND milestones.attempt_id=effects.attempt_id
+JOIN (SELECT e.* FROM events e WHERE e.namespace=:Namespace) events ON events.namespace=records.namespace AND events.run_id=records.id
+JOIN (SELECT p.* FROM (plan_revisions) p WHERE p.namespace=:Namespace) plans ON plans.namespace=records.namespace AND plans.id=records.plan_id
+JOIN (SELECT a.* FROM (attempts) a WHERE a.namespace=:Namespace) attempts ON attempts.namespace=records.namespace AND attempts.run_id=records.id

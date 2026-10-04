@@ -1,0 +1,401 @@
+# Run only against the disposable examples/browser/fixture page at this origin.
+# Required: endpoint, credentialResource (Scy reference), grantId, requestId.
+# Optional: sessionId, purpose, expectedInitialCounter (0), expectedIncrementedCounter (1).
+# No mutation repeats/retries. Only operation-status polling repeats.
+init:
+  - name: endpoint
+    from: endpoint
+    required: true
+  - name: credentialResource
+    from: credentialResource
+    required: true
+  - name: grantId
+    from: grantId
+    required: true
+  - name: requestId
+    from: requestId
+    required: true
+  - name: fixturePurpose
+    from: purpose
+    value: Run the disposable browser fixture
+  - name: fixtureInitial
+    from: expectedInitialCounter
+    value: '0'
+  - name: fixtureIncremented
+    from: expectedIncrementedCounter
+    value: '1'
+  - name: fixtureSession
+    from: sessionId
+    value: ''
+  - name: initialStatus
+    value: notStarted
+  - name: incrementStatus
+    value: notStarted
+  - name: fillStatus
+    value: notStarted
+  - name: finalStatus
+    value: notStarted
+pipeline:
+  openSession:
+    when: '$Len($fixtureSession) == 0'
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    timeoutMs: 30000
+    name: mechanize_session_open
+    arguments:
+      name: Browser counter and report-title fixture
+    post:
+      fixtureSession: $StructuredContent.sessionId
+  initialRead:
+    when: '$Len($fixtureSession) > 0'
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    timeoutMs: 30000
+    name: mechanize_script_run
+    arguments:
+      sessionId: $fixtureSession
+      grantId: $grantId
+      purpose: $fixturePurpose
+      clientRequestId: '${requestId}-initial'
+      format: yaml
+      inputs:
+        expectedCounter: {kind: string, string: $fixtureInitial}
+      source: |
+        schemaVersion: 1
+        name: Read initial browser fixture counter
+        inputs:
+          expectedCounter: {type: string, required: true}
+        bindings:
+          - name: expectedCounterValue
+            type: value
+            value: {kind: reference, ref: input.expectedCounter, expected: string}
+        goal:
+          description: Confirm the counter matches the explicit initial value before any input.
+          successCriteria: [Counter matches the supplied initial value.]
+        surfaces:
+          page: {kind: web, origin: http://127.0.0.1:18771}
+        steps:
+          - id: assert-counter-zero
+            command: 'expect(page.getById("counter", exact: true)).toHaveText(expectedCounterValue)'
+          - id: read-counter-zero
+            command: 'let initialCounter = page.getById("counter", exact: true).read("text")'
+    post:
+      initialOperationId: $StructuredContent.operationId
+      initialRunId: $StructuredContent.runId
+  pollInitial:
+    when: '$Len($fixtureSession) > 0'
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    timeoutMs: 30000
+    name: mechanize_operation_status
+    arguments: {sessionId: $fixtureSession, operationId: $initialOperationId}
+    repeat: 120
+    sleepTimeMs: 250
+    exit: '$initialStatus:succeeded || $initialStatus:failed || $initialStatus:cancelled'
+    post:
+      initialStatus: $StructuredContent.executionStatus
+      initialOperation: $StructuredContent
+  assertInitialOperation:
+    action: validator:assert
+    name: Initial read and expected-value assertion completed
+    actual: $initialOperation
+    expect: {executionStatus: succeeded}
+  initialOutputs:
+    when: '$initialStatus:succeeded'
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    timeoutMs: 30000
+    name: mechanize_operation_outputs
+    arguments:
+      sessionId: $fixtureSession
+      operationId: $initialOperationId
+      bindings: [initialCounter]
+    post:
+      initialOutputs: $StructuredContent
+  assertInitialCounter:
+    when: '$initialStatus:succeeded'
+    action: validator:assert
+    name: Initial counter read matches the expected string
+    actual: $initialOutputs.outputs.initialCounter
+    expect: {kind: string, string: $fixtureInitial}
+  incrementOnce:
+    when: '$initialStatus:succeeded && $initialOutputs.outputs.initialCounter.kind:string && $initialOutputs.outputs.initialCounter.string:$fixtureInitial'
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    timeoutMs: 30000
+    name: mechanize_script_run
+    arguments:
+      sessionId: $fixtureSession
+      grantId: $grantId
+      purpose: $fixturePurpose
+      clientRequestId: '${requestId}-increment'
+      format: yaml
+      inputs:
+        fixtureRequest: {kind: string, string: $requestId}
+        expectedCounter: {kind: string, string: $fixtureIncremented}
+      source: |
+        schemaVersion: 1
+        name: Increment browser fixture exactly once
+        goal:
+          description: Activate Increment once and independently read the supplied expected counter.
+          successCriteria: [Counter matches the supplied incremented value after one activation.]
+        requires: {adapters: [web]}
+        inputs:
+          fixtureRequest: {type: string, required: true}
+          expectedCounter: {type: string, required: true}
+        surfaces:
+          page: {kind: web, origin: http://127.0.0.1:18771}
+        steps:
+          - id: increment-once
+            purpose: One activation; never replay an uncertain effect.
+            timeoutMs: 10000
+            command: 'page.getById("increment", exact: true).click()'
+            effect:
+              businessKey:
+                request: {kind: reference, ref: input.fixtureRequest, expected: string}
+                action: {kind: string, string: increment-once}
+            postcondition:
+              kind: adapter
+              adapter: web
+              name: valueEquals
+              scope: {surfaceRef: page}
+              timeoutMs: 10000
+              freshnessMs: 2000
+              requiredAuthority: observational
+              inputs:
+                origin: {kind: string, string: http://127.0.0.1:18771}
+                strategy: {kind: string, string: id}
+                selector: {kind: string, string: counter}
+                attribute: {kind: string, string: text}
+                expected: {kind: reference, ref: input.expectedCounter, expected: string}
+          - id: read-counter-one
+            command: 'let incrementedCounter = page.getById("counter", exact: true).read("text")'
+    post:
+      incrementOperationId: $StructuredContent.operationId
+      incrementRunId: $StructuredContent.runId
+  pollIncrement:
+    when: '$initialStatus:succeeded && $initialOutputs.outputs.initialCounter.kind:string && $initialOutputs.outputs.initialCounter.string:$fixtureInitial'
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    timeoutMs: 30000
+    name: mechanize_operation_status
+    arguments: {sessionId: $fixtureSession, operationId: $incrementOperationId}
+    repeat: 120
+    sleepTimeMs: 250
+    exit: '$incrementStatus:succeeded || $incrementStatus:failed || $incrementStatus:cancelled'
+    post:
+      incrementStatus: $StructuredContent.executionStatus
+      incrementOperation: $StructuredContent
+  assertIncrementOperation:
+    when: '$initialStatus:succeeded && $initialOutputs.outputs.initialCounter.kind:string && $initialOutputs.outputs.initialCounter.string:$fixtureInitial'
+    action: validator:assert
+    name: Single increment and protected postcondition completed
+    actual: $incrementOperation
+    expect: {executionStatus: succeeded}
+  incrementOutputs:
+    when: '$incrementStatus:succeeded'
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    timeoutMs: 30000
+    name: mechanize_operation_outputs
+    arguments:
+      sessionId: $fixtureSession
+      operationId: $incrementOperationId
+      bindings: [incrementedCounter]
+    post:
+      incrementOutputs: $StructuredContent
+  assertIncrementedCounter:
+    when: '$incrementStatus:succeeded'
+    action: validator:assert
+    name: Counter matches the expected string after the single increment
+    actual: $incrementOutputs.outputs.incrementedCounter
+    expect: {kind: string, string: $fixtureIncremented}
+  fillTitle:
+    when: '$incrementStatus:succeeded && $incrementOutputs.outputs.incrementedCounter.kind:string && $incrementOutputs.outputs.incrementedCounter.string:$fixtureIncremented'
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    timeoutMs: 30000
+    name: mechanize_script_run
+    arguments:
+      sessionId: $fixtureSession
+      grantId: $grantId
+      purpose: $fixturePurpose
+      clientRequestId: '${requestId}-fill'
+      format: yaml
+      inputs:
+        fixtureRequest: {kind: string, string: $requestId}
+      source: |
+        schemaVersion: 1
+        name: Fill and verify browser fixture report title
+        goal:
+          description: Set the nonsecret fixture title and independently verify its echo.
+          successCriteria: [Echo is Endly browser fixture.]
+        requires: {adapters: [web]}
+        inputs:
+          fixtureRequest: {type: string, required: true}
+        surfaces:
+          page: {kind: web, origin: http://127.0.0.1:18771}
+        steps:
+          - id: fill-report-title-once
+            purpose: One semantic fill; no mutation retries.
+            timeoutMs: 10000
+            command: 'page.getById("report-title", exact: true).fill("Endly browser fixture")'
+            effect:
+              businessKey:
+                request: {kind: reference, ref: input.fixtureRequest, expected: string}
+                action: {kind: string, string: fill-report-title-once}
+            postcondition:
+              kind: adapter
+              adapter: web
+              name: valueEquals
+              scope: {surfaceRef: page}
+              timeoutMs: 10000
+              freshnessMs: 2000
+              requiredAuthority: observational
+              inputs:
+                origin: {kind: string, string: http://127.0.0.1:18771}
+                strategy: {kind: string, string: id}
+                selector: {kind: string, string: echo}
+                attribute: {kind: string, string: text}
+                expected: {kind: string, string: Endly browser fixture}
+    post:
+      fillOperationId: $StructuredContent.operationId
+      fillRunId: $StructuredContent.runId
+  pollFill:
+    when: '$incrementStatus:succeeded && $incrementOutputs.outputs.incrementedCounter.kind:string && $incrementOutputs.outputs.incrementedCounter.string:$fixtureIncremented'
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    timeoutMs: 30000
+    name: mechanize_operation_status
+    arguments: {sessionId: $fixtureSession, operationId: $fillOperationId}
+    repeat: 120
+    sleepTimeMs: 250
+    exit: '$fillStatus:succeeded || $fillStatus:failed || $fillStatus:cancelled'
+    post:
+      fillStatus: $StructuredContent.executionStatus
+      fillOperation: $StructuredContent
+  assertFillOperation:
+    when: '$incrementStatus:succeeded && $incrementOutputs.outputs.incrementedCounter.kind:string && $incrementOutputs.outputs.incrementedCounter.string:$fixtureIncremented'
+    action: validator:assert
+    name: Title fill and protected echo postcondition completed
+    actual: $fillOperation
+    expect: {executionStatus: succeeded}
+  finalRead:
+    when: '$fillStatus:succeeded'
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    timeoutMs: 30000
+    name: mechanize_script_run
+    arguments:
+      sessionId: $fixtureSession
+      grantId: $grantId
+      purpose: $fixturePurpose
+      clientRequestId: '${requestId}-final'
+      format: yaml
+      inputs:
+        expectedCounter: {kind: string, string: $fixtureIncremented}
+      source: |
+        schemaVersion: 1
+        name: Verify final browser fixture values
+        inputs:
+          expectedCounter: {type: string, required: true}
+        bindings:
+          - name: expectedCounterValue
+            type: value
+            value: {kind: reference, ref: input.expectedCounter, expected: string}
+        goal:
+          description: Confirm the counter matches the supplied final value and the title matches its echo.
+          successCriteria: [Counter matches the supplied incremented value., Title and echo are Endly browser fixture.]
+        surfaces:
+          page: {kind: web, origin: http://127.0.0.1:18771}
+        steps:
+          - id: assert-final-counter
+            command: 'expect(page.getById("counter", exact: true)).toHaveText(expectedCounterValue)'
+          - id: assert-final-title
+            command: 'expect(page.getById("report-title", exact: true)).toHaveValue("Endly browser fixture")'
+          - id: assert-final-echo
+            command: 'expect(page.getById("echo", exact: true)).toHaveText("Endly browser fixture")'
+          - id: read-final-counter
+            command: 'let finalCounter = page.getById("counter", exact: true).read("text")'
+          - id: read-final-title
+            command: 'let finalTitle = page.getById("report-title", exact: true).read("value")'
+          - id: read-final-echo
+            command: 'let finalEcho = page.getById("echo", exact: true).read("text")'
+    post:
+      finalOperationId: $StructuredContent.operationId
+      finalRunId: $StructuredContent.runId
+  pollFinal:
+    when: '$fillStatus:succeeded'
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    timeoutMs: 30000
+    name: mechanize_operation_status
+    arguments: {sessionId: $fixtureSession, operationId: $finalOperationId}
+    repeat: 120
+    sleepTimeMs: 250
+    exit: '$finalStatus:succeeded || $finalStatus:failed || $finalStatus:cancelled'
+    post:
+      finalStatus: $StructuredContent.executionStatus
+      finalOperation: $StructuredContent
+  assertFinalOperation:
+    when: '$fillStatus:succeeded'
+    action: validator:assert
+    name: Final read and DSL assertions completed
+    actual: $finalOperation
+    expect: {executionStatus: succeeded}
+  finalOutputs:
+    when: '$finalStatus:succeeded'
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    timeoutMs: 30000
+    name: mechanize_operation_outputs
+    arguments:
+      sessionId: $fixtureSession
+      operationId: $finalOperationId
+      bindings: [finalCounter, finalTitle, finalEcho]
+    post:
+      finalOutputs: $StructuredContent
+  assertFinalValues:
+    when: '$finalStatus:succeeded'
+    action: validator:assert
+    name: Final counter title and echo match the fixture goal
+    actual: $finalOutputs.outputs
+    expect:
+      finalCounter: {kind: string, string: $fixtureIncremented}
+      finalTitle: {kind: string, string: Endly browser fixture}
+      finalEcho: {kind: string, string: Endly browser fixture}
+  reportInitial:
+    when: '$initialStatus:succeeded || $initialStatus:failed || $initialStatus:cancelled || $initialStatus:running || $initialStatus:unknown'
+    action: print
+    message: '$AsJSON($initialOperation)'
+  reportIncrement:
+    when: '$incrementStatus:succeeded || $incrementStatus:failed || $incrementStatus:cancelled || $incrementStatus:running || $incrementStatus:unknown'
+    action: print
+    message: '$AsJSON($incrementOperation)'
+  reportFill:
+    when: '$fillStatus:succeeded || $fillStatus:failed || $fillStatus:cancelled || $fillStatus:running || $fillStatus:unknown'
+    action: print
+    message: '$AsJSON($fillOperation)'
+  reportFinal:
+    when: '$finalStatus:succeeded || $finalStatus:failed || $finalStatus:cancelled || $finalStatus:running || $finalStatus:unknown'
+    action: print
+    message: '$AsJSON($finalOperation)'
+  reportValues:
+    when: '$finalStatus:succeeded'
+    action: print
+    message: '$AsJSON($finalOutputs.outputs)'
+  report:
+    action: print
+    message: 'Browser fixture stages: initial=$initialStatus increment=$incrementStatus fill=$fillStatus final=$finalStatus; owned session=$fixtureSession'

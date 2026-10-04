@@ -1,0 +1,2 @@
+SELECT r.revision, r.namespace, r.id, r.client_id, r.client_name, r.session_id, r.scope_json, r.modes_json, r.purpose, r.duration_seconds, r.created_at, r.request_expires_at, r.request_state, r.decision, r.grant_id, r.grant_created_at, r.grant_expires_at, r.grant_state, r.revocation_state FROM (SELECT * FROM  (SELECT r.* FROM consent_records r WHERE r.namespace = :Namespace
+)  records) r WHERE $criteria.CompositeIn("r", $ConsentconsumeKeys)

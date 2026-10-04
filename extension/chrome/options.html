@@ -1,0 +1,8 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Mechanize enrollment</title></head><body>
+<h1>Enroll this Chrome profile</h1>
+<p>Obtain channel and browser identifiers from your Mechanize administrator. Origins grant only DOM observation and activation; custom editors, file dialogs and trusted input need separate qualification. No credential is stored in this extension.</p>
+<label>Profile channel <input id="channel" required></label><br>
+<label>Browser instance <input id="instance" required></label><br>
+<label>Exact origins, one per line <textarea id="origins" placeholder="https://crm.example.test"></textarea></label><br>
+<button id="enroll">Grant origin access and connect</button><p id="status" role="status"></p>
+<script src="options.js"></script></body></html>

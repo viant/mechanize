@@ -1,0 +1,1 @@
+SELECT r.namespace, r.id, r.run_id, r.step_id, r.plan_id, r.lease_epoch, r.state, r.created_at FROM (SELECT * FROM (SELECT a.* FROM attempts a WHERE a.namespace = :Namespace) attempts) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentAttemptsParentKeys($CurrentBeginAttempt))

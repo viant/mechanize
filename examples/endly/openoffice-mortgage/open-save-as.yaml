@@ -1,0 +1,127 @@
+# Opens Save As only. It neither chooses an interchange format nor saves a file.
+# Requires an already-open, user-authorized Mechanize session and fresh window identity.
+init:
+  - name: endpoint
+    from: endpoint
+    required: true
+  - name: credentialResource
+    from: credentialResource
+    required: true
+  - name: sessionId
+    from: sessionId
+    required: true
+  - name: requestId
+    from: requestId
+    required: true
+  - name: officePid
+    from: officePid
+    required: true
+  - name: officeBirth
+    from: officeBirth
+    required: true
+  - name: windowId
+    from: windowId
+    required: true
+  - name: openSavePlan
+    value:
+      schemaVersion: 1
+      name: Open the observed OpenOffice Save As dialog
+      goal:
+        description: Open Save As in the exact observed OpenOffice window and verify the focused filename field; stop before choosing a format, path, or saving.
+        successCriteria:
+          - The focused native control has identifier saveAsNameTextField.
+      surfaces:
+        office:
+          kind: native
+          bundleId: org.openoffice.script
+          processId: $AsInt($officePid)
+          processStartToken: $officeBirth
+      requires:
+        adapters: [native]
+      steps:
+        - id: activate-office
+          purpose: Activate the exact OpenOffice process associated with the supplied window.
+          timeoutMs: 10000
+          command: office.activate()
+          effect:
+            businessKey:
+              task: {kind: string, string: open-save-as-activate}
+              requestId: {kind: string, string: $requestId}
+              processId: {kind: number, number: $AsInt($officePid)}
+              processStartToken: {kind: string, string: $officeBirth}
+        - id: open-save-as
+          purpose: Send Cmd+Shift+S to the exact observed OpenOffice window and verify the focused filename control.
+          timeoutMs: 10000
+          command: 'office.pressWindowKey(windowId: $AsInt($windowId), key: "Cmd+Shift+S")'
+          effect:
+            businessKey:
+              task: {kind: string, string: open-save-as-dialog}
+              requestId: {kind: string, string: $requestId}
+              processId: {kind: number, number: $AsInt($officePid)}
+              processStartToken: {kind: string, string: $officeBirth}
+              windowId: {kind: number, number: $AsInt($windowId)}
+          postcondition:
+            kind: adapter
+            adapter: native
+            name: valueEquals
+            scope: {surfaceRef: office}
+            timeoutMs: 10000
+            freshnessMs: 1000
+            requiredAuthority: observational
+            inputs:
+              bundleID: {kind: string, string: org.openoffice.script}
+              processId: {kind: number, number: $AsInt($officePid)}
+              processStartToken: {kind: string, string: $officeBirth}
+              strategy: {kind: string, string: id}
+              selector: {kind: string, string: saveAsNameTextField}
+              nativeRoot: {kind: string, string: focusedElement}
+              attribute: {kind: string, string: identifier}
+              expected: {kind: string, string: saveAsNameTextField}
+  - name: openSaveSource
+    value: $AsJSON($openSavePlan)
+  - name: openSaveRequest
+    value:
+      source: $openSaveSource
+      processId: $AsInt($officePid)
+      processStartToken: $officeBirth
+      windowId: $AsInt($windowId)
+      sessionIdSupplied: true
+
+pipeline:
+  preview:
+    action: print
+    message: "$AsJSON($openSaveRequest)"
+
+  run:
+    action: mcp/runner:call
+    url: "$endpoint"
+    bearerTokenSecret: "$credentialResource"
+    name: mechanize_script_run
+    arguments:
+      sessionId: "$sessionId"
+      purpose: Open the Save As dialog in the exact observed OpenOffice window only
+      clientRequestId: "$requestId"
+      format: json
+      source: "$openSaveSource"
+    post:
+      operationId: "$StructuredContent.operationId"
+      runId: "$StructuredContent.runId"
+
+  wait:
+    action: mcp/runner:call
+    url: "$endpoint"
+    bearerTokenSecret: "$credentialResource"
+    name: mechanize_operation_status
+    arguments:
+      sessionId: "$sessionId"
+      operationId: "$operationId"
+    repeat: 120
+    sleepTimeMs: 250
+    exit: "$operationStatus:succeeded || $operationStatus:failed || $operationStatus:cancelled || $operationStatus:unknown"
+    post:
+      operationStatus: "$StructuredContent.executionStatus"
+      operation: "$StructuredContent"
+
+  report:
+    action: print
+    message: "$AsJSON($operation)"

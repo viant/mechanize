@@ -1,0 +1,39 @@
+# Endly calls the real MCP endpoint; this workflow performs no desktop input.
+# Supply endpoint and bearerTokenSecret as workflow parameters.
+pipeline:
+  describe:
+    action: mcp/runner:call
+    URL: $endpoint
+    BearerTokenSecret: $bearerTokenSecret
+    TimeoutMs: 30000
+    Name: mechanize_describe
+    Arguments: {}
+    post:
+      discovery: $StructuredContent
+  assertContract:
+    action: validator:assert
+    name: Mechanize MCP discovery contract
+    actual: $discovery
+    expect:
+      schemaVersion: 1
+      sourceFormats:
+        - dsl
+        - json
+        - yaml
+  validateCalculator:
+    action: mcp/runner:call
+    URL: $endpoint
+    BearerTokenSecret: $bearerTokenSecret
+    TimeoutMs: 30000
+    Name: mechanize_script_validate
+    Arguments:
+      format: dsl
+      source: 'app("com.apple.calculator").activate()'
+    post:
+      validation: $StructuredContent
+  assertValidation:
+    action: validator:assert
+    name: Calculator action validates without execution
+    actual: $validation
+    expect:
+      valid: true

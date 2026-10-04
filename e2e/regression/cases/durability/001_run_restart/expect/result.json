@@ -1,0 +1,7 @@
+{
+  "scenario": "durability",
+  "persistedRun": true,
+  "restartStateRead": true,
+  "sameOperation": true,
+  "dispatches": 1
+}

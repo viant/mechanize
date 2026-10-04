@@ -1,0 +1,12 @@
+#package('github.com/viant/mechanize/data/consentrequests')
+#setting($_ = $input_type('ListRequestsInput'))
+#setting($_ = $output_type('ListRequestsOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/consentrequests', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $RecordID<string>(query/recordID).Required())
+#define($_ = $Data<[]*Record>(output/view))
+SELECT records.*,audit.*,type(audit,'Audit'),type(records,'Record'),set_limit(records,200)
+FROM (${embed:sql/root.sql}) records
+JOIN (SELECT a.* FROM (consent_audit) a WHERE a.namespace = :Namespace) audit ON audit.namespace=records.namespace AND audit.request_id=records.id

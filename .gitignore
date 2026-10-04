@@ -1,0 +1,45 @@
+# Local agent configuration and working state
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+/.agents/
+/.claude/
+/.codex/
+/.cursor/
+/.agent-work/
+
+# Local planning, progress, handoff, and review assets
+/work_in_progress/
+
+# Agent-generated reviews and review metadata (not product review code)
+/claude-review*
+/agent-review*
+/codex-review*
+/reviews/
+/.reviews/
+
+# Build products and local IDE/runtime state
+/.build/
+/dist/
+/.idea/
+/.vscode/
+/mechanize
+*.test
+*.prof
+__pycache__/
+*.pyc
+.DS_Store
+
+# Private local configuration, credentials, and databases
+/.secret/
+/.secrets/
+/.env
+/.env.*
+*.jwt
+*.key
+*.pem
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal

@@ -1,0 +1,1 @@
+SELECT r.namespace, r.id, r.run_id, r.attempt_id, r.state, r.evidence_json FROM (SELECT * FROM (SELECT m.* FROM milestones m WHERE m.namespace=:Namespace) milestones) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentMilestonesParentKeys($CurrentEffects))

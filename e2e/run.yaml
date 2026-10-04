@@ -1,0 +1,31 @@
+init:
+  appPath: $WorkingDirectory(./..)
+  setupTasks: setup,app
+pipeline:
+  build:
+    action: run
+    request: '@build/build'
+  test:
+    all:
+      action: run
+      request: '@regression/regression'
+    testGateway:
+      action: run
+      when: $tasks:/testGateway/
+      request: '@regression/regression'
+      '@tasks': $setupTasks,testGateway
+    testIdentity:
+      action: run
+      when: $tasks:/testIdentity/
+      request: '@regression/regression'
+      '@tasks': $setupTasks,testIdentity
+    testDurability:
+      action: run
+      when: $tasks:/testDurability/
+      request: '@regression/regression'
+      '@tasks': $setupTasks,testDurability
+    testState:
+      action: run
+      when: $tasks:/testState/
+      request: '@regression/regression'
+      '@tasks': $setupTasks,testState

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mechanize Finder"
+  short_description: "Navigate to known Finder folders with Mechanize"
+  default_prompt: "Use $mechanize-finder to navigate Finder to a user-authorized folder."

@@ -1,0 +1,11 @@
+#package('github.com/viant/mechanize/data/listrecordingevents')
+#setting($_ = $input_type('ListRecordingEventsInput'))
+#setting($_ = $output_type('ListRecordingEventsOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/listrecordingevents', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $RecordingID<string>(query/recordingId).Required())
+#define($_ = $Data<[]*RecordedEvent>(output/view))
+SELECT records.*,type(records,'RecordedEvent')
+FROM (${embed:sql/root.sql}) records
