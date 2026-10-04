@@ -17,8 +17,8 @@ controls, perform authorized actions, and check available postconditions.
 - Short-lived references for observed elements, with durable scripts based on
   application identity and semantic locators.
 - Bundled MCP skills that give clients practical, capability-aware guidance.
-- Integration points for Endly workflow execution and generated Datly data
-  operations.
+- Integration points for Endly workflow execution and generated Datly 1.0
+  (`v1`) data operations.
 
 Available tools and actions depend on the configured host, authenticated
 identity, granted permissions, and advertised backend capabilities. Parsing a
@@ -27,7 +27,9 @@ script does not imply that a live adapter can execute it.
 ## Quick start
 
 Mechanize is under active development. Dependencies are pinned to published Go
-module revisions; sibling Viant checkouts are not required. Use Go 1.25.8 or
+module revisions, including the Datly 1.0 (`v1`) development line; sibling
+Viant checkouts are not required. The exact Datly pseudo-version is recorded in
+[go.mod](go.mod). Use Go 1.25.8 or
 newer. Native automation and the permissions helper require macOS and the
 platform build tools described in the installation guide.
 
@@ -105,7 +107,7 @@ production release or universal desktop coverage. See
 | Mechanize MCP gateway | Capability discovery, authenticated sessions, typed actions and evidence |
 | Native helper / Chrome extension | Surface-specific observation and control |
 | [Endly](https://github.com/viant/endly) | Workflow orchestration through MCP integration |
-| [Datly](https://github.com/viant/datly) | Generated, identity-scoped data operations |
+| [Datly 1.0 (`v1`)](https://github.com/viant/datly/tree/v1) | Generated, identity-scoped data operations |
 | [Scy](https://github.com/viant/scy) | Credential references and authentication integration |
 
 ## Contributing
