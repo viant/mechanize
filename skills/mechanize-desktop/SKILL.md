@@ -183,6 +183,11 @@ inspect the closed status and use native capture for the current visible UI.
 A native fallback targets the Chrome application and physical window, not a
 `web.tab` or web element ref. Browser DOM protection does not itself forbid native
 interaction; secure Vault entry and actual in-flight input guards still apply.
+Native tool surfaces need a bundle ID, for example
+`{"kind":"native","bundleId":"com.google.Chrome"}`; a title alone is not an
+application identity. For screenshots, discover physical windows with
+`mechanize_capture_windows` and capture the returned window instead of first
+observing a web page or menu bar.
 For public UI, confirm the active tab's origin/handle before changing it. Plan
 the action before acquiring a fresh frame, then click within its expiry; refresh
 an expired frame instead of reusing its coordinates or repeating an unknown input.

@@ -812,6 +812,18 @@ function reconnectArchiveReferenceValid(value,history){
   return history[0]?.nonce===value.nonce&&sameReconnectFence(history[0]?.newFence,value.endFence);
 }
 function reconnectWithoutArchive(value){const result={...value};delete result.archive;return result;}
+function reconnectLogicalHistory(record){
+ const windows=[],seen=new Set();let cursor=record,remaining=record?.archive?.segments||0;
+ while(cursor?.archive){
+  const ref=cursor.archive,stored=verifiedHistoryArchives.get(ref.digest);
+  if(!reconnectArchiveReferenceValid(ref,cursor.history)||ref.segments!==remaining||seen.has(ref.digest)||!stored||stored.journal.nonce!==ref.nonce||!sameReconnectFence(stored.journal.newFence,ref.endFence)||reconnectCanonical(stored.journal.history.at(-1))!==reconnectCanonical(cursor.history[0]))throw reconnectJournalRefuse('lineageInvalid');
+  seen.add(ref.digest);windows.push(cursor.history.slice(1));cursor=stored.journal;remaining--;
+ }
+ if(remaining!==0||!Array.isArray(cursor?.history))throw reconnectJournalRefuse('lineageInvalid');
+ const history=[...cursor.history];for(const window of windows.reverse())history.push(...window);return history;
+}
+const reconnectHistoryPrefix=(history,prefix)=>history.length>=prefix.length&&prefix.every((entry,index)=>reconnectCanonical(entry)===reconnectCanonical(history[index]));
+
 function reconnectArchiveCanonical(value){
   if(reconnectRecordKeys(value)!=='journal,version'||value.version!==1)throw reconnectJournalRefuse('lineageInvalid');
   // The envelope must not reduce the existing record's depth/node budget.
@@ -824,7 +836,7 @@ async function reconnectArchiveDigest(value){
   return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
 }
 const reconnectPendingArchivePrefix="mechanizeReconnectPendingArchive:";
-const verifiedPendingArchives=new Map();
+const verifiedPendingArchives=new Map(),verifiedHistoryArchives=new Map();
 function reconnectPendingReferenceValid(ref){
  return reconnectRecordKeys(ref)==='bytes,digest,newFence,nonce,oldFence,version'&&/^[a-f0-9]{64}$/.test(ref.digest)&&/^[a-f0-9]{64}$/.test(ref.nonce)&&Number.isSafeInteger(ref.bytes)&&ref.bytes>0&&ref.bytes<=MechanizeProtocol.MAX_BYTES&&reconnectVersionValid(ref.version)&&ref.version<MAX_RECONNECT_VERSION&&reconnectFenceValid(ref.oldFence)&&reconnectFenceValid(ref.newFence)&&ref.oldFence.scopeHash===ref.newFence.scopeHash&&!sameReconnectFence(ref.oldFence,ref.newFence);
 }
@@ -873,31 +885,68 @@ async function archiveReconnectPending(journal,previous,barriers,qualification,c
  return reference;
 }
 async function verifyReconnectArchives(record,qualification){
-  reconnectCanonical(record);
-  verifiedPendingArchives.clear();
-  const budget={bytes:0,pending:new Set()};await loadReconnectPendingArchives(record,budget,0,qualification);
-  let cursor=record,remaining=record?.archive?.segments||0;const seen=new Set(),nonces=new Set();
-  const pendingNonces=value=>{for(let pending=value?.phase==='pending'?value:reconnectOriginalPending(value?.recovery);pending;pending=reconnectOriginalPending(pending.recovery)){if(nonces.has(pending.nonce))throw reconnectJournalRefuse('lineageInvalid');nonces.add(pending.nonce);}};
+ verifiedPendingArchives.clear();verifiedHistoryArchives.clear();
+ try{return await verifyReconnectArchiveGraph(record,qualification);}
+ catch(error){verifiedPendingArchives.clear();verifiedHistoryArchives.clear();throw error;}
+}
+async function verifyReconnectArchiveGraph(record,qualification){
+ reconnectCanonical(record);if(record===undefined)return;
+ const budget={bytes:0,pending:new Set()},queue=[record],roots=[],visited=new Set(),checkedArchives=new Map();
+ // Load the bounded graph before pure validation: different recovery generations
+ // may reference different history windows, but all immutable bytes remain.
+ while(queue.length){
+  const root=queue.shift(),signature=reconnectCanonical(root);if(visited.has(signature))continue;visited.add(signature);roots.push(root);
+  await loadReconnectPendingArchives(root,budget,0,qualification);
+  for(let original=reconnectOriginalPending(root.recovery);original;original=reconnectOriginalPending(original.recovery))queue.push(original);
+  let cursor=root,remaining=root?.archive?.segments||0;const seen=new Set();
   while(cursor?.archive){
-    const ref=cursor.archive;
-    if(!reconnectArchiveReferenceValid(ref,cursor.history)||ref.segments!==remaining||seen.has(ref.digest))throw reconnectJournalRefuse('lineageInvalid');
-    seen.add(ref.digest);
-    const key=reconnectArchivePrefix+ref.digest,stored=(await reconnectStorage(()=>chrome.storage.local.get(key),qualification))[key];
-    if(reconnectRecordKeys(stored)!=="journal,version"||stored.version!==1)throw reconnectJournalRefuse('lineageInvalid');
-    const canonical=reconnectArchiveCanonical(stored);budget.bytes+=new TextEncoder().encode(canonical).length;
-    await loadReconnectPendingArchives(stored.journal,budget,0,qualification);
-    if(budget.bytes>MAX_RECONNECT_ARCHIVE_BYTES||await reconnectArchiveDigest(stored)!==ref.digest||
-       !reconnectJournalValid(stored.journal,ref.endFence)||stored.journal.history.length!==64||stored.journal.nonce!==ref.nonce||
-       reconnectCanonical(stored.journal.history.at(-1))!==reconnectCanonical(cursor.history[0]))throw reconnectJournalRefuse('lineageInvalid');
-    // The exact shared boundary entry is intentionally present in both windows.
-    // All other completed transitions must retain unique original nonces.
-    pendingNonces(cursor);
-    for(const entry of cursor.history.slice(1)){if(nonces.has(entry.nonce))throw reconnectJournalRefuse('lineageInvalid');nonces.add(entry.nonce);}
-    cursor=stored.journal;remaining--;
+   const ref=cursor.archive;if(!reconnectArchiveReferenceValid(ref,cursor.history)||ref.segments!==remaining||seen.has(ref.digest))throw reconnectJournalRefuse('lineageInvalid');seen.add(ref.digest);
+   let stored=verifiedHistoryArchives.get(ref.digest);
+   if(!stored){
+    stored=(await reconnectStorage(()=>chrome.storage.local.get(reconnectArchivePrefix+ref.digest),qualification))[reconnectArchivePrefix+ref.digest];
+    if(reconnectRecordKeys(stored)!=='journal,version'||stored.version!==1||!Array.isArray(stored.journal?.history)||stored.journal.history.length<1||stored.journal.history.length>64)throw reconnectJournalRefuse('lineageInvalid');
+    const bytes=new TextEncoder().encode(reconnectArchiveCanonical(stored)).length;budget.bytes+=bytes;
+    if(budget.bytes>MAX_RECONNECT_ARCHIVE_BYTES||verifiedHistoryArchives.size>=MAX_RECONNECT_ARCHIVES||await reconnectArchiveDigest(stored)!==ref.digest)throw reconnectJournalRefuse('lineageInvalid');
+    stored=freezeReconnectJSON(JSON.parse(JSON.stringify(stored)));verifiedHistoryArchives.set(ref.digest,stored);queue.push(stored.journal);
+   }
+   if(stored.journal.phase!=='adopted'||stored.journal.nonce!==ref.nonce||!sameReconnectFence(stored.journal.newFence,ref.endFence)||reconnectCanonical(stored.journal.history.at(-1))!==reconnectCanonical(cursor.history[0]))throw reconnectJournalRefuse('lineageInvalid');
+   checkedArchives.set(ref.digest,ref.endFence);cursor=stored.journal;remaining--;
   }
   if(remaining!==0)throw reconnectJournalRefuse('lineageInvalid');
-  pendingNonces(cursor);
-  for(const entry of cursor?.history||[]){if(nonces.has(entry.nonce))throw reconnectJournalRefuse('lineageInvalid');nonces.add(entry.nonce);}
+ }
+ const pendingNonces=new Map(),completedNonces=new Map();
+ for(const root of roots){
+  if(root.phase==='pending'){const prior=pendingNonces.get(root.nonce),canonical=reconnectCanonical(root);if(prior!==undefined&&prior!==canonical)throw reconnectJournalRefuse('lineageInvalid');pendingNonces.set(root.nonce,canonical);}
+  for(const entry of reconnectLogicalHistory(root)){const canonical=reconnectCanonical(entry),prior=completedNonces.get(entry.nonce);if(prior!==undefined&&prior!==canonical)throw reconnectJournalRefuse('lineageInvalid');completedNonces.set(entry.nonce,canonical);}
+ }
+ for(const nonce of pendingNonces.keys())if(completedNonces.has(nonce))throw reconnectJournalRefuse('lineageInvalid');
+ for(const [digest,endFence]of checkedArchives)if(!reconnectJournalValid(verifiedHistoryArchives.get(digest).journal,endFence))throw reconnectJournalRefuse('lineageInvalid');
+}
+async function compactReconnectHistory(pending,currentJournal,previous,barriers,qualification){
+ await verifyReconnectArchives(currentJournal,qualification);await barriers();
+ if(!Array.isArray(currentJournal?.history)||currentJournal.history.length<2||reconnectCanonical(pending.history)!==reconnectCanonical(currentJournal.history))throw reconnectJournalRefuse('historyLimit');
+ const original=reconnectCanonical(currentJournal),tail=currentJournal.history.at(-1);
+ // A pending nonce is never certified completed. Only its already-completed
+ // prefix is archived here; the entire pending record is preserved separately.
+ if(currentJournal.phase==='pending'){
+  const originalPendingRef=await archiveReconnectPending(currentJournal,previous,barriers,qualification,currentJournal);
+  pending={...pending,recovery:{kind:pending.recovery.kind,originalPendingRef}};
+ }
+ const journal=currentJournal.phase==='adopted'?currentJournal:{version:1,phase:'adopted',nonce:tail.nonce,oldFence:tail.oldFence,newFence:tail.newFence,history:currentJournal.history,...(currentJournal.archive?{archive:currentJournal.archive}:{})};
+ if(!reconnectJournalValid(journal,tail.newFence))throw reconnectJournalRefuse('lineageInvalid');
+ const segments=(journal.archive?.segments||0)+1;if(segments>MAX_RECONNECT_ARCHIVES)throw reconnectJournalRefuse('historyLimit');
+ const segment={version:1,journal},digest=await reconnectArchiveDigest(segment),key=reconnectArchivePrefix+digest;
+ const existing=(await reconnectStorage(()=>chrome.storage.local.get(key),qualification))[key];
+ if(existing!==undefined&&reconnectArchiveCanonical(existing)!==reconnectArchiveCanonical(segment))throw reconnectJournalRefuse('lineageInvalid');
+ if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==original)throw reconnectJournalRefuse('recordChanged');
+ if(existing===undefined)await reconnectStorage(()=>chrome.storage.local.set({[key]:segment}),qualification);
+ const stored=(await reconnectStorage(()=>chrome.storage.local.get(key),qualification))[key];
+ if(reconnectArchiveCanonical(stored)!==reconnectArchiveCanonical(segment)||await reconnectArchiveDigest(stored)!==digest)throw reconnectJournalRefuse('lineageInvalid');
+ const compact={...pending,history:[tail],archive:{digest,segments,endFence:tail.newFence,nonce:tail.nonce}};
+ await verifyReconnectArchives(compact,qualification);await barriers();
+ if(!pendingReconnectValid(compact,previous))throw reconnectJournalRefuse('lineageInvalid');
+ if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==original)throw reconnectJournalRefuse('recordChanged');
+ return compact;
 }
 async function rolloverReconnectJournal(journal,previous,barriers,qualification){
   if(journal?.phase!=='adopted'||journal.history?.length!==64||!reconnectJournalValid(journal,previous))throw reconnectJournalRefuse('lineageInvalid');
@@ -910,6 +959,7 @@ async function rolloverReconnectJournal(journal,previous,barriers,qualification)
   if(existing===undefined)await reconnectStorage(()=>chrome.storage.local.set({[key]:segment}),qualification);
   const persisted=(await reconnectStorage(()=>chrome.storage.local.get(key),qualification))[key];
   if(reconnectRecordKeys(persisted)!=='journal,version'||persisted.version!==1||reconnectCanonical(persisted.journal)!==reconnectCanonical(segment.journal))throw reconnectJournalRefuse('recordChanged');
+  verifiedHistoryArchives.set(digest,freezeReconnectJSON(JSON.parse(JSON.stringify(persisted))));
   const compact={version:1,phase:'adopted',nonce:journal.nonce,oldFence:journal.oldFence,newFence:journal.newFence,history:[journal.history.at(-1)],
     archive:{digest,segments,endFence:journal.newFence,nonce:journal.nonce}};
   if(!reconnectJournalValid(compact,previous))throw reconnectJournalRefuse('lineageInvalid');
@@ -951,35 +1001,35 @@ function reconnectBooleanValidation(validate){
 function pendingReconnectValid(value,lastGrant){return reconnectBooleanValidation(()=>pendingReconnectValidCore(value,lastGrant));}
 function pendingReconnectValidCore(value,lastGrant) {
   if(value?.archive!==undefined&&!reconnectArchiveReferenceValid(value.archive,value.history))return false;
-  const archive=value?.archive;
   try{reconnectCanonical(value);}catch{return false;}
   const nonces=new Set();
   const validate=(record,expectedOld,depth)=>{
-    if(reconnectCanonical(record?.archive)!==reconnectCanonical(archive))return false;
-    if(record?.archive!==undefined){if(!reconnectArchiveReferenceValid(record.archive,record.history))return false;record=reconnectWithoutArchive(record);}
+    if(record?.archive!==undefined&&!reconnectArchiveReferenceValid(record.archive,record.history))return false;
+    const sourceRecord=record,history=reconnectLogicalHistory(record);record=reconnectWithoutArchive(record);
     const recovery=record?.version>1;
     if(depth>=MAX_RECONNECT_VERSION||!record||!reconnectVersionValid(record.version)||!reconnectCoreKeys(record,recovery)||record.phase!=="pending"||
        typeof record.nonce!=="string"||!/^[a-f0-9]{64}$/.test(record.nonce)||nonces.has(record.nonce)||!reconnectFenceValid(record.oldFence)||!reconnectFenceValid(record.newFence)||
        !sameReconnectFence(record.oldFence,expectedOld)||record.oldFence.scopeHash!==record.newFence.scopeHash||sameReconnectFence(record.oldFence,record.newFence)||
-       !Array.isArray(record.history)||record.history.length>=64||record.history.some(entry=>entry?.nonce===record.nonce))return false;
+       !Array.isArray(record.history)||record.history.length>=64||history.some(entry=>entry?.nonce===record.nonce))return false;
     nonces.add(record.nonce);
     if(recovery){
       const original=reconnectOriginalPending(record.recovery);
       if(!reconnectRecoveryShape(record.recovery)||original?.version!==record.version-1||!validate(original,original?.oldFence,depth+1))return false;
-      if(reconnectCanonical(record.history)===reconnectCanonical(original.history))return sameReconnectFence(record.oldFence,original.oldFence);
+      const originalHistory=reconnectLogicalHistory(original);
+      if(history.length===originalHistory.length&&reconnectHistoryPrefix(history,originalHistory))return sameReconnectFence(record.oldFence,original.oldFence);
       // A later ordinary reconnect carries the previously adopted recovery
       // lineage unchanged. Its intervening history must independently bridge
       // the original recovery to the current old fence.
-      if(record.history.length<=original.history.length||reconnectCanonical(record.history.slice(0,original.history.length))!==reconnectCanonical(original.history)||
-         !sameReconnectFence(record.history[original.history.length]?.oldFence,original.oldFence)||record.recovery.kind==="emptySetupDocuments"&&record.history[original.history.length]?.executors?.length!==0)return false;
+      if(history.length<=originalHistory.length||!reconnectHistoryPrefix(history,originalHistory)||
+         !sameReconnectFence(history[originalHistory.length]?.oldFence,original.oldFence)||record.recovery.kind==="emptySetupDocuments"&&history[originalHistory.length]?.executors?.length!==0)return false;
       const tail=record.history.at(-1);
-      return reconnectJournalValid({version:1,phase:"adopted",nonce:tail.nonce,oldFence:tail.oldFence,newFence:tail.newFence,history:record.history},expectedOld);
+      return reconnectJournalValid({version:1,phase:"adopted",nonce:tail.nonce,oldFence:tail.oldFence,newFence:tail.newFence,history:record.history,...(sourceRecord.archive?{archive:sourceRecord.archive}:{})},expectedOld);
     }
     const tail=record.history.at(-1);
-    return !tail||reconnectJournalValid({version:1,phase:"adopted",nonce:tail.nonce,oldFence:tail.oldFence,newFence:tail.newFence,history:record.history},expectedOld);
+    return !tail||reconnectJournalValid({version:1,phase:"adopted",nonce:tail.nonce,oldFence:tail.oldFence,newFence:tail.newFence,history:record.history,...(sourceRecord.archive?{archive:sourceRecord.archive}:{})},expectedOld);
   };
   const valid=validate(value,lastGrant,0);
-  return valid&&!value.history.some(entry=>nonces.has(entry.nonce));
+  return valid&&!reconnectLogicalHistory(value).some(entry=>nonces.has(entry.nonce));
 }
 // Legacy pending records contain no complete original renderer inventory. Recovery
 // is deliberately limited to no tabs or only our known browser setup surfaces.
@@ -1113,11 +1163,11 @@ async function emptyReconnectInventory(knownTabs,qualification) {
 }
 function reconnectJournalValid(value,lastGrant){return reconnectBooleanValidation(()=>reconnectJournalValidInner(value,lastGrant));}
 function reconnectJournalValidInner(value,lastGrant) {
-  if(value?.recovery&&reconnectCanonical(value.archive)!==reconnectCanonical(reconnectOriginalPending(value.recovery)?.archive))return false;
-  if(value?.archive!==undefined){if(!reconnectArchiveReferenceValid(value.archive,value.history))return false;return reconnectJournalCoreValid(reconnectWithoutArchive(value),lastGrant);}
-  return reconnectJournalCoreValid(value,lastGrant);
+  if(value===undefined)return true;
+  if(value?.archive!==undefined&&!reconnectArchiveReferenceValid(value.archive,value.history))return false;
+  return reconnectJournalCoreValid(reconnectWithoutArchive(value),lastGrant,reconnectLogicalHistory(value));
 }
-function reconnectJournalCoreValid(value,lastGrant) {
+function reconnectJournalCoreValid(value,lastGrant,history=value?.history) {
   if(value===undefined)return true;
   try{reconnectCanonical(value);}catch{return false;}
   const fence=reconnectFenceValid;
@@ -1127,17 +1177,18 @@ function reconnectJournalCoreValid(value,lastGrant) {
      !value.history.length||value.history.length>64||!sameReconnectFence(value.newFence,lastGrant)||value.history.at(-1)?.nonce!==value.nonce) return false;
   if(hasRecovery) {
     const recovery=value.recovery,original=reconnectOriginalPending(recovery);
-    if(!reconnectRecoveryShape(recovery) || original?.version!==value.version-1 || !pendingReconnectValid(original,original?.oldFence) ||
-       value.history.length<=original.history.length || reconnectCanonical(value.history.slice(0,original.history.length))!==reconnectCanonical(original.history) ||
-       value.history.some(entry=>entry?.nonce===original.nonce) || !sameReconnectFence(value.history[original.history.length]?.oldFence,original.oldFence) || recovery.kind==="emptySetupDocuments"&&value.history[original.history.length]?.executors?.length!==0)return false;
+    if(!reconnectRecoveryShape(recovery) || original?.version!==value.version-1 || !pendingReconnectValid(original,original?.oldFence))return false;
+    const originalHistory=reconnectLogicalHistory(original);
+    if(history.length<=originalHistory.length || !reconnectHistoryPrefix(history,originalHistory) ||
+       history.some(entry=>entry?.nonce===original.nonce) || !sameReconnectFence(history[originalHistory.length]?.oldFence,original.oldFence) || recovery.kind==="emptySetupDocuments"&&history[originalHistory.length]?.executors?.length!==0)return false;
   }
   const lineageNonces=new Set();
   for(let cursor=reconnectOriginalPending(value.recovery);cursor;cursor=reconnectOriginalPending(cursor.recovery)){
     if(lineageNonces.has(cursor.nonce))return false;lineageNonces.add(cursor.nonce);
   }
-  if(value.history.some(entry=>lineageNonces.has(entry?.nonce)))return false;
+  if(history.some(entry=>lineageNonces.has(entry?.nonce)))return false;
   const seen=new Set();let prior;
-  for(const entry of value.history) {
+  for(const entry of history) {
     if(!entry||Object.keys(entry).sort().join()!=="executors,newFence,nonce,oldFence"||typeof entry.nonce!=="string"||!/^[a-f0-9]{64}$/.test(entry.nonce)||seen.has(entry.nonce)||
        !fence(entry.oldFence)||!fence(entry.newFence)||entry.oldFence.scopeHash!==entry.newFence.scopeHash||prior&&!sameReconnectFence(prior,entry.oldFence)||
        !Array.isArray(entry.executors)||entry.executors.length>MAX_INVENTORY_DOCUMENTS)return false;
@@ -1447,11 +1498,10 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
   // Other capacity failures remain explicit and leave the current journal intact.
   try{checkCandidateBudget();}catch(error){
     const predecessor=recovering?journal:journal.recovery?.originalPending;
-    if(error?.journalReason!=='historyLimit'||!predecessor)throw error;
-    const originalPendingRef=await archiveReconnectPending(predecessor,predecessor.oldFence,barriers,qualification,journal);
-    pending={...pending,recovery:{kind:pending.recovery.kind,originalPendingRef}};
+    if(error?.journalReason!=='historyLimit')throw error;
+    if(predecessor){const originalPendingRef=await archiveReconnectPending(predecessor,predecessor.oldFence,barriers,qualification,journal);pending={...pending,recovery:{kind:pending.recovery.kind,originalPendingRef}};}
+    try{checkCandidateBudget();}catch(capacity){if(capacity?.journalReason!=='historyLimit')throw capacity;pending=await compactReconnectHistory(pending,journal,previous,barriers,qualification);checkCandidateBudget();}
     reconnectDiagnosticReason='none';reconnectJournalDiagnostic.reason='none';
-    checkCandidateBudget();
   }
   if(!pendingReconnectValid(pending,previous))throw reconnectJournalRefuse("lineageInvalid");
   await verifyReconnectArchives(pending,qualification);
@@ -1571,7 +1621,7 @@ async function receive(command) {
     finally{
       clearTimeout(timer);qualificationFlight===owner&&owner.cancelReconnectBindings?.();setupActiveCommands--;
       if(qualificationFlight===owner){
-        qualificationFlight=null;reconnectBusy=false;verifiedPendingArchives.clear();
+        qualificationFlight=null;reconnectBusy=false;verifiedPendingArchives.clear();verifiedHistoryArchives.clear();
         const queued=queuedQualification;queuedQualification=null;
         if(queued?.port===port)void receive(queued.command);
       }
@@ -1601,9 +1651,11 @@ async function receive(command) {
   }
 
   if(command?.type==='browser.openOrigin'||command?.type==='browser.activateTab'){
-    const heldPort=port,heldGrant=grant,heldFence=setupFence;
-    if(mutationBusy)return;
-    const allowed=()=>Boolean(heldPort&&heldGrant&&port===heldPort&&grant===heldGrant&&setupFence===heldFence&&!reconnectBusy&&!privatePending&&!lifecycleGuardId&&!unknownAttempts.size&&!activeBrowserInputs.size);
+    const heldPort=port,heldGrant=grant,heldFence=setupFence,activation=command.type==='browser.activateTab';
+    if(mutationBusy||setupActiveCommands)return;
+    // Visibility is browser metadata authority; creating a tab still requires
+    // the separately qualified executor grant. Neither route admits DOM input.
+    const allowed=()=>Boolean(heldPort&&heldFence&&(activation||heldGrant)&&port===heldPort&&grant===heldGrant&&setupFence===heldFence&&!setupActiveCommands&&!reconnectBusy&&!privatePending&&(!activation||!privateAdmission)&&!lifecycleGuardId&&!unknownAttempts.size&&!activeBrowserInputs.size&&port!==startupFailurePort);
     if(!allowed())return;
     mutationBusy=true;
     try{const result=await (command.type==='browser.openOrigin'?MechanizeBrowser.openOrigin(chrome,command,await config(),heldFence,allowed):MechanizeTabMetadata.activate(chrome,command,heldFence,await config(),allowed));if(result?.dispatchState==='unknown')unknownAttempts.add(command.attemptId);if(result&&port===heldPort)heldPort.postMessage(result);}finally{mutationBusy=false;}
@@ -1704,7 +1756,10 @@ async function receiveCommand(command, qualification) {
     playwrightWorker.invalidate();
     MechanizeCDP.invalidate(chrome);
     grant = null;
-    const nextSetupFence = command.type === "processQualified" && command.scopeQualified === true && command.fixtureOnly === false &&
+    const metadataTrust=command.trustScope===undefined||command.trustScope===''?'profile':command.trustScope;
+    const metadataScopeQualified=metadataTrust==='desktop'?command.scopeQualified===true&&command.profileQualified===false:metadataTrust==='profile'&&command.scopeQualified===true&&command.profileQualified===true;
+    const nextSetupFence = command.type === "processQualified" && metadataScopeQualified && command.fixtureOnly === false && command.executorQualified!==true &&
+      typeof command.executorChallenge==='string'&&command.executorChallenge!==''&&
       ["brokerEpoch", "channelEpoch", "scopeHash"].every(k => typeof command[k] === "string" && command[k]) ?
       {brokerEpoch: command.brokerEpoch, channelEpoch: command.channelEpoch, scopeHash: command.scopeHash} : null;
     // Controller discovery owns the signed process/scope connection, not a
@@ -1972,7 +2027,7 @@ async function connectionSettings(){
 function closeNativeConnection(expected=port){
  if(!expected||port!==expected)return;
  reconnectMissingReceiptSources=null;reconnectMissingDocuments=[];
- verifiedPendingArchives.clear();
+ verifiedPendingArchives.clear();verifiedHistoryArchives.clear();
  if(queuedQualification?.port===expected)queuedQualification=null;
  playwrightWorker.invalidate();MechanizeCDP.invalidate(chrome);controllers.reset();
  disjointDocuments.clear();publicReadScopes.clear();port=null;grant=null;setupFence=null;privateAdmission=null;privateFlow=null;privatePrivacy=null;manualPrivacyFlow=null;privateRedactions=[];privateRecipients.clear();privateSilencedPort=null;

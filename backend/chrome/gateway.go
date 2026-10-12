@@ -165,7 +165,7 @@ func (g *Gateway) CapabilitiesFor(ctx context.Context, p auth.Principal) ([]mode
 		g.broker.mu.Lock()
 		var candidates []*channel
 		for _, c := range g.broker.channels {
-			if c.grant.Principal.Namespace == p.Namespace && c.tabMetadataVersion == 1 && openOriginIdle(c) {
+			if c.grant.Principal.Namespace == p.Namespace && c.tabMetadataVersion == 1 && tabActivationIdle(c) {
 				candidates = append(candidates, c)
 			}
 		}

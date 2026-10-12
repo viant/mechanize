@@ -183,6 +183,9 @@ func controllerArgs(name string, raw json.RawMessage) (map[string]any, string, e
 		if !controllerSurfaceAllowed(v.Surface) {
 			return nil, "", errors.New("native authority surface unavailable")
 		}
+		if !observeSurfaceIdentityValid(v.Surface) {
+			return nil, "", controllerArgumentError("invalidSurface")
+		}
 	case *ConsentRequestInput:
 		if err := consentArgumentValidation(v); err != nil {
 			return nil, "", err
@@ -245,7 +248,11 @@ func controllerRejected(dispatch string, codes ...string) *schema.CallToolResult
 			code = codes[0]
 		}
 	}
-	body := map[string]any{"code": code, "message": "Tool request unavailable; review local permissions and operation status.", "dispatchState": dispatch}
+	message := "Tool request unavailable; review local permissions and operation status."
+	if code == "invalidSurface" {
+		message = invalidSurfaceMessage
+	}
+	body := map[string]any{"code": code, "message": message, "dispatchState": dispatch}
 	raw, _ := json.Marshal(body)
 	return &schema.CallToolResult{IsError: &yes, StructuredContent: body, Content: []schema.CallToolResultContentElem{schema.TextContent{Type: "text", Text: string(raw)}}}
 }

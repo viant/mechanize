@@ -21,7 +21,7 @@ async function fixture(sessionState = {}, {enroll = true} = {}) {
   const chrome = {
     action: {onClicked: {addListener(listener) { toolbarClick = listener; }}},
     permissions:{contains:async()=>state.hostGranted!==false,request:async()=>{state.permissionRequests=(state.permissionRequests||0)+1;throw Error('unexpected permission request');},onAdded:{addListener:f=>state.permissionAdded=f},onRemoved:{addListener:f=>state.permissionRemoved=f}},
-    windows: {getAll:async()=>state.focusedWindows||[],async update(id, details) { state.focusedWindow = {id, details}; }},
+    windows: {get:async id=>({id,type:'normal',state:'normal',focused:state.focusedWindow?.id===id}),getAll:async()=>state.focusedWindows||[],async update(id, details) { state.windowUpdates=(state.windowUpdates||0)+1;state.focusedWindow = {id, details}; }},
     storage: {onChanged:{addListener:f=>state.storageChanged=f},local: {async setAccessLevel(value){assert.equal(value.accessLevel,'TRUSTED_CONTEXTS');state.localTrusted=true;},async get(key) { if(Array.isArray(key)){if(key.includes(state.rejectStorageRead))throw Error('PRIVATE_FAILURE');return Object.fromEntries(key.filter(k=>Object.hasOwn(storage,k)).map(k=>[k,storage[k]]));} if(key==='mechanizeConnectionRetryV1')return {mechanizeConnectionRetryV1:state.connectionRetry}; if (state.rejectStorageRead === key) throw Error("PRIVATE_FAILURE credential https://private.example.test"); if(state.blockStorageReadKey===key) await state.blockStorageRead; return Object.hasOwn(storage,key) ? {[key]: state.sortedStorage ? sortedStorageValue(storage[key]) : storage[key]} : {}; }, async set(value) { if(Object.hasOwn(value,'mechanizeConnectionRetryV1')){state.connectionRetry=structuredClone(value.mechanizeConnectionRetryV1);value={...value};delete value.mechanizeConnectionRetryV1;} if(state.blockReconnectCommit && value.lastGrant && value.mechanizeReconnect){state.commitEntered=true;await state.blockReconnectCommit;} if(state.rejectReconnectCommit && value.lastGrant && value.mechanizeReconnect)throw Error("private-storage-error"); if (state.rejectStorageWrite) throw Error("PRIVATE_FAILURE credential"); if(state.blockStorageWrite) await state.blockStorageWrite; Object.assign(storage, state.sortedStorage ? sortedStorageValue(value) : value);state.afterStorageWrite?.(value); if(value.lastGrant && value.mechanizeReconnect)state.afterReconnectCommit?.(); if(!value.lastGrant && value.mechanizeReconnect?.phase==='pending')state.afterPendingWrite?.(); }}, session: {async get() { if(state.blockSessionRead)await state.blockSessionRead; return state.sortedStorage ? sortedStorageValue(sessionState) : {...sessionState}; }, async set(value) { if(state.rejectSessionWrite) throw Error("fixture private storage error"); for(const [key,record] of Object.entries(value))if(key.startsWith('playwrightAttempt:'))(state.playwrightJournalPhases ||= []).push(record.phase); Object.assign(sessionState,value); }}},
     runtime: {id: 'extension', onConnectExternal:{addListener:f=>state.controllerConnect=f}, getManifest: () => ({version: '0.1.0'}), getURL: value => `chrome-extension://extension/${value}`,
       onMessage: {addListener(listener) { runtimeMessage = listener; (state.runtimeListeners ||= []).push(listener); }},
@@ -31,7 +31,7 @@ async function fixture(sessionState = {}, {enroll = true} = {}) {
         return {onMessage:{addListener(listener){callbacks.message=listener;}},
         onDisconnect: {addListener(listener) { nativeDisconnect = listener; callbacks.disconnect=listener; }}, postMessage: message => {messages.push(message);state.nativePost?.(message);}}; }},
     debugger:{onDetach:event,attach:async target=>{(state.debuggerAttaches ||= []).push(target);if(state.debuggerAttachDelay)await new Promise(resolve=>setTimeout(resolve,state.debuggerAttachDelay));},sendCommand:async (target,method,args)=>{if(method==='Runtime.evaluate'&&args.expression==='fixtureInjectedEngine')return {result:{objectId:'fixture-selector-engine'}};if(method==='DOM.describeNode')return {node:{backendNodeId:1}};if(method==='DOM.resolveNode')return {object:{objectId:'fixture-guarded-element'}};if(method==='Runtime.callFunctionOn'&&args.arguments?.[3]?.value===targetGuard.querySource)return {result:{type:'number',value:1}};if(method==='Runtime.callFunctionOn'&&args.functionDeclaration===targetGuard.snapshotSource)return {result:{value:'fixture-semantic-signature'}};if(method==='Runtime.callFunctionOn'&&(args.functionDeclaration===targetGuard.boundarySource||args.arguments?.[3]?.value==='('+targetGuard.publicTarget.toString()+')')){state.debuggerGuardCalls=(state.debuggerGuardCalls||0)+1;return {result:{value:state.targetSafe!==false}};}(state.debuggerInputs ||= []).push({target,method,args});state.debuggerHook?.(method,args);}},
-    tabs: {async remove(id) { state.removals=(state.removals||0)+1;state.removedTab=id;if(state.blockRemoval)await state.blockRemoval;if(state.rejectRemoval)throw Error('PASSWORD-CANARY');if(!state.keepRemovedTab)state.inventoryTabs=(state.inventoryTabs||[]).filter(x=>x.id!==id); }, async update(id, details) { state.activatedSetupTab = {id, details}; state.activationHook?.(); }, async create(details) { state.createdSetupTabs = (state.createdSetupTabs || 0) + 1; state.createdSetup = details; }, query: async query => { if(query?.active===true)return state.focusedTabs||[]; if(typeof query?.url==='string'&&query.url.startsWith('https://'))return (state.inventoryTabs||[]).filter(tab=>typeof tab.url==='string'&&new URL(tab.url).origin===query.url.slice(0,-2)); if (query?.url) { if (state.blockSetupQuery) await state.blockSetupQuery; state.setupQuery = query; return state.setupTabs || []; }  state.inventoryReads = (state.inventoryReads || 0) + 1; state.inventoryHook?.(state.inventoryReads); if (state.rejectTabQuery || state.rejectSecondInventory && state.inventoryReads === 2) throw Error("PRIVATE_FAILURE URL"); return state.inventoryTabs || []; }, get: async id => {if(state.absentTabIds?.includes(id))throw Error('fixture tab absent');return {id,url:state.url,...(state.tabDiscarded?{discarded:true}:{}),...(state.tabStatus?{status:state.tabStatus}:{})};}, onRemoved:{addListener:f=>(state.removedListeners ||= []).push(f)},
+    tabs: {async remove(id) { state.removals=(state.removals||0)+1;state.removedTab=id;if(state.blockRemoval)await state.blockRemoval;if(state.rejectRemoval)throw Error('PASSWORD-CANARY');if(!state.keepRemovedTab)state.inventoryTabs=(state.inventoryTabs||[]).filter(x=>x.id!==id); }, async update(id, details) { state.tabUpdates=(state.tabUpdates||0)+1;state.activatedSetupTab = {id, details};if(state.tabMetadata)state.tabMetadata.active=true;state.activationHook?.(); }, async create(details) { state.createdSetupTabs = (state.createdSetupTabs || 0) + 1; state.createdSetup = details; }, query: async query => { if(query?.active===true)return state.focusedTabs||[]; if(typeof query?.url==='string'&&query.url.startsWith('https://'))return (state.inventoryTabs||[]).filter(tab=>typeof tab.url==='string'&&new URL(tab.url).origin===query.url.slice(0,-2)); if (query?.url) { if (state.blockSetupQuery) await state.blockSetupQuery; state.setupQuery = query; return state.setupTabs || []; }  state.inventoryReads = (state.inventoryReads || 0) + 1; state.inventoryHook?.(state.inventoryReads); if (state.rejectTabQuery || state.rejectSecondInventory && state.inventoryReads === 2) throw Error("PRIVATE_FAILURE URL"); return state.inventoryTabs || []; }, get: async id => {if(state.absentTabIds?.includes(id))throw Error('fixture tab absent');return {id,url:state.url,...(state.tabMetadata||{}),...(state.tabDiscarded?{discarded:true}:{}),...(state.tabStatus?{status:state.tabStatus}:{})};}, onRemoved:{addListener:f=>(state.removedListeners ||= []).push(f)},
       async sendMessage(tabId, message) {
         if(state.renderer)return state.renderer(tabId,message);
         if(message.type==='brokerReconnect') {
@@ -2667,7 +2667,7 @@ test('adoption refusals expose finite existing causes while retaining pending li
   assert.ok(!JSON.stringify(attention).includes('PRIVATE_CANARY'));assert.equal(f.storage.mechanizeReconnect.phase,'pending');assert.deepEqual(Array.from(f.storage.mechanizeReconnect.history),[]);assert.equal(JSON.stringify(f.storage.lastGrant),priorGrant);assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.state.deliveries,0);
  }
 });
-test('committed adoption capacity is reserved before any renderer handoff or journal mutation',async()=>{
+test('committed adoption capacity archives completed prefix before renderer handoff',async()=>{
  const f=await reconnectFixture();let record;
  for(let per=16;per<=25;per++){
   const history=Array.from({length:36},(_,i)=>({nonce:(100+i).toString(16).padStart(64,'0'),oldFence:{...grant,brokerEpoch:'h'+i,channelEpoch:'h'+i},newFence:i===35?{...grant}:{...grant,brokerEpoch:'h'+(i+1),channelEpoch:'h'+(i+1)},executors:Array.from({length:per},(_,n)=>({identity:{...identity,tabId:n+20,documentId:'fixture-'+n+'x'.repeat(80)},receiptRevision:3,receiptCount:3}))}));
@@ -2676,5 +2676,86 @@ test('committed adoption capacity is reserved before any renderer handoff or jou
  }
  assert.ok(record);assert.equal(f.journalValid(record,f.storage.lastGrant),true);f.storage.mechanizeReconnect=record;f.state.frameCount=200;
  const original=JSON.stringify(record),priorGrant=JSON.stringify(f.storage.lastGrant);await f.receive({...restartQualification(),brokerEpoch:'budget-next',channelEpoch:'budget-next'});
- const attention=f.messages.find(m=>m.type==='attention'&&m.error?.code==='storedFenceMismatch');assert.equal(attention.reconnectReason,'journalChanged');assert.equal(attention.reconnectJournal.reason,'historyLimit');assert.equal(attention.reconnectPhase,'inventory');assert.equal(JSON.stringify(f.storage.mechanizeReconnect),original);assert.equal(JSON.stringify(f.storage.lastGrant),priorGrant);assert.equal(f.state.reconnectCalls,undefined);assert.equal(f.state.deliveries,0);assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));
+ assert.ok(f.messages.some(m=>m.type==='executorPrepared'),JSON.stringify(f.diagnostic()));assert.equal(archiveKeys(f).length,1);assert.equal(JSON.stringify(f.storage[archiveKeys(f)[0]].journal),original);assert.equal(f.storage.mechanizeReconnect.history.length,2);assert.equal(f.state.deliveries,0);assert.notEqual(JSON.stringify(f.storage.lastGrant),priorGrant);
+});
+
+async function metadataActivationFixture(){
+ const f=await fixture({}, {enroll:false});f.state.inventoryTabs=[{id:7,url:f.state.url}];f.state.rejectBind=true;
+ await f.receive({...restartQualification(),fixtureOnly:false});assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.messages.at(-1).error.code,'executorBindingFailed');
+ f.state.tabMetadata={windowId:9,status:'complete',active:false};f.messages.length=0;
+ return f;
+}
+const metadataActivationRequest=()=>({type:'browser.activateTab',requestId:'a'.repeat(64),attemptId:'b'.repeat(64),origin:'https://fixture.example.test',tabId:7,...grant,deadlineUnixMs:Date.now()+2000});
+test('exact tab activation uses authenticated metadata fence without executor and keeps open-origin closed',async()=>{
+ const f=await metadataActivationFixture(),request=metadataActivationRequest(),before={injections:f.state.injections,deliveries:f.state.deliveries,binds:f.state.binds};
+ f.reconnectBarrier('flow'); // Dormant private flow is not active credential input.
+ await f.receive(request);assert.equal(f.messages.at(-1).dispatchState,'dispatched');assert.equal(f.messages.at(-1).tabId,7);assert.equal(f.state.tabUpdates,1);assert.equal(f.state.windowUpdates,1);
+ await f.receive({...request,requestId:'c'.repeat(64)});assert.equal(f.messages.at(-1).dispatchState,'dispatched');assert.equal(f.state.tabUpdates,1);assert.equal(f.state.windowUpdates,1);
+ const count=f.messages.length;await f.receive({type:'browser.openOrigin',requestId:'d'.repeat(64),attemptId:'e'.repeat(64),origin:request.origin,...grant,deadlineUnixMs:Date.now()+2000});assert.equal(f.messages.length,count);assert.equal(f.state.createdSetupTabs||0,0);
+ assert.deepEqual({injections:f.state.injections,deliveries:f.state.deliveries,binds:f.state.binds},before);assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.state.permissionRequests||0,0);
+});
+test('metadata activation retains private UNKNOWN active-work and exact-origin guards',async()=>{
+ for(const mode of ['privatePending','admission','unknown','mutation','lifecycle','setup','foreignOrigin','permission','foreignFence']){
+  const f=await metadataActivationFixture(),request=metadataActivationRequest();
+  if(['privatePending','admission','unknown','mutation','lifecycle'].includes(mode))f.reconnectBarrier(mode);if(mode==='setup')f.setActiveCommands(1);if(mode==='foreignOrigin')f.state.url='https://foreign.invalid';if(mode==='permission')f.state.hostGranted=false;if(mode==='foreignFence')request.channelEpoch='foreign';
+  const before=f.state.deliveries;await f.receive(request);assert.equal(f.state.tabUpdates||0,0,mode);assert.equal(f.state.windowUpdates||0,0,mode);assert.equal(f.state.deliveries,before);assert.ok(!f.messages.some(m=>m.dispatchState==='dispatched'),mode);
+ }
+});
+test('metadata activation cannot borrow forged qualification or continue across a replaced port',async()=>{
+ for(const fields of [{fixtureOnly:true},{profileQualified:true},{scopeQualified:false},{trustScope:'foreign'},{executorQualified:true},{executorChallenge:''}]){
+  const f=await fixture({}, {enroll:false});await f.receive({...restartQualification(),...fields});f.state.tabMetadata={windowId:9,status:'complete',active:false};await f.receive(metadataActivationRequest());assert.equal(f.state.tabUpdates||0,0);
+ }
+ const f=await metadataActivationFixture();f.state.activationHook=()=>f.disconnect();await f.receive(metadataActivationRequest());assert.equal(f.state.tabUpdates,1);assert.equal(f.state.windowUpdates||0,0);assert.equal(f.sessionState['browserReceipt:'+'b'.repeat(64)].dispatchState,'unknown');assert.ok(!f.messages.some(m=>m.dispatchState==='dispatched'));assert.equal(f.state.deliveries,0);
+});
+
+async function pending49HistoryFixture(t){
+ const absent={identity:{...identity,documentId:'retained-unknown-absent'},fence:grant,attemptId:'8'.repeat(64),fingerprintSHA256:'9'.repeat(64),dispatchState:'unknown'};
+ const f=await legacyCurrentReconnectFixture(t,[absent]);let history;
+ for(let per=10;per<30;per++){
+  const candidate=Array.from({length:49},(_,index)=>({nonce:(100+index).toString(16).padStart(64,'0'),oldFence:{...grant,brokerEpoch:'history-'+index,channelEpoch:'history-'+index},newFence:index===48?{...grant}:{...grant,brokerEpoch:'history-'+(index+1),channelEpoch:'history-'+(index+1)},executors:index===0?[]:Array.from({length:per},(_,n)=>({identity:{...identity,tabId:20+n,documentId:'historical-'+n+'x'.repeat(80)},receiptCount:3,receiptRevision:3}))}));
+  if(JSON.stringify(candidate).length>205000&&JSON.stringify(candidate).length<225000){history=candidate;break;}
+ }
+ assert.ok(history);
+ let original={version:1,phase:'pending',nonce:'c'.repeat(64),oldFence:history[0].oldFence,newFence:{...grant,brokerEpoch:'initial-uncommitted',channelEpoch:'initial-uncommitted'},history:[]};
+ for(let version=2;version<=4;version++){
+  let recovery={kind:version===2?'emptySetupDocuments':'verifiedCurrentDocuments',originalPending:original};
+  if(version>2){const pendingJSON=JSON.stringify(original),digest=require('node:crypto').createHash('sha256').update(pendingJSON).digest('hex');f.storage['mechanizeReconnectPendingArchive:'+digest]={version:1,pendingJSON};recovery={kind:'verifiedCurrentDocuments',originalPendingRef:{digest,bytes:Buffer.byteLength(pendingJSON),version:original.version,nonce:original.nonce,oldFence:original.oldFence,newFence:original.newFence}};}
+  original={version,phase:'pending',nonce:(20+version).toString(16).repeat(32),oldFence:{...grant},newFence:{...grant,brokerEpoch:'uncommitted-'+version,channelEpoch:'uncommitted-'+version},history,recovery};
+ }
+ f.storage.mechanizeReconnect=original;await f.verifyArchives(original);assert.equal(f.pendingReconnectValid(original,f.storage.lastGrant),true);
+ f.state.frameRows=Array.from({length:200},(_,n)=>({frameId:n,parentFrameId:n?0:-1,documentId:'live-'+n,url:'https://fixture.example.test/page',frameType:n?'sub_frame':'outermost_frame',documentLifecycle:'active'}));
+ f.state.renderer=async(_tab,message)=>{if(message.type==='brokerReconnect')return {nonce:message.nonce,phase:message.phase==='inspect'?'inspected':message.phase==='prepare'?'prepared':'adopted',identity:{...message.newBinding.identity},...(message.phase==='inspect'?{version:1}:{quiescent:true,receiptCount:0,receiptRevision:0})};if(message.action==='executor.receipts')return {error:{code:'notEnrolled'}};throw Error('unexpected input');};
+ return {...f,originalJSON:JSON.stringify(original),retainedUnknown:absent};
+}
+test('pending v4 history49 compacts losslessly before handoff and retains original pending and UNKNOWN',async t=>{
+ const f=await pending49HistoryFixture(t);let historyArchivedBeforePrepare=false;const receive=f.state.renderer;
+ f.state.renderer=(tab,message)=>{if(message.type==='brokerReconnect'&&message.phase==='prepare'){assert.equal(archiveKeys(f).length,1);historyArchivedBeforePrepare=true;}return receive(tab,message);};
+ await f.run();assert.ok(f.messages.some(m=>m.type==='executorPrepared'),JSON.stringify(f.diagnostic()));assert.equal(historyArchivedBeforePrepare,true);assert.equal(f.storage.mechanizeReconnect.history.length,2);
+ const ref=f.storage.mechanizeReconnect.recovery.originalPendingRef;assert.equal(f.storage['mechanizeReconnectPendingArchive:'+ref.digest].pendingJSON,f.originalJSON);assert.equal(ref.version,4);
+ const prefix=f.storage[archiveKeys(f)[0]].journal;assert.equal(prefix.phase,'adopted');assert.equal(prefix.history.length,49);assert.equal(prefix.nonce,prefix.history.at(-1).nonce);assert.notEqual(prefix.nonce,JSON.parse(f.originalJSON).nonce);assert.deepEqual(prefix.history,JSON.parse(f.originalJSON).history);assert.equal(f.retainedUnknown.dispatchState,'unknown');assert.equal(f.state.deliveries,0);await f.verifyArchives(f.storage.mechanizeReconnect);
+});
+test('pending main-history archive tamper missing order and current-record races never publish authority',async t=>{
+ for(const mode of ['tamper','missing','order','currentRace']){
+  const f=await pending49HistoryFixture(t),beforeGrant=JSON.stringify(f.storage.lastGrant);let changed,handled=false;
+  f.state.afterStorageWrite=value=>{const key=Object.keys(value).find(k=>k.startsWith('mechanizeReconnectArchive:'));if(!key||handled)return;handled=true;f.storage[key]=structuredClone(f.storage[key]); // Chrome storage detaches persisted values.
+   if(mode==='tamper')f.storage[key].journal.history[0].nonce='f'.repeat(64);if(mode==='missing')delete f.storage[key];if(mode==='order')f.storage[key].journal.history.reverse();if(mode==='currentRace'){f.storage.mechanizeReconnect={...f.storage.mechanizeReconnect,nonce:'f'.repeat(64)};changed=JSON.stringify(f.storage.mechanizeReconnect);}
+  };
+  await f.run();assert.equal(handled,true);assert.ok(!f.messages.some(m=>m.type==='executorPrepared'),mode);assert.equal(JSON.stringify(f.storage.lastGrant),beforeGrant);assert.equal(JSON.stringify(f.storage.mechanizeReconnect),mode==='currentRace'?changed:f.originalJSON);assert.equal(f.state.deliveries,0);
+ }
+});
+
+test('failed archive graph verification clears prior and partially loaded proof caches',async t=>{
+ const f=await pending49HistoryFixture(t);await f.run();
+ assert.ok(f.messages.some(m=>m.type==='executorPrepared'));
+ const current=f.storage.mechanizeReconnect;
+ for(const mode of ['canonicalBudget','loadedArchiveBoundary']){
+  await f.verifyArchives(current);assert.equal(f.journalValid(current,f.storage.lastGrant),true);
+  const invalid=structuredClone(current);
+  if(mode==='canonicalBudget')invalid.oversized='x'.repeat(300000);
+  else invalid.archive.nonce='f'.repeat(64);
+  await assert.rejects(()=>f.verifyArchives(invalid));
+  assert.equal(f.journalValid(current,f.storage.lastGrant),false,mode);
+  assert.equal(f.state.deliveries,0);
+ }
+ await f.verifyArchives(current);assert.equal(f.journalValid(current,f.storage.lastGrant),true);
 });

@@ -62,8 +62,20 @@ type openOriginAdmission struct {
 func openOriginError(code, state string) error {
 	return browserError(code, "Background tab creation unavailable", state)
 }
+
+// Tab visibility uses the authenticated browser channel, not a renderer lease.
+// Its input lane and retained UNKNOWN/private/lifecycle barriers still apply.
+func tabActivationIdle(c *channel) bool {
+	return c != nil && c.grant.Principal.HasScope("desktop:control") && c.conn != nil && channelScopeQualified(c) && !c.fixtureOnly && !c.lifecycleInhibited && c.lifecycleGuard == nil && len(c.unknown) == 0 && len(c.pending) == 0 && c.playwright == nil && c.privateInspection == nil && c.privateCredential == nil && c.privateAdvance == nil && c.privacyPending == nil && c.manualPending == nil && c.openOriginPending == nil
+}
 func openOriginIdle(c *channel) bool {
-	return c != nil && c.grant.Principal.HasScope("desktop:control") && c.conn != nil && c.executorQualified && channelScopeQualified(c) && !c.fixtureOnly && !c.lifecycleInhibited && c.lifecycleGuard == nil && len(c.unknown) == 0 && len(c.pending) == 0 && c.playwright == nil && c.privateInspection == nil && c.privateCredential == nil && c.privateAdvance == nil && c.privacyPending == nil && c.manualPending == nil && c.openOriginPending == nil
+	return c != nil && c.executorQualified && tabActivationIdle(c)
+}
+func browserOperationIdle(c *channel, action string) bool {
+	if action == "browser.activateTab" {
+		return tabActivationIdle(c)
+	}
+	return action == "browser.openOrigin" && openOriginIdle(c)
 }
 func (g *Gateway) PrepareOpenOrigin(ctx context.Context, p auth.Principal, origin string) (context.Context, int, error) {
 	return g.prepareBrowserOperation(ctx, p, origin, "", "browser.openOrigin")
@@ -108,7 +120,7 @@ func (g *Gateway) prepareBrowserOperation(ctx context.Context, p auth.Principal,
 		b.mu.Unlock()
 		return ctx, 0, openOriginError("unsupportedWorker", "notDispatched")
 	}
-	if !openOriginIdle(selected) {
+	if !browserOperationIdle(selected, action) {
 		b.mu.Unlock()
 		return ctx, 0, operationError(action, "openOriginBusy", "notDispatched")
 	}
@@ -163,7 +175,7 @@ func (g *Gateway) executeBrowserOperation(ctx context.Context, p auth.Principal,
 	deadline, _ := ctx.Deadline()
 	pending := &openOriginPending{request: openOriginRequest{Type: action, TabID: a.tabID, RequestID: newID() + newID(), AttemptID: attemptID, Origin: origin, BrokerEpoch: a.brokerEpoch, ChannelEpoch: a.channelEpoch, ScopeHash: a.scopeHash, DeadlineUnixMS: deadline.UnixMilli()}, conn: a.conn, done: make(chan openOriginReply, 1)}
 	b.mu.Lock()
-	if b.closed || c.conn != a.conn || b.epoch != a.brokerEpoch || c.epoch != a.channelEpoch || c.scopeHash != a.scopeHash || !openOriginIdle(c) {
+	if b.closed || c.conn != a.conn || b.epoch != a.brokerEpoch || c.epoch != a.channelEpoch || c.scopeHash != a.scopeHash || !browserOperationIdle(c, action) {
 		b.mu.Unlock()
 		return result, operationError(action, "openOriginAuthorityChanged", "notDispatched")
 	}

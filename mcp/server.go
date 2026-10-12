@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/viant/jsonrpc"
 	"github.com/viant/jsonrpc/transport"
@@ -126,7 +127,7 @@ type ObserveInput struct {
 	SessionID   string              `json:"sessionId,omitempty"`
 	GrantID     string              `json:"grantId,omitempty"`
 	Purpose     string              `json:"purpose,omitempty"`
-	Surface     model.Surface       `json:"surface"`
+	Surface     model.Surface       `json:"surface" description:"Native surfaces require a discovered bundleId; web surfaces require an exact http(s) origin. title does not replace bundleId."`
 }
 
 // Unknown fields must never silently broaden an intended observation scope.
@@ -442,10 +443,27 @@ func register(base *protocol.DefaultHandler, d Dependencies) error {
 	return nil
 }
 
+const invalidSurfaceMessage = "Native surfaces require a discovered surface.bundleId; web surfaces require surface.origin as an exact http(s) origin. A title alone does not identify an application."
+
+func observeSurfaceIdentityValid(surface model.Surface) bool {
+	switch surface.Kind {
+	case "native":
+		return strings.TrimSpace(surface.BundleID) != ""
+	case "web":
+		return model.ExactHTTPOrigin(surface.Origin)
+	default:
+		return false
+	}
+}
+
+func invalidObserveSurface() error {
+	return &model.MechanizeError{Code: "invalidSurface", Message: invalidSurfaceMessage, Stage: "admission", DispatchState: "notDispatched", EffectState: "none"}
+}
+
 func registerObserve(base *protocol.DefaultHandler, d Dependencies) error {
-	return protocol.RegisterTool[*ObserveInput, *model.Observation](base.Registry, "mechanize_observe", "Read bounded current semantic state of an authorized native app or Chrome surface; use fresh refs and declared locators.", func(ctx context.Context, input *ObserveInput) (*schema.CallToolResult, *jsonrpc.Error) {
-		if input == nil {
-			return failure(errors.New("surface required"))
+	return protocol.RegisterTool[*ObserveInput, *model.Observation](base.Registry, "mechanize_observe", "Read bounded current semantic state of an authorized native app or Chrome surface. Native surfaces require a discovered bundleId; web surfaces require an exact http(s) origin. title alone is insufficient; use fresh refs and declared locators.", func(ctx context.Context, input *ObserveInput) (*schema.CallToolResult, *jsonrpc.Error) {
+		if input == nil || !observeSurfaceIdentityValid(input.Surface) {
+			return failure(invalidObserveSurface())
 		}
 		p, err := auth.FromContext(ctx)
 		if err != nil {
@@ -459,17 +477,11 @@ func registerObserve(base *protocol.DefaultHandler, d Dependencies) error {
 		switch input.Surface.Kind {
 		case "native":
 			key = input.Surface.BundleID
-			if key == "" {
-				return failure(fmt.Errorf("native surface bundleId required"))
-			}
 			if !policy.AllowAllNative && !policy.AllowedSurfaces[key] {
 				return failure(fmt.Errorf("surface outside authorized scope"))
 			}
 		case "web":
 			key = input.Surface.Origin
-			if key == "" {
-				return failure(fmt.Errorf("web surface origin required"))
-			}
 			if !policy.AllowAllWeb && !policy.AllowedSurfaces[key] {
 				return failure(fmt.Errorf("surface outside authorized scope"))
 			}
