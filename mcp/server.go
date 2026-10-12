@@ -43,6 +43,8 @@ type CaptureWindow func(context.Context, auth.Principal, model.Surface, int32, u
 type CaptureWindows func(context.Context, auth.Principal, model.Surface, int) (native.CaptureWindowList, error)
 type CaptureWindowFrame func(context.Context, auth.Principal, model.Surface, int32, uint32) (data.ArtifactReference, data.ArtifactReference, native.WindowFrameCapture, error)
 type Dependencies struct {
+	ExtensionReload           ExtensionMaintenance
+	ExtensionReloadStatus     ExtensionMaintenance
 	BrowserActivateTab        BrowserActivateTab
 	BrowserTabLocationMatches BrowserTabLocationMatches
 	BrowserOpenOrigin         BrowserOpenOrigin
@@ -252,6 +254,9 @@ func failure(err error) (*schema.CallToolResult, *jsonrpc.Error) {
 	return &schema.CallToolResult{IsError: &yes, Content: []schema.CallToolResultContentElem{schema.TextContent{Type: "text", Text: string(encoded)}}, StructuredContent: body}, nil
 }
 func register(base *protocol.DefaultHandler, d Dependencies) error {
+	if err := registerExtensionMaintenance(base, d); err != nil {
+		return err
+	}
 	if err := registerBrowserActivateTab(base, d); err != nil {
 		return err
 	}

@@ -259,6 +259,13 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 	if c == nil {
 		return Reply{}, browserError("channelUnqualified", "Exact enrolled channel required", "notDispatched")
 	}
+	b.mu.Lock()
+	maintenanceBlocked := c.extensionMaintenanceBlocked
+	b.mu.Unlock()
+	if maintenanceBlocked {
+		return Reply{}, browserError("extensionMaintenanceBusy", "Owned extension maintenance is in progress", "notDispatched")
+	}
+
 	if command.Locator != nil && command.Locator.Index != nil {
 		b.mu.Lock()
 		qualified := b.playwrightReady(c) && c.playwrightLocatorVersion == 1

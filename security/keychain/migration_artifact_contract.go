@@ -18,7 +18,7 @@ import (
 
 // Mirrors scripts/extension_package.py exactly: current package resources and
 // historical sets accepted only as the OLD installed snapshot.
-var runtimeExtensionFiles = []string{"accessibility-provider.js", "browser-input.js", "browser.js", "cdp-transport.js", "connection-lifecycle.js", "content.js", "control-badge-metadata.js", "controller.js", "dom.js", "fingerprint.js", "focused-location.js", "manifest.json", "options.html", "options.js", "playwright-relay.js", "playwright-target.js", "playwright-worker.js", "protection-scopes.js", "protocol.js", "recorder.js", "retirement.js", "secure-input.js", "setup-metadata.js", "tab-metadata.js", "worker.js"}
+var runtimeExtensionFiles = []string{"accessibility-provider.js", "browser-input.js", "browser.js", "cdp-transport.js", "connection-lifecycle.js", "content.js", "control-badge-metadata.js", "controller.js", "dom.js", "extension-maintenance.js", "fingerprint.js", "focused-location.js", "manifest.json", "options.html", "options.js", "playwright-relay.js", "playwright-target.js", "playwright-worker.js", "protection-scopes.js", "protocol.js", "recorder.js", "retirement.js", "secure-input.js", "setup-metadata.js", "tab-metadata.js", "worker.js"}
 
 func runtimeValidInventory(v migrationRuntimeInventory) bool {
 	if len(v) == 0 || len(v) > migrationArtifactEntries {
@@ -77,8 +77,14 @@ func runtimeExtensionContract(v migrationRuntimeInventory, old bool) (string, er
 		return "", errMigrationUnavailable
 	}
 	match := func(skipFingerprint, skipRetirement, skipSetup, skipSecure, skipController, skipCDP, skipPlaywright, skipLifecycle, skipAccessibility bool) bool {
+		if hashes["extension-maintenance.js"] != "" && (skipFingerprint || skipRetirement || skipSetup || skipSecure || skipController || skipCDP || skipPlaywright || skipLifecycle || skipAccessibility) {
+			return false
+		}
 		size := 0
 		for _, name := range runtimeExtensionFiles {
+			if name == "extension-maintenance.js" && old && hashes[name] == "" {
+				continue
+			}
 			if skipLifecycle && (name == "connection-lifecycle.js" || name == "focused-location.js" || name == "tab-metadata.js" || name == "control-badge-metadata.js" || name == "protection-scopes.js") {
 				continue
 			}

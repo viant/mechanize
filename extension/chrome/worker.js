@@ -5,6 +5,7 @@ import "./protocol.js";
 import "./connection-lifecycle.js";
 import "./focused-location.js";
 import "./tab-metadata.js";
+import "./extension-maintenance.js";
 import "./control-badge-metadata.js";
 import "./protection-scopes.js";
 import "./browser.js";
@@ -19,7 +20,7 @@ import "./playwright-target.js";
 import "./playwright-relay.js";
 import "./playwright-worker.js";
 const retirementJournal = MechanizeRetirement.create(chrome.storage.local);
-let port = null, grant = null, mutationBusy = false, lifecycleGuardId = null;
+let port = null, grant = null, mutationBusy = false, lifecycleGuardId = null, maintenanceBusy=false;
 const requests = new Set();
 const browserInput = MechanizeBrowserInput.create(chrome);
 const activeBrowserInputs = new Map();
@@ -87,7 +88,7 @@ const playwrightWorker = MechanizePlaywrightWorker.create(chrome, {
   port: () => port,
   acquire(held) {
     if(visibilityUnknown.has(held.command.attemptId))throw Error();
-    if (!port || port !== held.originalPort || !grant || !qualifiedNativePorts.has(port) || mutationBusy || setupActiveCommands || domUnknownBlocked() || lifecycleGuardId || ordinaryPrivateBlocked(held.identity) || port === startupFailurePort) throw Error();
+    if (maintenanceBusy || !port || port !== held.originalPort || !grant || !qualifiedNativePorts.has(port) || mutationBusy || setupActiveCommands || domUnknownBlocked() || lifecycleGuardId || ordinaryPrivateBlocked(held.identity) || port === startupFailurePort) throw Error();
     const initial=documents.get(`${held.identity.tabId}:${held.identity.documentId}`);
     if(!initial||!['profileChannel','browserInstance','tabId','frameId','documentId'].every(k=>initial[k]===held.identity[k])||!Number.isSafeInteger(initial.documentGeneration)||initial.documentGeneration<held.identity.documentGeneration)throw Error();
     if(requests.has(held.command.requestId)||requests.size>=4096)throw Error();
@@ -1604,8 +1605,19 @@ async function restoreOwnedReconnectPending(committed,candidate,qualification){
  // record containing its own nonce in history, nor a foreign/replacement value.
  await qualificationRead(qualification,()=>chrome.storage.local.set({[reconnectKey]:original.pending,lastGrant:original.previous}));
 }
+const extensionMaintenance=MechanizeExtensionMaintenance.create(chrome,{
+ config,busy:()=>Boolean(privatePending||mutationBusy||activeBrowserInputs.size||setupActiveCommands||reconnectBusy),
+ hold:value=>{maintenanceBusy=value;}
+});
 let lifecycleLane = Promise.resolve();
 async function receive(command) {
+  if(['extension.reload','extension.reloadStatus'].includes(command?.type)){
+    const ownPort=port,fence=setupFence;
+    const reply=await extensionMaintenance.handle(command,fence,()=>Boolean(ownPort&&port===ownPort&&setupFence===fence&&port!==startupFailurePort));
+    if(reply&&port===ownPort&&setupFence===fence)ownPort.postMessage(reply);return;
+  }
+  if(maintenanceBusy){if(port&&command?.requestId)port.postMessage({requestId:command.requestId,error:MechanizeProtocol.error('executorNotQuiescent','Extension maintenance in progress','notDispatched')});return;}
+
   if(receiveReconnectBindings(command))return;
   if(['enrolled','processQualified'].includes(command?.type)){
     const ownPort=port;if(!ownPort)return;
@@ -2160,7 +2172,7 @@ async function connectNativeOnce(token,valid=()=>true) {
       if (startupCause) return; // Failed startup cannot qualify later traffic.
       if(['enrolled','processQualified'].includes(command?.type)&&['brokerEpoch','channelEpoch','scopeHash'].every(key=>typeof command[key]==='string'&&command[key])){connectionAttention='none';void connectionLifecycle.acknowledged(token);}
       forwardingStarted = true;
-      if (typeof command?.type === "string" && command.type.startsWith("playwright.")) { void playwrightWorker.receive(command, connectedPort); return; }
+      if (!maintenanceBusy && typeof command?.type === "string" && command.type.startsWith("playwright.")) { void playwrightWorker.receive(command, connectedPort); return; }
       if (!controllers.receive(command)) receive(command);
     });
     port.onDisconnect.addListener(() => {
@@ -2186,7 +2198,7 @@ async function connectNativeOnce(token,valid=()=>true) {
     }catch{metadataStartupBarrier='inventoryUnavailable';}
     // This fixed metadata hello is independent of secret/document visibility.
     // No retained document or input payload is replayed on a replacement port.
-    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:32,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
+    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:32,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
 
   } catch {
     if (lifecycleGuardId) connectionAttention = "lifecycleInhibited";

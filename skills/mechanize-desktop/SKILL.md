@@ -80,6 +80,13 @@ connection metadata as its arguments.
 Obtain its fresh opaque tab handle with
 `mechanize_browser_tabs`. For another website, use its independently known
 origin. Connection metadata does not grant tool access.
+If a complete live inventory has no tab for an authorized website, use
+`mechanize_browser_open_origin` to open that public origin in a separate tab.
+Preserve other tabs and drafts. Discover the new tab's actual state; if sign-in
+is needed and authorized Vault credentials are available, use the private
+credential tools and opaque references. Do not ask the user to open a tab or
+copy credentials merely because no authenticated tab exists. External identity
+checks such as a phone approval still require the user's action when presented.
 
 For native interaction, establish the actual installed application identity
 from advertised discovery or user-provided identity, then confirm its process
@@ -188,6 +195,11 @@ Native tool surfaces need a bundle ID, for example
 application identity. For screenshots, discover physical windows with
 `mechanize_capture_windows` and capture the returned window instead of first
 observing a web page or menu bar.
+An exact native `windowScope` also requires the discovered `surface.processId`
+and `surface.processStartToken`; a window title and bundle ID alone are insufficient.
+Use the current discovery result rather than guessing the native window title
+from a browser tab's title. An `invalidScope` result is an argument repair, not
+a request for another permission approval.
 For public UI, confirm the active tab's origin/handle before changing it. Plan
 the action before acquiring a fresh frame, then click within its expiry; refresh
 an expired frame instead of reusing its coordinates or repeating an unknown input.

@@ -14,7 +14,8 @@ BEFORE_CDP_FILES = ('browser.js', 'content.js', 'controller.js', 'dom.js', 'fing
 BEFORE_PLAYWRIGHT_FILES = tuple(sorted((*BEFORE_CDP_FILES, 'browser-input.js', 'cdp-transport.js')))
 BEFORE_LIFECYCLE_FILES = tuple(sorted((*BEFORE_PLAYWRIGHT_FILES, 'playwright-relay.js', 'playwright-worker.js', 'playwright-target.js')))
 BEFORE_ACCESSIBILITY_FILES = tuple(sorted((*BEFORE_LIFECYCLE_FILES, 'connection-lifecycle.js', 'focused-location.js', 'tab-metadata.js', 'control-badge-metadata.js', 'protection-scopes.js')))
-FILES = tuple(sorted((*BEFORE_ACCESSIBILITY_FILES, 'accessibility-provider.js')))
+BEFORE_MAINTENANCE_FILES = tuple(sorted((*BEFORE_ACCESSIBILITY_FILES, 'accessibility-provider.js')))
+FILES = tuple(sorted((*BEFORE_MAINTENANCE_FILES, 'extension-maintenance.js')))
 # Exact historical snapshots accepted only for upgrade backup and rollback.
 OLDEST_LEGACY_FILES = ('browser.js', 'content.js', 'dom.js', 'manifest.json', 'options.html',
                        'options.js', 'protocol.js', 'recorder.js', 'worker.js')
@@ -24,7 +25,7 @@ PREVIOUS_CURRENT_FILES = ('browser.js', 'content.js', 'dom.js', 'fingerprint.js'
                           'options.js', 'protocol.js', 'recorder.js', 'retirement.js', 'worker.js')
 BEFORE_CONTROLLER_FILES = tuple(name for name in BEFORE_CDP_FILES if name != 'controller.js')
 BEFORE_SECURE_FILES = tuple(name for name in BEFORE_CONTROLLER_FILES if name != 'secure-input.js')
-LEGACY_FILE_SETS = (OLDEST_LEGACY_FILES, INTERMEDIATE_LEGACY_FILES, PREVIOUS_CURRENT_FILES, BEFORE_SECURE_FILES, BEFORE_CONTROLLER_FILES, BEFORE_CDP_FILES, BEFORE_PLAYWRIGHT_FILES, BEFORE_LIFECYCLE_FILES, BEFORE_ACCESSIBILITY_FILES)
+LEGACY_FILE_SETS = (OLDEST_LEGACY_FILES, INTERMEDIATE_LEGACY_FILES, PREVIOUS_CURRENT_FILES, BEFORE_SECURE_FILES, BEFORE_CONTROLLER_FILES, BEFORE_CDP_FILES, BEFORE_PLAYWRIGHT_FILES, BEFORE_LIFECYCLE_FILES, BEFORE_ACCESSIBILITY_FILES, BEFORE_MAINTENANCE_FILES)
 MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_BYTES = 16 * 1024 * 1024
 

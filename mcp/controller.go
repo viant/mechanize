@@ -244,7 +244,7 @@ func controllerRejected(dispatch string, codes ...string) *schema.CallToolResult
 	code := "controllerToolRejected"
 	if len(codes) > 0 {
 		switch codes[0] {
-		case "permissionRequired", "permissionExpired", "permissionDenied", "secureDocumentRequired", "staleGeneration", "staleAuthority", "unknownEffect", "targetNotFound", "ambiguousTarget", "invalidArguments", "sessionRequired", "sessionNotOwned", "invalidScopeKind", "invalidConsentScope", "unsupportedMode", "invalidSurface", "browserInventoryUnavailable", "privateDOMUnavailable":
+		case "permissionRequired", "permissionExpired", "permissionDenied", "secureDocumentRequired", "staleGeneration", "staleAuthority", "unknownEffect", "targetNotFound", "ambiguousTarget", "invalidArguments", "sessionRequired", "sessionNotOwned", "invalidScopeKind", "invalidConsentScope", "unsupportedMode", "invalidSurface", "invalidScope", "browserInventoryUnavailable", "privateDOMUnavailable":
 			code = codes[0]
 		}
 	}
@@ -254,6 +254,9 @@ func controllerRejected(dispatch string, codes ...string) *schema.CallToolResult
 	}
 	if code == "privateDOMUnavailable" {
 		message = privateDOMMessage
+	}
+	if code == "invalidScope" {
+		message = "Use an exact discovered scope. Native window observation requires surface.processId and surface.processStartToken plus a discovered window title. For screenshots, discover windows with mechanize_capture_windows and capture the returned window instead."
 	}
 	body := map[string]any{"code": code, "message": message, "dispatchState": dispatch}
 	raw, _ := json.Marshal(body)

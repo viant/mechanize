@@ -44,6 +44,8 @@ var controllerToolPolicies = map[string]controllerToolPolicy{
 	"mechanize_step_run":                     {true, "Authenticated controller identity, canonical authorization and closed typed projection; owned session where required."},
 	"skill_get":                              {true, "Authenticated controller identity, canonical authorization and closed typed projection; owned session where required."},
 	"skill_list":                             {true, "Authenticated controller identity, canonical authorization and closed typed projection; owned session where required."},
+	"mechanize_extension_reload":             {false, "Local native-client maintenance only; authenticated owned session and enrolled extension, never a website controller."},
+	"mechanize_extension_reload_status":      {false, "Local native-client maintenance observation only; original owned session and request, never a website controller."},
 	"mechanize_effect_reconcile":             {false, "Needs exact client-owned durable run and stored-plan authority-target screening."},
 	"mechanize_record_export":                {false, "Export includes recorded action values and editable plans; no safe controller projection."},
 	"mechanize_record_start":                 {false, "Capture target needs controller-specific protected-console screening."},

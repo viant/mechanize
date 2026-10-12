@@ -18,7 +18,7 @@ import (
 	"github.com/viant/mechanize/session"
 )
 
-func liveTabInventoryFixture(t *testing.T, version int) (*Gateway, auth.Principal, context.Context, *channel, net.Conn) {
+func liveTabInventoryFixture(t *testing.T, version int, maintenanceVersion ...int) (*Gateway, auth.Principal, context.Context, *channel, net.Conn) {
 	t.Helper()
 	p := principal(t, "live-tab-metadata")
 	p.ClientID = "verified-metadata-client"
@@ -40,7 +40,11 @@ func liveTabInventoryFixture(t *testing.T, version int) (*Gateway, auth.Principa
 	}
 	t.Cleanup(func() { conn.Close() })
 	conn.SetDeadline(time.Now().Add(3 * time.Second))
-	if e = WriteFrame(conn, map[string]any{"type": "hello", "protocolVersion": 1, "setupMetadataVersion": 1, "tabInventoryVersion": version, "profileChannel": grant.ProfileChannel, "browserInstance": grant.BrowserInstance, "extensionOrigin": grant.ExtensionOrigin, "credential": strings.Repeat("synthetic", 8), "trustScope": TrustScopeDesktop}); e != nil {
+	maintenance := 0
+	if len(maintenanceVersion) > 0 {
+		maintenance = maintenanceVersion[0]
+	}
+	if e = WriteFrame(conn, map[string]any{"extensionMaintenanceVersion": maintenance, "type": "hello", "protocolVersion": 1, "setupMetadataVersion": 1, "tabInventoryVersion": version, "profileChannel": grant.ProfileChannel, "browserInstance": grant.BrowserInstance, "extensionOrigin": grant.ExtensionOrigin, "credential": strings.Repeat("synthetic", 8), "trustScope": TrustScopeDesktop}); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = ReadFrame(conn); e != nil {

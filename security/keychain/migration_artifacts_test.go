@@ -475,7 +475,7 @@ func TestRuntimeExtensionLegacyIsOldOnlyAndInventoryPathsAreBounded(t *testing.T
 	root := migrationFilesRoot(t)
 	path := filepath.Join(root, "extension")
 	runtimeExtensionFixture(t, path, "1")
-	for _, file := range []string{"connection-lifecycle.js", "focused-location.js", "tab-metadata.js", "control-badge-metadata.js", "protection-scopes.js", "accessibility-provider.js", "browser-input.js", "cdp-transport.js", "controller.js", "retirement.js", "fingerprint.js", "secure-input.js", "setup-metadata.js", "playwright-relay.js", "playwright-target.js", "playwright-worker.js"} {
+	for _, file := range []string{"extension-maintenance.js", "connection-lifecycle.js", "focused-location.js", "tab-metadata.js", "control-badge-metadata.js", "protection-scopes.js", "accessibility-provider.js", "browser-input.js", "cdp-transport.js", "controller.js", "retirement.js", "fingerprint.js", "secure-input.js", "setup-metadata.js", "playwright-relay.js", "playwright-target.js", "playwright-worker.js"} {
 		if err := os.Remove(filepath.Join(path, file)); err != nil {
 			t.Fatal(err)
 		}
@@ -510,11 +510,23 @@ func TestRuntimeExtensionPlaywrightRequiresCompleteNewPackage(t *testing.T) {
 	}
 	withoutProvider := runtimeInventoryCopy(current)
 	delete(withoutProvider, "accessibility-provider.js")
+	if _, err = runtimeExtensionContract(withoutProvider, true); err == nil {
+		t.Fatal("maintenance mixed into an incomplete historical package accepted")
+	}
+	delete(withoutProvider, "extension-maintenance.js")
 	if _, err = runtimeExtensionContract(withoutProvider, true); err != nil {
 		t.Fatal("installed pre-accessibility package rejected", err)
 	}
 	if _, err = runtimeExtensionContract(withoutProvider, false); err == nil {
 		t.Fatal("package without accessible-name provider accepted as new")
+	}
+	beforeMaintenance := runtimeInventoryCopy(current)
+	delete(beforeMaintenance, "extension-maintenance.js")
+	if _, err = runtimeExtensionContract(beforeMaintenance, true); err != nil {
+		t.Fatal("installed pre-maintenance package rejected", err)
+	}
+	if _, err = runtimeExtensionContract(beforeMaintenance, false); err == nil {
+		t.Fatal("package without maintenance accepted as new")
 	}
 	missingLifecycle := runtimeInventoryCopy(current)
 	delete(missingLifecycle, "connection-lifecycle.js")
@@ -531,7 +543,7 @@ func TestRuntimeExtensionPlaywrightRequiresCompleteNewPackage(t *testing.T) {
 		}
 	}
 	previous := runtimeInventoryCopy(current)
-	for _, name := range []string{"connection-lifecycle.js", "focused-location.js", "tab-metadata.js", "control-badge-metadata.js", "protection-scopes.js", "accessibility-provider.js", "playwright-relay.js", "playwright-target.js", "playwright-worker.js"} {
+	for _, name := range []string{"extension-maintenance.js", "connection-lifecycle.js", "focused-location.js", "tab-metadata.js", "control-badge-metadata.js", "protection-scopes.js", "accessibility-provider.js", "playwright-relay.js", "playwright-target.js", "playwright-worker.js"} {
 		delete(previous, name)
 	}
 	if _, err = runtimeExtensionContract(previous, true); err != nil {

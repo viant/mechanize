@@ -61,6 +61,9 @@ type channel struct {
 	reconnectBindings            *reconnectBindingExchange
 	tabMetadataVersion           int
 	tabInventoryVersion          int
+	extensionMaintenanceVersion  int
+	extensionMaintenancePending  *extensionMaintenancePending
+	extensionMaintenanceBlocked  bool
 	tabInventoryPending          *tabInventoryPending
 	tabLocationPending           *tabLocationPending
 	controlBadgePending          *controlBadgePending
@@ -422,6 +425,7 @@ func (b *Broker) serve(conn net.Conn) {
 		FocusedLocationVersion             int             `json:"focusedLocationVersion"`
 		TabMetadataVersion                 int             `json:"tabMetadataVersion"`
 		TabInventoryVersion                int             `json:"tabInventoryVersion"`
+		ExtensionMaintenanceVersion        int             `json:"extensionMaintenanceVersion"`
 		OpenOriginVersion                  int             `json:"openOriginVersion"`
 		ProtectionScopeVersion             int             `json:"protectionScopeVersion"`
 		CredentialPublicReadVersion        int             `json:"credentialPublicReadVersion"`
@@ -495,6 +499,8 @@ func (b *Broker) serve(conn net.Conn) {
 	c.profileQualified = helloScope == TrustScopeProfile
 	c.scopeQualified = true
 	c.executorQualified = c.fixtureOnly
+	c.extensionMaintenanceBlocked = false
+	c.extensionMaintenancePending = nil
 	c.executorChallenge = newID()
 	c.consentReconnect = nil
 	if hello.WorkerBuild == 32 {
@@ -522,6 +528,7 @@ func (b *Broker) serve(conn net.Conn) {
 	c.focusedLocationVersion = hello.FocusedLocationVersion
 	c.tabMetadataVersion = hello.TabMetadataVersion
 	c.tabInventoryVersion = hello.TabInventoryVersion
+	c.extensionMaintenanceVersion = hello.ExtensionMaintenanceVersion
 	c.openOriginVersion = hello.OpenOriginVersion
 	c.protectionScopeVersion = hello.ProtectionScopeVersion
 	c.credentialPublicReadVersion = hello.CredentialPublicReadVersion
@@ -584,6 +591,10 @@ func (b *Broker) serve(conn net.Conn) {
 			continue
 		}
 		if b.acceptOpenOriginLocked(c, conn, data) {
+			b.mu.Unlock()
+			continue
+		}
+		if b.acceptExtensionMaintenanceLocked(c, conn, data) {
 			b.mu.Unlock()
 			continue
 		}

@@ -125,3 +125,31 @@ func TestObserveDiscoveryDeclaresConditionalSurfaceIdentity(t *testing.T) {
 	}
 	t.Fatal("observe catalog missing")
 }
+
+func TestControllerNativeWindowMissingProcessExplainsDiscovery(t *testing.T) {
+	calls := 0
+	d, id, ctx, _ := controllerFixture(t, func(deps *Dependencies) {
+		deps.Policy = func(context.Context, auth.Principal) (script.Policy, error) {
+			return script.Policy{AllowAllNative: true}, nil
+		}
+		deps.ObserveNativeWindow = func(context.Context, auth.Principal, model.Surface, string, string) (model.Observation, error) {
+			calls++
+			return model.Observation{}, nil
+		}
+	})
+	session := controllerBody(t, controllerCall(t, d, ctx, id, "mechanize_session_open", map[string]any{}))["sessionId"].(string)
+	out := controllerCall(t, d, ctx, id, "mechanize_observe", map[string]any{
+		"sessionId": session, "purpose": "Inspect current interface",
+		"surface":     model.Surface{Kind: "native", BundleID: "com.example.Fixture"},
+		"windowScope": map[string]any{"title": "PRIVATE_CANARY"},
+	})
+	body := controllerBody(t, out)
+	message, _ := body["message"].(string)
+	if out.IsError == nil || !*out.IsError || body["code"] != "invalidScope" || body["dispatchState"] != "notDispatched" || !strings.Contains(message, "processStartToken") || !strings.Contains(message, "mechanize_capture_windows") || calls != 0 {
+		t.Fatal("missing native identity lost discovery guidance", body)
+	}
+	wire, _ := json.Marshal(out)
+	if strings.Contains(string(wire), "PRIVATE_CANARY") || strings.Contains(string(wire), "review local permissions") {
+		t.Fatal("scope repair leaked input or requested permission")
+	}
+}

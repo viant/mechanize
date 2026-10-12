@@ -62,7 +62,8 @@ class ExtensionPackageTests(unittest.TestCase):
         destination = self.root / 'dist/extension/chrome'
         result = package.build(self.source, destination)
         self.assertEqual(result, self.expected)
-        self.assertEqual(len(package.FILES), 25)
+        self.assertEqual(len(package.FILES), 26)
+        self.assertTrue((destination / 'extension-maintenance.js').is_file())
         self.assertEqual({p.name for p in destination.iterdir()}, set(package.FILES))
         self.assertTrue((destination / 'retirement.js').is_file())
         self.assertTrue((destination / 'setup-metadata.js').is_file())
@@ -221,7 +222,7 @@ class LegacyExtensionCompatibilityTests(unittest.TestCase):
     def test_exact_historical_backups_upgrade_and_rollback_without_accepting_arbitrary_subsets(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp).resolve()
-            self.assertEqual(len(package.FILES), 25)
+            self.assertEqual(len(package.FILES), 26)
             self.assertEqual(len(package.OLDEST_LEGACY_FILES), 9)
             self.assertEqual(len(package.INTERMEDIATE_LEGACY_FILES), 10)
             source = root / 'source'
@@ -243,6 +244,7 @@ class LegacyExtensionCompatibilityTests(unittest.TestCase):
                 ('before-playwright-v7', package.BEFORE_PLAYWRIGHT_FILES, set()),
                 ('before-lifecycle-v8', package.BEFORE_LIFECYCLE_FILES, set()),
                 ('before-accessibility-v9', package.BEFORE_ACCESSIBILITY_FILES, set()),
+                ('before-maintenance-v10', package.BEFORE_MAINTENANCE_FILES, {'extension-maintenance.js'}),
             ]
             for version, expected_files, removed_files in historical_versions:
                 with self.subTest(version=version):
