@@ -328,7 +328,21 @@ if (!globalThis.__mechanizeExecutor) {
           for (const key of ["origin","title","titleTruncated","mutationFingerprintVersion"]) delete identity[key];
           return sorted({...value, identity: sorted(identity)});
         };
-        if (binding && JSON.stringify(stable(binding)) !== JSON.stringify(stable(message.binding))) throw MechanizeProtocol.error("executorNotQuiescent", "Existing document binding cannot be replaced; reconcile receipts first");
+        if (binding && JSON.stringify(stable(binding)) !== JSON.stringify(stable(message.binding))) {
+          // Older on-demand executors omitted these informational trust fields.
+          // An authenticated worker may add them on the SAME immutable core
+          // binding; this is not a fence handoff or receipt/lease retirement.
+          const trustKeys=['trustScope','scopeQualified','profileQualified'],next=message.binding;
+          const legacyKeys=['identity','brokerEpoch','channelEpoch','scopeHash','leaseRequired','mutationFingerprintVersion'];
+          const core=next&&Object.fromEntries(Object.entries(next).filter(([key])=>!trustKeys.includes(key)));
+          const additive=!sender.tab&&(!sender.url||sender.url===`chrome-extension://${chrome.runtime.id}/worker.js`) &&
+            !pendingFingerprints&&!pendingBrowserInputs &&
+            Object.keys(binding).sort().join()===legacyKeys.sort().join() && binding.leaseRequired===true&&binding.mutationFingerprintVersion===2 &&
+            next&&Object.keys(next).sort().join()===[...legacyKeys,...trustKeys].sort().join() &&
+            ['desktop','profile'].includes(next.trustScope)&&next.scopeQualified===true&&next.profileQualified===(next.trustScope==='profile') &&
+            JSON.stringify(stable(binding))===JSON.stringify(stable(core));
+          if(!additive)throw MechanizeProtocol.error("executorNotQuiescent", "Existing document binding cannot be replaced; reconcile receipts first");
+        }
         const version = message.binding?.mutationFingerprintVersion || 1;
         if (![1,2].includes(version) || version === 2 && !globalThis.MechanizeFingerprint?.mutationV2) throw MechanizeProtocol.error("fingerprintMismatch", "Packaged v2 executor required");
         // Inventory entries may include title/origin and capability metadata.

@@ -245,6 +245,15 @@ function send(value) {
   port.postMessage(value);
 }
 function validBoundIdentity(value,expected){return value&&reconnectRecordKeys(value)==='browserInstance,documentGeneration,documentId,frameId,profileChannel,tabId'&&['profileChannel','browserInstance','tabId','frameId','documentId'].every(k=>value[k]===expected[k])&&Number.isSafeInteger(value.documentGeneration)&&value.documentGeneration>=1&&value.documentGeneration>=expected.documentGeneration;}
+// Trust presentation metadata is copied only from the already-qualified
+// worker grant (or its validated enrollment candidate), never command fields.
+// Keep the legacy no-metadata shape when negotiating an older enrollment.
+function executorTrustMetadata(qualified) {
+  const keys=['trustScope','scopeQualified','profileQualified'];
+  if(!keys.some(key=>Object.hasOwn(qualified,key)))return {};
+  if(qualified.scopeQualified!==true || !['desktop','profile'].includes(qualified.trustScope) || qualified.profileQualified!==(qualified.trustScope==='profile'))throw MechanizeProtocol.error('executorBindingFailed','Qualified executor trust metadata required');
+  return {trustScope:qualified.trustScope,scopeQualified:true,profileQualified:qualified.profileQualified};
+}
 async function attach(command, enrollment) {
   const privateAcquire=command.action==='executor.acquire'&&privateAdmission?.port===port&&privateAdmission.deadline>Date.now()&&['profileChannel','browserInstance','tabId','frameId','documentId','documentGeneration'].every(k=>command.identity?.[k]===privateAdmission.identity[k]);
   const tab = await chrome.tabs.get(command.identity.tabId);
@@ -260,7 +269,7 @@ async function attach(command, enrollment) {
   const key = `${tab.id}:${frame.documentId}`;
   if (!documents.has(key)) {
     await chrome.scripting.executeScript({target: {tabId: tab.id, documentIds: [frame.documentId]}, world: "ISOLATED", files: ["protocol.js", "fingerprint.js", "accessibility-provider.js", "dom.js", "recorder.js", "secure-input.js", "content.js"]});
-    const bound = await chrome.tabs.sendMessage(tab.id, {type: "bind", binding: {identity: command.identity, brokerEpoch: grant.brokerEpoch, channelEpoch: grant.channelEpoch, scopeHash: grant.scopeHash, leaseRequired: grant.leaseRequired === true, mutationFingerprintVersion: grant.mutationFingerprintVersion || 1}}, {documentId: frame.documentId});
+    const bound = await chrome.tabs.sendMessage(tab.id, {type: "bind", binding: {identity: command.identity, brokerEpoch: grant.brokerEpoch, channelEpoch: grant.channelEpoch, scopeHash: grant.scopeHash, leaseRequired: grant.leaseRequired === true, mutationFingerprintVersion: grant.mutationFingerprintVersion || 1,...executorTrustMetadata(grant)}}, {documentId: frame.documentId});
     if (bound?.error || !validBoundIdentity(bound?.identity,command.identity) || (grant.mutationFingerprintVersion === 2 && bound.mutationFingerprintVersion !== 2)) throw MechanizeProtocol.error("executorBindingFailed", "Exact negotiated document executor required");
     documents.set(key, bound.identity);
     documentOrigins.set(key,new URL(frame.url).origin);
@@ -327,7 +336,7 @@ async function receiveCredentialInspect(command) {
       if(fresh||!protectedOrigins.has(command.origin)||frame.errorOccurred||frame.frameType==='fenced_frame'||new URL(tab.url).username||new URL(tab.url).password)throw Error();
       await chrome.scripting.executeScript({target:{tabId:i.tabId,documentIds:[i.documentId]},world:'ISOLATED',files:['protocol.js','fingerprint.js','accessibility-provider.js','dom.js','recorder.js','secure-input.js','content.js']});
       if(port!==originalPort||grant!==originalGrant||command.deadlineUnixMs<=Date.now())throw Error();
-      const bound=await chrome.tabs.sendMessage(i.tabId,{type:'bind',binding:{identity:i,brokerEpoch:command.brokerEpoch,channelEpoch:command.channelEpoch,scopeHash:command.scopeHash,leaseRequired:true,mutationFingerprintVersion:2}},{documentId:i.documentId});
+      const bound=await chrome.tabs.sendMessage(i.tabId,{type:'bind',binding:{identity:i,brokerEpoch:command.brokerEpoch,channelEpoch:command.channelEpoch,scopeHash:command.scopeHash,leaseRequired:true,mutationFingerprintVersion:2,...executorTrustMetadata(originalGrant)}},{documentId:i.documentId});
       if(bound?.error||!bound?.identity||bound.mutationFingerprintVersion!==2||['profileChannel','browserInstance','tabId','frameId','documentId'].some(k=>bound.identity[k]!==i[k])||(!Number.isSafeInteger(bound.identity.documentGeneration)||bound.identity.documentGeneration<i.documentGeneration))throw Error();
       documents.set(key,{...bound.identity});documentOrigins.set(key,command.origin);documentFingerprintVersions.set(key,2);
     }

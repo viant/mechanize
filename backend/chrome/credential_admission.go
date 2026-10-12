@@ -21,6 +21,8 @@ type credentialAdmissionReply struct {
 	acquisitionFailure string
 }
 type credentialAdmissionPending struct {
+	knownNoInput bool // set only after a validated negative inspection reply, before acquire
+
 	diagnostics bool
 	recipientID string
 	requestID   string
@@ -132,6 +134,23 @@ func (b *Broker) acceptCredentialAdmissionLocked(c *channel, raw []byte) bool {
 		return false
 	}
 	defer clear(raw)
+	// Keep every unclassified frame quarantined, but only the correlated reply
+	// kind can complete inspection. Controller bookkeeping is not a reply.
+	var envelope struct {
+		Type      string `json:"type"`
+		RequestID string `json:"requestId"`
+	}
+	if len(raw) > 4096 || json.Unmarshal(raw, &envelope) != nil {
+		return true
+	}
+	pending := c.privateInspection
+	if pending.lease == nil {
+		if envelope.Type != "credentialInspectResult" {
+			return true
+		}
+	} else if envelope.Type != "" || envelope.RequestID != pending.requestID {
+		return true
+	}
 	select {
 	case c.privateInspection.done <- decodeCredentialAdmission(raw, c.privateInspection):
 	default:
@@ -307,7 +326,19 @@ func (g *Gateway) AdmitCredentialControl(ctx context.Context, p auth.Principal, 
 	if e == nil {
 		result.FailureReason = inspected.inspectionReason
 	}
-	if e != nil || !inspected.ready {
+	if e == nil && !inspected.ready {
+		// This closed correlated reply proves no acquisition/input occurred.
+		// Retain quarantine until the typed zero-child retirement, while allowing
+		// the original controller request to receive its finite diagnostic.
+		b.mu.Lock()
+		if c.conn == conn && c.privateInspection != nil && c.privateInspection.requestID == requestID && c.privateInspection.lease == nil {
+			c.privateInspection.knownNoInput = true
+			completed = true
+		}
+		b.mu.Unlock()
+		return result, errCredentialDelivery
+	}
+	if e != nil {
 		return result, errCredentialDelivery
 	}
 	b.mu.Lock()

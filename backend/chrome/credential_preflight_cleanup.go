@@ -32,12 +32,45 @@ func (g *Gateway) VerifyCredentialPreflightIdle(ctx context.Context, p auth.Prin
 		if c.grant.Principal.Namespace != p.Namespace {
 			continue
 		}
-		if c.privateInspection != nil || c.privateCredential != nil || c.privateFlow != nil || c.privateAdvance != nil || c.privacy != nil || c.privacyPending != nil || c.manualTransition != nil || c.manualPending != nil || c.protectionPending != nil || c.playwright != nil || len(c.pending) > 0 || len(c.unknown) > 0 {
+		if c.privateInspection != nil && !c.privateInspection.knownNoInput || c.privateCredential != nil || c.privateFlow != nil || c.privateAdvance != nil || c.privacy != nil || c.privacyPending != nil || c.manualTransition != nil || c.manualPending != nil || c.protectionPending != nil || c.playwright != nil || len(c.pending) > 0 || len(c.unknown) > 0 {
 			return scopeFailure("scopePreflightBusy")
 		}
 	}
 	return ctx.Err()
 }
 func (g *Gateway) RetireCredentialPreflight(ctx context.Context, p auth.Principal, preparationID, origin string) error {
-	return g.VerifyCredentialPreflightIdle(ctx, p, preparationID, origin)
+	if err := g.VerifyCredentialPreflightIdle(ctx, p, preparationID, origin); err != nil {
+		return err
+	}
+	g.controlMu.Lock()
+	defer g.controlMu.Unlock()
+	b := g.broker
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed || g.control != nil || g.controlRetiring || ctx.Err() != nil {
+		return scopeFailure("scopePreflightBusy")
+	}
+	for _, c := range b.channels {
+		if c.grant.Principal.Namespace != p.Namespace {
+			continue
+		}
+		if c.privateInspection != nil && !c.privateInspection.knownNoInput || c.privateCredential != nil || c.privateFlow != nil || c.privateAdvance != nil || c.privacy != nil || c.privacyPending != nil || c.manualTransition != nil || c.manualPending != nil || c.protectionPending != nil || c.playwright != nil || len(c.pending) > 0 || len(c.unknown) > 0 {
+			return scopeFailure("scopePreflightBusy")
+		}
+	}
+	for _, c := range b.channels {
+		if c.grant.Principal.Namespace != p.Namespace || c.privateInspection == nil || !c.privateInspection.knownNoInput {
+			continue
+		}
+		original := c.privateInspection.identity
+		kept := c.documents[:0]
+		for _, doc := range c.documents {
+			if doc.ProfileChannel != original.ProfileChannel || doc.BrowserInstance != original.BrowserInstance || doc.TabID != original.TabID || doc.DocumentID != original.DocumentID {
+				kept = append(kept, doc)
+			}
+		}
+		c.documents = kept
+		c.privateInspection = nil
+	}
+	return nil
 }

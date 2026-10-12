@@ -544,11 +544,24 @@ func (b *Broker) serve(conn net.Conn) {
 		quarantined := quarantinedChannel(c)
 		b.mu.Unlock()
 		if quarantined {
+			if b.closePrivateController(c, conn, data) {
+				continue
+			}
 			if request := decodePrivateControllerRequest(data, time.Now()); request != nil {
 				clear(data)
 				if !controllerSeen[request.RequestID] && len(controllerSeen) < 1024 {
 					controllerSeen[request.RequestID] = true
-					b.controllerMCPLocked(c, conn, request)
+					if !b.controllerMCPLocked(c, conn, request) {
+						b.refusePrivateController(c, conn, request)
+					}
+				}
+				continue
+			}
+			if envelope := privateControllerRefusalEnvelope(data, time.Now()); envelope != nil {
+				clear(data)
+				if !controllerSeen[envelope.RequestID] && len(controllerSeen) < 1024 {
+					controllerSeen[envelope.RequestID] = true
+					b.refusePrivateController(c, conn, envelope)
 				}
 				continue
 			}
@@ -629,6 +642,12 @@ func (b *Broker) serve(conn net.Conn) {
 		if request, handled := decodeControllerRequest(data, time.Now()); handled {
 			if request == nil || controllerSeen[request.RequestID] || len(controllerSeen) >= 1024 {
 				return
+			}
+			// A status call may establish quarantine while it is in flight.
+			// Preserve its exact closed continuation identity before dispatch so
+			// the original result remains bound to the same private owner.
+			if private := decodePrivateControllerRequest(data, time.Now()); private != nil {
+				request = private
 			}
 			controllerSeen[request.RequestID] = true
 			if b.controllerMCPLocked(c, conn, request) {

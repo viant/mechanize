@@ -113,3 +113,38 @@ test('equivalent binding ignores inventory display changes but retains every aut
   assert.equal((await f.send({type:'bind',binding:changed})).error.code,'executorNotQuiescent');
  }
 });
+
+test('same-fence legacy trust metadata upgrade preserves lease fingerprint UNKNOWN receipt and replay guard',async t=>{
+ const f=fixture();t.after(f.close);await f.ready();
+ let attempts=0;f.w.MechanizeDOM.act=()=>{attempts++;throw Error('PRIVATE-CANARY');};
+ const command=await f.mutation(),before=(await f.w.MechanizeFingerprint.mutationV2(command)).sha256;
+ const failed=await f.send(command);assert.equal(failed.error.dispatchState,'unknown');
+ const prior=await f.send(f.command('receipt.query',{attemptId:command.attemptId}));
+ const upgraded={...f.binding,trustScope:'desktop',scopeQualified:true,profileQualified:false};
+ const result=await f.send({type:'bind',binding:upgraded});assert.equal(result.error,undefined);
+ assert.equal((await f.w.MechanizeFingerprint.mutationV2(command)).sha256,before);
+ assert.equal((await f.send(f.command('executor.validate',{controlLease:lease}))).validated,true);
+ assert.deepEqual(await f.send(f.command('receipt.query',{attemptId:command.attemptId})),prior);
+ assert.equal((await f.send(command)).error.dispatchState,'unknown');assert.equal(attempts,1);
+ assert.ok(!JSON.stringify(result).includes('CANARY'));
+ for(const changed of [{...upgraded,trustScope:'profile',profileQualified:true},{...upgraded,channelEpoch:'foreign'},{...upgraded,scopeHash:'c'.repeat(64)},{...upgraded,identity:{...identity,documentId:'foreign'}},{...f.binding}])assert.equal((await f.send({type:'bind',binding:changed})).error.code,'executorNotQuiescent');
+});
+test('additive trust migration rejects invalid metadata foreign sender and pending fingerprint before input',async t=>{
+ for(const mode of ['scope','partial','profile','extra','foreignSender','changedFence','changedIdentity','pending']){
+  const f=fixture();t.after(f.close);await f.ready();let calls=0;f.w.MechanizeDOM.act=()=>{calls++;throw Error('PRIVATE-CANARY');};
+  const next={...f.binding,trustScope:'desktop',scopeQualified:true,profileQualified:false};let sender;
+  if(mode==='scope')next.scopeQualified=false;if(mode==='partial')delete next.profileQualified;if(mode==='profile')next.profileQualified=true;if(mode==='extra')next.extra=true;if(mode==='foreignSender')sender={id:'fixture',tab:{id:7}};if(mode==='changedFence')next.brokerEpoch='foreign';if(mode==='changedIdentity')next.identity={...identity,documentId:'foreign'};
+  let release,pending;
+  if(mode==='pending'){const command=await f.mutation(),real=f.w.MechanizeFingerprint.mutationV2;f.w.MechanizeFingerprint={...f.w.MechanizeFingerprint,mutationV2:()=>new Promise(resolve=>{release=async()=>resolve(await real(command));})};pending=f.send(command);await new Promise(r=>setImmediate(r));}
+  assert.equal((await f.send({type:'bind',binding:next},sender)).error.code,'executorNotQuiescent',mode);assert.equal(calls,0);
+  if(pending){await release();await pending;assert.equal(calls,1);}
+ }
+});
+test('legacy private-protected renderer refuses additive trust metadata without clearing privacy',async t=>{
+ const f=fixture();t.after(f.close);await f.send({type:'bind',binding:f.binding});
+ f.w.document.body.innerHTML='<form><input type="password"><button>Login</button></form>';
+ const request={type:'credentialManualPrivacyBind',requestId:'a'.repeat(64),identity,brokerEpoch:f.binding.brokerEpoch,channelEpoch:f.binding.channelEpoch,scopeHash:f.binding.scopeHash,deadlineUnixMs:Date.now()+5000,origin:f.w.location.origin,permitId:'d'.repeat(64),redactions:f.w.MechanizeSecureInput.redactionVariants(['PRIVATE-CANARY'])};
+ assert.equal((await f.send(request)).ready,false);
+ assert.equal((await f.send({type:'bind',binding:{...f.binding,trustScope:'desktop',scopeQualified:true,profileQualified:false}})).error.code,'secureDocumentRequired');
+ assert.equal((await f.send(f.command('observe'))).error.code,'secureDocumentRequired');assert.equal(f.w.document.querySelector('input').value,'');
+});

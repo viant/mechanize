@@ -2481,3 +2481,53 @@ test('public read scope capacity prunes only expired or predecessor-port proofs'
   assert.equal(f.publicReadCounts().publicReads,mode==='active'?200:1,mode);assert.equal(f.messages.some(m=>m.type==='credentialScopeResult'&&m.ready),mode!=='active',mode);assert.equal(f.publicReadCounts().leases,0);assert.equal(f.state.deliveries,0);
  }
 });
+
+async function shippedBindingFixture(t,privateOrigin=false){
+ const {JSDOM}=require('jsdom');
+ const w=new JSDOM(privateOrigin?'<form method="post"><input autocomplete="username"><input type="password" autocomplete="current-password"><button>Login</button></form>':'<button id="save">Fixture</button>',{url:'https://fixture.example.test/login',runScripts:'outside-only'}).window;
+ t.after(()=>w.close());w.TextEncoder=TextEncoder;Object.defineProperty(w,'crypto',{value:require('node:crypto').webcrypto});w.HTMLElement.prototype.getClientRects=()=>[{width:100,height:20}];
+ let listener;w.chrome={runtime:{id:'extension',onMessage:{addListener:fn=>listener=fn}}};
+ for(const file of ['protocol.js','fingerprint.js','accessibility-provider.js','dom.js','recorder.js','secure-input.js','content.js'])w.eval(fs.readFileSync(path.join(__dirname,'..',file),'utf8'));
+ const f=await fixture(privateOrigin?{mechanizeProtectedOrigins:['https://fixture.example.test']}:{},{enroll:false});
+ f.state.boundBindings=[];f.state.renderer=(_,message)=>new Promise(resolve=>{if(message.type==='bind')f.state.boundBindings.push(structuredClone(message.binding));listener(JSON.parse(JSON.stringify(message)),{id:'extension',url:'chrome-extension://extension/worker.js'},value=>resolve(JSON.parse(JSON.stringify(value))));});
+ // Qualify an empty browser first; the later tab uses the on-demand bind path.
+ await f.receive(restartQualification());f.messages.length=0;
+ f.state.inventoryTabs=[{id:7,url:f.state.url,title:'Public fixture'}];
+ return {f,w,send:message=>new Promise(resolve=>listener(message,{id:'extension'},resolve))};
+}
+test('on-demand public binding keeps qualified trust shape across same-fence enrollment with shipped content',async t=>{
+ const {f,w,send}=await shippedBindingFixture(t);let clicks=0;w.document.querySelector('button').onclick=()=>clicks++;
+ await f.receive(command('shape-observe','observe',{attemptId:undefined}));
+ const first=f.state.boundBindings[0];assert.equal(first.trustScope,'desktop');assert.equal(first.scopeQualified,true);assert.equal(first.profileQualified,false);
+ const lease={id:'shape-lease',generation:1};
+ assert.equal((await send(command('shape-acquire','executor.acquire',{attemptId:undefined,locator:undefined,controlLease:lease}))).validated,true);
+ f.messages.length=0;await f.receive(restartQualification());
+ assert.ok(f.messages.some(message=>message.type==='executorPrepared'),JSON.stringify(f.messages.map(m=>({type:m.type,code:m.error?.code}))));
+ const after=f.state.boundBindings.at(-1);for(const key of Object.keys(first))assert.deepEqual(key==='identity'?Object.fromEntries(Object.keys(identity).map(k=>[k,after.identity[k]])):after[key],first[key]);
+ assert.equal((await send(command('shape-validate','executor.validate',{attemptId:undefined,locator:undefined,controlLease:lease}))).validated,true);
+ assert.equal((await send({type:'bind',binding:{...first,channelEpoch:'foreign'}})).error.code,'executorNotQuiescent');assert.equal(clicks,0);assert.equal(f.state.debuggerInputs,undefined);
+});
+test('private candidate binding derives trust only from grant and cannot rebind through private protection',async t=>{
+ const {f,w,send}=await shippedBindingFixture(t,true);
+ const probe=privateFrame({type:'credentialInspect',recipientId:'f'.repeat(64)});for(const key of ['attemptId','controlLease','username','password'])delete probe[key];
+ await f.receive(probe);assert.equal(f.messages.at(-1).ready,true);
+ const first=f.state.boundBindings[0];assert.equal(first.trustScope,'desktop');assert.equal(first.scopeQualified,true);assert.equal(first.profileQualified,false);
+ assert.equal((await send({type:'bind',binding:{...first}})).error,undefined);
+ const before=f.state.boundBindings.length;await f.receive({...probe,requestId:'e'.repeat(64),trustScope:'desktop',scopeQualified:true,profileQualified:false});assert.equal(f.state.boundBindings.length,before);
+ // A retained private continuation is an actual input guard, not binding metadata.
+ const bindingCommand={type:'credentialManualPrivacyBind',requestId:'a'.repeat(64),identity,...grant,deadlineUnixMs:Date.now()+5000,origin:w.location.origin,permitId:'b'.repeat(64),redactions:w.MechanizeSecureInput.redactionVariants(['PRIVATE-FIXTURE-CANARY'])};
+ const bound=await send(bindingCommand);assert.equal(bound.ready,false);
+ const refused=await send({type:'bind',binding:first});assert.equal(refused.error.code,'secureDocumentRequired');
+ assert.equal(w.document.querySelector('[type=password]').value,'');assert.equal(f.state.debuggerInputs,undefined);
+ assert.ok(!JSON.stringify(f.messages).includes('CANARY'));
+});
+test('legacy enrollment keeps its original bind shape without inventing trust metadata',async()=>{
+ const f=await fixture();let sent;
+ f.state.renderer=async(_,message)=>{sent=message;return message.type==='bind'?{identity,mutationFingerprintVersion:1}:{requestId:message.requestId,identity,validated:true};};
+ await f.receive(command('legacy-shape','executor.validate',{attemptId:undefined,locator:undefined}));
+ // Use a fresh document so the next read records the actual on-demand bind.
+ const bindings=[];f.state.documentId='legacy-second';f.state.renderer=async(_,message)=>{if(message.type==='bind'){bindings.push(message.binding);return {identity:message.binding.identity,mutationFingerprintVersion:1};}return {requestId:message.requestId,identity:message.identity,validated:true};};
+ await f.receive(command('legacy-second-read','executor.validate',{identity:{...identity,documentId:'legacy-second'},attemptId:undefined,locator:undefined}));
+ assert.equal(bindings.length,1);for(const key of ['trustScope','scopeQualified','profileQualified'])assert.equal(Object.hasOwn(bindings[0],key),false);
+ assert.equal(f.state.debuggerInputs,undefined);
+});
