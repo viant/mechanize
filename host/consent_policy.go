@@ -163,6 +163,9 @@ func (h *Host) AuthorizeOperation(ctx context.Context, p auth.Principal, surface
 // checks. Callers supply either ordinary exposure or an exact private delivery
 // lease; this helper alone is never an exposed authorization API.
 func (h *Host) authorizeConsentOperation(ctx context.Context, p auth.Principal, surface model.Surface, mutation bool, requested consent.Mode) (*consent.Lease, error) {
+	if err := h.checkCredentialCleanupOperation(ctx, p, surface, mutation, requested); err != nil {
+		return nil, err
+	}
 	if h.consent == nil {
 		return nil, errors.New("native permission broker is unavailable")
 	}

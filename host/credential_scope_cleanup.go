@@ -174,7 +174,7 @@ func (s *credentialService) retireAbsentCredentialSources(ctx context.Context, p
 
 		verifyAll := func(c context.Context) error {
 			for _, w := range work {
-				if w.lease.Context.Err() != nil || h.Runtime.CheckSession(c, p, current.SessionID) != nil {
+				if w.lease.Context.Err() != nil || h.checkCredentialSession(c, p, current.SessionID) != nil {
 					return errPrivateCredential
 				}
 				if w.preflightOnly {

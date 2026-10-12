@@ -52,6 +52,7 @@ func (h *Host) cancelOwnedSession(ctx context.Context, p auth.Principal, id stri
 				exposure.lease.Retire()
 			}
 		}
+		h.retireClosingCredentialSources(ctx, p, id, items)
 	}
 	return h.cancelWindowFrameSession(ctx, p, id)
 }

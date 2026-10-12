@@ -45,6 +45,10 @@ until the server reports the relevant authorization and the result is verified.
    without executing it. This check is not an authorization grant and does not
    prove a backend will execute the plan.
 5. **Run.** Keep the owned `sessionId` for subsequent calls.
+   Issue one action for a given tab or window, inspect its result, then choose
+   the next action. Do not issue duplicate calls or parallel preparation/status
+   calls against the same private sign-in flow. Independent reads may run in
+   parallel when their scopes do not interfere.
    Use `mechanize_step_run` for exactly one
    execution step or `mechanize_script_run` for a validated script. Supply a
    unique `clientRequestId` for each intended run. Native runtime paths may

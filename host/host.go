@@ -335,7 +335,7 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 			return fail(err)
 		}
 	}
-	h.consent, err = NewConsentBroker(ConsentBrokerOptions{Invoke: h.durable.InvokePrivateComponent, Enrolled: h.enrolled, SessionOwned: h.Runtime.CheckSession, Policy: h.ConsentPolicy, RecoverCleanup: h.proveConsentCleanup, WithCleanupProof: h.withConsentCleanupProof, RecoverNativeCleanup: h.proveNativeConsentCleanup, ControllerPolicy: h.controllerPolicyAuthorization})
+	h.consent, err = NewConsentBroker(ConsentBrokerOptions{Invoke: h.durable.InvokePrivateComponent, Enrolled: h.enrolled, SessionOwned: h.checkCredentialSession, Policy: h.ConsentPolicy, RecoverCleanup: h.proveConsentCleanup, WithCleanupProof: h.withConsentCleanupProof, RecoverNativeCleanup: h.proveNativeConsentCleanup, ControllerPolicy: h.controllerPolicyAuthorization})
 	if err != nil {
 		return fail(err)
 	}

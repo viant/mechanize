@@ -216,7 +216,12 @@ func (r *Runtime) Close(ctx context.Context, session string) error {
 	r.closingSessions[session] = true
 	r.mu.Unlock()
 	if r.onSessionClose != nil {
-		if err := r.onSessionClose(ctx, p, session); err != nil {
+		closing, release := r.sessionCloseContext(ctx, p, session)
+		err := func() error {
+			defer release()
+			return r.onSessionClose(closing, p, session)
+		}()
+		if err != nil {
 			return err
 		}
 	}
