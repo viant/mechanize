@@ -285,7 +285,8 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 		return Reply{}, browserError("channelUnqualified", "Signed native-host/Chrome channel proof unavailable", "notDispatched")
 	}
 	b.mu.Lock()
-	scopeQualified := channelScopeQualified(c) && c.executorQualified && (publicReadPermitLocked(ctx, c, command, mutation) != nil || scopeDisjointLocked(c, command.Identity) || c.privateInspection == nil && c.privateFlow == nil && c.privateCredential == nil && c.privateAdvance == nil)
+	publicPermit := publicReadPermitLocked(ctx, c, command, mutation)
+	scopeQualified := channelScopeQualified(c) && (publicPermit != nil || c.executorQualified && (scopeDisjointLocked(c, command.Identity) || c.privateInspection == nil && c.privateFlow == nil && c.privateCredential == nil && c.privateAdvance == nil))
 	b.mu.Unlock()
 	if !scopeQualified {
 		return Reply{}, browserError("profileUnqualified", "Profile enrollment and executor quiescence are not qualified", "notDispatched")

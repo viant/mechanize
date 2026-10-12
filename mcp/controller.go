@@ -244,13 +244,16 @@ func controllerRejected(dispatch string, codes ...string) *schema.CallToolResult
 	code := "controllerToolRejected"
 	if len(codes) > 0 {
 		switch codes[0] {
-		case "permissionRequired", "permissionExpired", "permissionDenied", "secureDocumentRequired", "staleGeneration", "staleAuthority", "unknownEffect", "targetNotFound", "ambiguousTarget", "invalidArguments", "sessionRequired", "sessionNotOwned", "invalidScopeKind", "invalidConsentScope", "unsupportedMode", "invalidSurface", "browserInventoryUnavailable":
+		case "permissionRequired", "permissionExpired", "permissionDenied", "secureDocumentRequired", "staleGeneration", "staleAuthority", "unknownEffect", "targetNotFound", "ambiguousTarget", "invalidArguments", "sessionRequired", "sessionNotOwned", "invalidScopeKind", "invalidConsentScope", "unsupportedMode", "invalidSurface", "browserInventoryUnavailable", "privateDOMUnavailable":
 			code = codes[0]
 		}
 	}
 	message := "Tool request unavailable; review local permissions and operation status."
 	if code == "invalidSurface" {
 		message = invalidSurfaceMessage
+	}
+	if code == "privateDOMUnavailable" {
+		message = privateDOMMessage
 	}
 	body := map[string]any{"code": code, "message": message, "dispatchState": dispatch}
 	raw, _ := json.Marshal(body)

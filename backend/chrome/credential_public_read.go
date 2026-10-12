@@ -56,13 +56,20 @@ func (g *Gateway) WithVerifiedCredentialPublicRead(ctx context.Context, p auth.P
 	b := g.broker
 	b.mu.Lock()
 	c := b.channels[channelKey(profile, instance)]
-	ready := c != nil && c.conn != nil && !c.fixtureOnly && c.executorQualified && channelScopeQualified(c) && (c.credentialPublicReadVersion == 1 || c.credentialPublicReadVersion == 2) && c.grant.Principal.Namespace == p.Namespace && allowedOrigin(c.grant, target.Origin)
+	ready := c != nil && c.conn != nil && !c.fixtureOnly && channelScopeQualified(c) && (c.credentialPublicReadVersion == 2 || c.credentialPublicReadVersion == 1 && c.executorQualified) && c.grant.Principal.Namespace == p.Namespace && allowedOrigin(c.grant, target.Origin)
 	b.mu.Unlock()
 	if !ready {
 		return nil, scopeFailure("scopeUnsupported")
 	}
-	if err := b.qualifyVisibilityUnknown(ctx, c); err != nil {
-		return nil, err
+	// Version 2 routes only classified semantic reads and never queries or
+	// adopts old mutation receipts. Legacy readers retain their ordinary gates.
+	b.mu.Lock()
+	semanticRead := c.credentialPublicReadVersion == 2
+	b.mu.Unlock()
+	if !semanticRead {
+		if err := b.qualifyVisibilityUnknown(ctx, c); err != nil {
+			return nil, err
+		}
 	}
 	if err := b.checkChannelProcess(ctx, c, false); err != nil {
 		return nil, scopeFailure("scopeChanged")
@@ -111,7 +118,7 @@ func (p *credentialPublicReadPermit) validLocked(ctx context.Context, c *channel
 	consent, ok := auth.ConsentBindingFromContext(ctx)
 	return e == nil && ok && actor.Namespace == p.owner && actor.ClientID == p.client && consent == p.consent && authorize(ctx, actor, false) == nil &&
 		!p.broker.closed && c.conn == p.conn && c.conn != nil && p.broker.epoch == p.brokerEpoch && c.epoch == p.channelEpoch && c.scopeHash == p.scopeHash && c.grant.Principal.Namespace == p.owner && allowedOrigin(c.grant, p.document.Origin) &&
-		(c.credentialPublicReadVersion == 1 || c.credentialPublicReadVersion == 2) && c.executorQualified && channelScopeQualified(c) && !c.lifecycleInhibited && !domUnknownBlockedLocked(c) && c.privateCredential == nil && c.privateAdvance == nil && c.privacyPending == nil && c.manualPending == nil &&
+		(c.credentialPublicReadVersion == 2 || c.credentialPublicReadVersion == 1 && c.executorQualified && !domUnknownBlockedLocked(c)) && channelScopeQualified(c) && !c.lifecycleInhibited && c.privateCredential == nil && c.privateAdvance == nil && c.privacyPending == nil && c.manualPending == nil &&
 		c.processEvidence != nil && c.processEvidence.KernelPeerQualified && c.processEvidence.NativeHost == p.nativeHost && c.processEvidence.ChromeParent == p.chromeParent
 }
 func publicReadPermitLocked(ctx context.Context, c *channel, command Command, mutation bool) *credentialPublicReadPermit {
@@ -146,4 +153,23 @@ func (b *Broker) selectReadDocument(ctx context.Context, p auth.Principal, s mod
 		return nil, Document{}, scopeFailure("scopeChanged")
 	}
 	return permit.channel, permit.document, nil
+}
+
+// NeedsVerifiedPublicRead selects the existing v2 read protocol when an exact
+// selected tab cannot use the ordinary executor. This hint grants no authority;
+// WithVerifiedCredentialPublicRead still proves the actual current renderer.
+func (g *Gateway) NeedsVerifiedPublicRead(ctx context.Context, p auth.Principal, target model.Surface) bool {
+	if g == nil || g.broker == nil || authorize(ctx, p, false) != nil || target.Kind != "web" || !OrdinaryWebsiteOrigin(target.Origin) {
+		return false
+	}
+	actual, e := auth.FromContext(ctx)
+	profile, instance, _, valid := ownedTabParts(target.TabID)
+	if e != nil || actual.ClientID != p.ClientID || !valid {
+		return false
+	}
+	b := g.broker
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	c := b.channels[channelKey(profile, instance)]
+	return c != nil && c.grant.Principal.Namespace == p.Namespace && c.credentialPublicReadVersion == 2 && allowedOrigin(c.grant, target.Origin) && (!c.executorQualified || !c.inventoryComplete || domUnknownBlockedLocked(c))
 }

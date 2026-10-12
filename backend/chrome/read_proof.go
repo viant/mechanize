@@ -66,7 +66,8 @@ func (g *Gateway) captureReadBinding(ctx context.Context, p auth.Principal, c *c
 	}
 	g.broker.mu.Lock()
 	defer g.broker.mu.Unlock()
-	if c == nil || c.fixtureOnly || c.conn == nil || g.broker.closed || c.processEvidence == nil || !c.processEvidence.KernelPeerQualified || !channelScopeQualified(c) || !c.executorQualified || !c.inventoryComplete || c.grant.Principal.Namespace != p.Namespace || d.FrameID != 0 || d.TabID <= 0 || d.DocumentID == "" || d.Generation == 0 || !allowedOrigin(c.grant, d.Origin) {
+	permit := publicReadPermitLocked(ctx, c, Command{Action: "read", Identity: d.Identity}, false)
+	if c == nil || c.fixtureOnly || c.conn == nil || g.broker.closed || c.processEvidence == nil || !c.processEvidence.KernelPeerQualified || !channelScopeQualified(c) || (permit == nil && (!c.executorQualified || !c.inventoryComplete)) || c.grant.Principal.Namespace != p.Namespace || d.FrameID != 0 || d.TabID <= 0 || d.DocumentID == "" || d.Generation == 0 || !allowedOrigin(c.grant, d.Origin) {
 		return ReadBinding{}, browserError("readUnqualified", "Exact live signed root-document channel required", "notDispatched")
 	}
 	matches := 0
@@ -120,7 +121,8 @@ func (g *Gateway) checkReadBinding(ctx context.Context, p auth.Principal, pin Re
 	g.broker.mu.Lock()
 	defer g.broker.mu.Unlock()
 	c := pin.channel
-	if c.grant.AllWebsites != pin.allWebsites || !allowedOrigin(c.grant, pin.document.Origin) || c.fixtureOnly || c.conn == nil || g.broker.closed || c.processEvidence == nil || !c.processEvidence.KernelPeerQualified || !channelScopeQualified(c) || !pin.scopeQualified || pin.trustScope != c.grant.TrustScope || !c.executorQualified || !c.inventoryComplete || c.grant.Principal.Namespace != pin.owner || g.broker.epoch != pin.brokerEpoch || c.epoch != pin.channelEpoch || c.scopeHash != pin.scopeHash || c.grant.ExtensionOrigin != pin.extensionOrigin || c.processEvidence.NativeHost != pin.nativeHost || c.processEvidence.ChromeParent != pin.chromeParent {
+	permit := publicReadPermitLocked(ctx, c, Command{Action: "read", Identity: pin.document.Identity}, false)
+	if c.grant.AllWebsites != pin.allWebsites || !allowedOrigin(c.grant, pin.document.Origin) || c.fixtureOnly || c.conn == nil || g.broker.closed || c.processEvidence == nil || !c.processEvidence.KernelPeerQualified || !channelScopeQualified(c) || !pin.scopeQualified || pin.trustScope != c.grant.TrustScope || (permit == nil && (!c.executorQualified || !c.inventoryComplete)) || c.grant.Principal.Namespace != pin.owner || g.broker.epoch != pin.brokerEpoch || c.epoch != pin.channelEpoch || c.scopeHash != pin.scopeHash || c.grant.ExtensionOrigin != pin.extensionOrigin || c.processEvidence.NativeHost != pin.nativeHost || c.processEvidence.ChromeParent != pin.chromeParent {
 		return Document{}, browserError("staleIdentity", "Original signed document channel changed", "notDispatched")
 	}
 	var found Document

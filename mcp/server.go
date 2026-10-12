@@ -28,6 +28,7 @@ import (
 	"github.com/viant/mechanize/model"
 	"github.com/viant/mechanize/objective"
 	"github.com/viant/mechanize/script"
+	"github.com/viant/mechanize/vault"
 )
 
 type ObserveNativeWindow func(context.Context, auth.Principal, model.Surface, string, string) (model.Observation, error)
@@ -444,6 +445,14 @@ func register(base *protocol.DefaultHandler, d Dependencies) error {
 }
 
 const invalidSurfaceMessage = "Native surfaces require a discovered surface.bundleId; web surfaces require surface.origin as an exact http(s) origin. A title alone does not identify an application."
+const privateDOMMessage = "DOM observation is unavailable for this document while credential exposure is protected. Use native Chrome window capture for the visible interface; use private credential tools for credential entry."
+
+func observationFailure(err error) (*schema.CallToolResult, *jsonrpc.Error) {
+	if errors.Is(err, vault.ErrDeliveryProtected) {
+		err = &model.MechanizeError{Code: "privateDOMUnavailable", Message: privateDOMMessage, Stage: "admission", DispatchState: "notDispatched", EffectState: "none"}
+	}
+	return failure(err)
+}
 
 func observeSurfaceIdentityValid(surface model.Surface) bool {
 	switch surface.Kind {
@@ -521,7 +530,7 @@ func registerObserve(base *protocol.DefaultHandler, d Dependencies) error {
 			observed, err = d.Observe(ctx, p, input.Surface)
 		}
 		if err != nil {
-			return failure(err)
+			return observationFailure(err)
 		}
 		if input.WindowScope != nil {
 			if err := native.ValidateNativeWindowObservation(observed, input.Surface, input.WindowScope.Title, input.WindowScope.Role); err != nil {

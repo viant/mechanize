@@ -127,6 +127,14 @@ func (h *Host) AuthorizeOperation(ctx context.Context, p auth.Principal, surface
 		}
 	}
 
+	// Exact selected public reads can use their existing read-only renderer
+	// proof while unrelated old executors remain unqualified or uncertain.
+	if surface.Kind == "web" && !mutation && requested == consent.Observe && h.chrome != nil && h.chrome.NeedsVerifiedPublicRead(ctx, p, surface) {
+		if lease, handled, err := h.authorizeCredentialPublicRead(ctx, p, surface); handled {
+			return lease, err
+		}
+	}
+
 	// The permit covers the entire consent lease, including recording lifetimes
 	// and retained capture/control permits. Entry cannot begin until they release.
 	var releaseExposure func()
