@@ -83,3 +83,10 @@ test('inventory diagnostics project only the closed optional subreason for inven
  state.inventoryReason='PRIVATE_CANARY';assert.equal(Object.hasOwn((await f.send({type:'connectionDiagnosticsLocal'},sender)).diagnostics,'inventoryReason'),false);
  state.inventoryReason='tabURLUnavailable';state.reason='none';assert.equal(Object.hasOwn((await f.send({type:'connectionDiagnosticsLocal'},sender)).diagnostics,'inventoryReason'),false);assert.deepEqual(f.calls,{tabs:0,writes:0});
 });
+test('own Options diagnostics expose bounded missing source hashes only in the original receipt-failure phase',async()=>{
+ const f=fixture(),state={phase:'inspect',reason:'unknownReceipts',privatePending:false,lifecyclePending:false,missingReceiptSources:{version:1,count:1,hashes:['a'.repeat(64)],truncated:false}};f.api.installLocal(()=>f.state,()=>state);
+ const sender={id:'a'.repeat(32),url:`chrome-extension://${'a'.repeat(32)}/options.html`,origin:`chrome-extension://${'a'.repeat(32)}`,frameId:0,tab:{id:2}};
+ assert.deepEqual(JSON.parse(JSON.stringify((await f.send({type:'connectionDiagnosticsLocal'},sender)).diagnostics.missingReceiptSources)),state.missingReceiptSources);
+ for(const bad of [{...state.missingReceiptSources,documentId:'PRIVATE_CANARY'},{...state.missingReceiptSources,hashes:['PRIVATE_CANARY']},{...state.missingReceiptSources,truncated:true},{...state.missingReceiptSources,count:201},{...state.missingReceiptSources,hashes:['a'.repeat(64),'a'.repeat(64)],count:2}]){state.missingReceiptSources=bad;const reply=await f.send({type:'connectionDiagnosticsLocal'},sender);assert.equal(reply.error,'connectionDiagnosticsUnavailable');assert.ok(!JSON.stringify(reply).includes('PRIVATE_CANARY'));}
+ state.missingReceiptSources={version:1,count:1,hashes:['a'.repeat(64)],truncated:false};state.phase='inventory';assert.equal((await f.send({type:'connectionDiagnosticsLocal'},sender)).error,'connectionDiagnosticsUnavailable');assert.equal(await f.send({type:'connectionDiagnosticsLocal'},{...sender,url:'https://public.test'}),undefined);assert.deepEqual(f.calls,{tabs:0,writes:0});
+});

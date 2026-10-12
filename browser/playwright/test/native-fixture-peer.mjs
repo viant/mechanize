@@ -79,7 +79,7 @@ async function stopTimer(){clearInterval(timerPublisher);timerPublisher=undefine
 const api={
   tabs:{get:async id=>({id,windowId:9})},
   windows:{get:async id=>{const {bounds}=await cdp.send("Browser.getWindowForTarget");return {id,type:"normal",state:bounds.windowState||"normal",left:bounds.left,top:bounds.top,width:bounds.width,height:bounds.height};}},
-  storage:{session:{get:async keys=>typeof keys==='string'?{[keys]:saved[keys]}:structuredClone(saved),set:async value=>Object.assign(saved,structuredClone(value))}},
+  storage:{local:{setAccessLevel:async()=>{},get:async key=>({[key]:saved[key]}),set:async value=>Object.assign(saved,structuredClone(value))},session:{get:async keys=>typeof keys==='string'?{[keys]:saved[keys]}:structuredClone(saved),set:async value=>Object.assign(saved,structuredClone(value))}},
   webNavigation:{getAllFrames:async()=>[{frameId:0,documentId:identity.documentId,url:page.url()}]},
   debugger:{onEvent:{addListener:f=>events.add(f)},onDetach:{addListener:f=>detaches.add(f)},
     async attach(){attachCount++;cdp=await context.newCDPSession(page);for(const method of pageEvents)cdp.on(method,params=>{for(const listener of events)listener({tabId:1},method,params)});},

@@ -148,7 +148,7 @@ const setupState = () => {
   return {activeCommands: setupActiveCommands, unknownAttempts: unknownAttempts.size,
     mutationBusy, lifecycleInhibited: Boolean(lifecycleGuardId), nativeConnected: Boolean(port), executorQualified: Boolean(grant)};
 };
-let reconnectDiagnosticPhase = "idle", reconnectDiagnosticReason = "none", reconnectInventoryReason="none", reconnectJournalDiagnostic=null,reconnectRecoveryDiagnostic=null;
+let reconnectDiagnosticPhase = "idle", reconnectDiagnosticReason = "none", reconnectInventoryReason="none", reconnectJournalDiagnostic=null,reconnectRecoveryDiagnostic=null,reconnectMissingReceiptSources=null;
 // Safe authenticated status projection: exactly the vocabulary exposed by the
 // extension's local setup metadata, with no storage, identity, or error text.
 const reconnectPhases = new Set(["idle", "scope", "barriers", "journal", "inventory", "inspect", "prepare", "adopt", "commit"]);
@@ -158,6 +158,7 @@ const reconnectAttention = value => value?.type === 'attention' && value.error?.
   {...value,...(reconnectRecoveryDiagnostic?{reconnectRecovery:{...reconnectRecoveryDiagnostic}}:{}),reconnectPhase:reconnectDiagnosticPhase,reconnectReason:reconnectDiagnosticReason,...(reconnectDiagnosticReason==='inventoryChanged'&&MechanizeSetupMetadata.INVENTORY_REASONS.includes(reconnectInventoryReason)?{reconnectInventoryReason}:{}),...(reconnectDiagnosticReason==='journalChanged'&&reconnectJournalDiagnostic?{reconnectJournal:{...reconnectJournalDiagnostic}}:{})} : value;
 MechanizeSetupMetadata.installLocal(setupState, () => ({phase: reconnectDiagnosticPhase, reason: reconnectDiagnosticReason,inventoryReason:reconnectInventoryReason,
   privatePending: Boolean(privatePending || privateAdmission || privateFlow || privatePrivacy || privateAttempts.size || privateRedactions.length || protectedOrigins.size),
+  missingReceiptSources: reconnectMissingReceiptSources,
   lifecyclePending: Boolean(lifecycleGuardId)}));
 const controllers = MechanizeController.install(chrome, {
   binding: () => port && setupFence && !lifecycleGuardId && port !== startupFailurePort ? {...setupFence} : null,
@@ -1303,7 +1304,12 @@ async function reconnectRendererReceipts(identity,fence,deadline){
  }while(offset<first.total);
  return {revision:first.revision,rows};
 }
-function reconnectMatchReceipts(rows,census,renderer,session){
+async function reconnectReceiptSnapshot(){
+ const session=await chrome.storage.session.get(null),durable=await playwrightWorker.journalSnapshot();
+ for(const key of Object.keys(session))if(key.startsWith('playwrightAttempt:'))delete session[key];
+ return {...session,...durable};
+}
+async function reconnectMatchReceipts(rows,census,renderer,session){
  const key=i=>`${i.tabId}:${i.frameId}:${i.documentId}`,live=new Set(census.filter(x=>x.documentId).map(x=>x.documentId)),byAttempt=new Map(rows.map(r=>[r.attemptId,r])),receipts=new Map();
  const add=(identity,r,fence)=>{const b=byAttempt.get(r?.attemptId);
   if(!b||key(b.identity)!==key(identity)||fence&&!sameReconnectFence(b.fence,fence)||r.fingerprintVersion!==2||r.fingerprintSHA256!==b.fingerprintSHA256||!['dispatched','notDispatched'].includes(r.dispatchState)||r.dispatchState!==b.dispatchState||r.effectState==='unknown'||r.errorDispatchState&&r.errorDispatchState!==r.dispatchState||receipts.has(r.attemptId))throw reconnectRefuse('unknownReceipts');
@@ -1314,13 +1320,17 @@ function reconnectMatchReceipts(rows,census,renderer,session){
   if(record?.phase!=='done'||!record.receipt||k!=='playwrightAttempt:'+record.attemptId)throw reconnectRefuse('unknownReceipts');
   add(record.identity,record.receipt,reconnectFence(record));
  }
- const missing=new Set();for(const row of rows)if(live.has(row.identity.documentId)&&!receipts.has(row.attemptId))missing.add(key(row.identity));
- if(missing.size){reconnectRecoveryDiagnostic.missingLiveReceipts=missing.size;throw reconnectRefuse('unknownReceipts');}
+ const missing=new Map();for(const row of rows)if(live.has(row.identity.documentId)&&!receipts.has(row.attemptId))missing.set(key(row.identity),row.identity);
+ if(missing.size){
+  const hashes=await Promise.all([...missing.values()].map(async i=>{const bytes=new TextEncoder().encode(JSON.stringify(['mechanize.reconnect.missing-document.v1',i.profileChannel,i.browserInstance,i.tabId,i.frameId,i.documentId]));const digest=await crypto.subtle.digest('SHA-256',bytes);return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');}));
+  reconnectMissingReceiptSources={version:1,count:missing.size,hashes:hashes.sort().slice(0,16),truncated:missing.size>16};
+  reconnectRecoveryDiagnostic.missingLiveReceipts=missing.size;throw reconnectRefuse('unknownReceipts');
+ }
  // Absent original documents cannot execute. Their original ledger outcomes
  // and journal receipts remain untouched; absence never proves business success.
 }
 async function prepareNativeReconnect(previous,candidate,enrollment,command,ownPort,qualification) {
-  reconnectDiagnosticPhase = "scope"; reconnectDiagnosticReason = "none";reconnectInventoryReason="none";reconnectJournalDiagnostic=null;reconnectRecoveryDiagnostic=null;
+  reconnectDiagnosticPhase = "scope"; reconnectDiagnosticReason = "none";reconnectInventoryReason="none";reconnectJournalDiagnostic=null;reconnectRecoveryDiagnostic=null;reconnectMissingReceiptSources=null;
   if(!ownPort || reconnectPorts.has(ownPort) || qualifiedNativePorts.has(ownPort) || command.type!=="processQualified" || command.fixtureOnly!==false ||
     previous.leaseRequired!==true || previous.mutationFingerprintVersion!==2 || candidate.mutationFingerprintVersion!==2 ||
     previous.scopeHash!==candidate.scopeHash || previous.trustScope!==candidate.trustScope || previous.scopeQualified!==true ||
@@ -1385,7 +1395,7 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
       recoveryBinding=await reconnectBindingSnapshot(journal,command,ownPort,qualification);
       reconnectRows(recoveryBinding.bindings,enrollment,previous.scopeHash);
       recoveryCensus=await reconnectCurrentCensus(enrollment,qualification);
-      recoverySession=await reconnectStorage(()=>chrome.storage.session.get(null),qualification);
+      recoverySession=await reconnectStorage(reconnectReceiptSnapshot,qualification);
       const unknown=new Set(),privateSources=new Set(),unavailable=new Set();
       const discardedTabs=new Set(recoveryCensus.filter(i=>i.discarded&&i.identityUnknown).map(i=>i.tabId));
       for(const row of recoveryBinding.bindings){
@@ -1412,7 +1422,7 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
     if(recovering) {
       if(recoveryBinding){
         if(reconnectCanonical(await reconnectCurrentCensus(enrollment,qualification))!==reconnectCanonical(recoveryCensus))throw reconnectInventoryRefuse("inventoryDrift");
-        if(reconnectCanonical(await reconnectStorage(()=>chrome.storage.session.get(null),qualification))!==reconnectCanonical(recoverySession))throw reconnectRefuse("unknownReceipts");
+        if(reconnectCanonical(await reconnectStorage(reconnectReceiptSnapshot,qualification))!==reconnectCanonical(recoverySession))throw reconnectRefuse("unknownReceipts");
       }else if(await emptyReconnectInventory(undefined,qualification)!==recoveryInventory)throw reconnectInventoryRefuse("inventoryDrift");
       if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get("lastGrant"),qualification)).lastGrant)!==reconnectCanonical(afterCommit?candidate:previous))throw reconnectRefuse("journalChanged");
     }
@@ -1478,7 +1488,7 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
       recoveryRenderers.push({identity,fence:selected,export:await reconnectRendererReceipts(identity,selected,deadline)});
     }else await exchange(identity,"inspect");
   }
-  if(recoveryBinding)reconnectMatchReceipts(recoveryBinding.bindings,recoveryCensus,recoveryRenderers,recoverySession);
+  if(recoveryBinding)await reconnectMatchReceipts(recoveryBinding.bindings,recoveryCensus,recoveryRenderers,recoverySession);
   reconnectDiagnosticPhase = "barriers";
   await barriers();
   await recoveryCheck();
@@ -1680,6 +1690,7 @@ async function receiveCommand(command, qualification) {
     send(reconnectAttention(value));
   };
   if (command?.type === "enrolled" || command?.type === "processQualified") {
+    reconnectMissingReceiptSources=null;
     playwrightWorker.invalidate();
     MechanizeCDP.invalidate(chrome);
     grant = null;
@@ -1947,6 +1958,7 @@ async function connectionSettings(){
 }
 function closeNativeConnection(expected=port){
  if(!expected||port!==expected)return;
+ reconnectMissingReceiptSources=null;
  verifiedPendingArchives.clear();
  if(queuedQualification?.port===expected)queuedQualification=null;
  playwrightWorker.invalidate();MechanizeCDP.invalidate(chrome);controllers.reset();

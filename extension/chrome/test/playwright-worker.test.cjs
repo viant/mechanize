@@ -2,17 +2,17 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const vm=require('node:vm');const fs=require('node:fs');const path=require('node:path');
 const identity={profileChannel:'profile',browserInstance:'browser',tabId:7,frameId:0,documentId:'document',documentGeneration:1};
-async function fixture(saved={}){
+async function fixture(saved={},local={}){
  const sent=[],inputs=[],unknown=new Set();const state={current:true,busy:false,port:{postMessage:v=>sent.push(v)}};
  const context=vm.createContext({TextEncoder,Date,URL,setTimeout,clearTimeout,crypto:require('node:crypto').webcrypto});
  for(const name of ['protocol','fingerprint','playwright-worker'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',name+'.js'),'utf8'),context);
  context.MechanizePlaywrightRelay={create:(_,authorize)=>({open:async binding=>{if(!await authorize(binding))throw Error();const validate=async()=>{state.validations=(state.validations||0)+1;if(state.denyValidation||!await authorize(binding))throw Object.assign(Error(),{code:'playwrightAuthorityChanged',dispatchState:'notDispatched'});};return{onEvent:()=>()=>{},close(){},validate,send:async(method,params)=>{state.beforeSend?.();await validate();inputs.push({method,params,phase:saved['playwrightAttempt:attempt']?.phase});if(state.inputLost)throw Error('PASSWORD-CANARY');return{};}};}})};
- const api={tabs:{get:async()=>state.tab||{id:7,windowId:9,title:'DO-NOT-EXPORT',url:'https://fixture.test/private'}},windows:{get:async()=>{state.windowLookedUp=true;if(state.dropAfterWindow)state.current=false;return state.window||{id:9,type:'normal',state:'normal',left:10,top:30,width:1000,height:700,title:'DO-NOT-EXPORT'};}},storage:{session:{get:async()=>({...saved}),set:async v=>{if(state.failStore)throw Error();Object.assign(saved,v);}}}};
+ const api={tabs:{get:async()=>state.tab||{id:7,windowId:9,title:'DO-NOT-EXPORT',url:'https://fixture.test/private'}},windows:{get:async()=>{state.windowLookedUp=true;if(state.dropAfterWindow)state.current=false;return state.window||{id:9,type:'normal',state:'normal',left:10,top:30,width:1000,height:700,title:'DO-NOT-EXPORT'};}},storage:{local:{setAccessLevel:async level=>{assert.deepEqual(JSON.parse(JSON.stringify(level)),{accessLevel:'TRUSTED_CONTEXTS'});if(state.failAccess)throw Error();state.accessCalls=(state.accessCalls||0)+1;if(state.blockAccess)await state.blockAccess;state.trusted=true;},get:async key=>{assert.equal(state.trusted,true);return {[key]:structuredClone(local[key])};},set:async value=>{assert.equal(state.trusted,true);if(state.failLocal)throw Error();Object.assign(local,structuredClone(value));if(state.lostLocalAck){state.lostLocalAck=false;throw Error();}}},session:{get:async()=>structuredClone(saved),set:async v=>{if(state.failStore)throw Error();Object.assign(saved,structuredClone(v));}}}};
  const worker=context.MechanizePlaywrightWorker.create(api,{port:()=>state.port,current:()=>state.current,acquire(){if(state.busy)throw Error();state.busy=true;},release(){state.busy=false;},unknown:(id,v)=>v?unknown.add(id):unknown.delete(id),redact:v=>v.replaceAll('PASSWORD-CANARY','[REDACTED]')});
  const command={requestId:'command',action:'element.press',identity,brokerEpoch:'broker',channelEpoch:'channel',scopeHash:'a'.repeat(64),deadlineUnixMs:Date.now()+10000,locator:{strategy:'id',value:'save',exact:true},attemptId:'attempt',controlLease:{id:'lease',generation:1},fingerprintVersion:2};
  command.fingerprintSHA256=(await context.MechanizeFingerprint.mutationV2(command)).sha256;
  let sequence=0;const send=async(type,extra={})=>{await worker.receive({type:'playwright.'+type,requestId:'request'+ ++sequence,relayId:'relay',deadlineUnixMs:command.deadlineUnixMs,...extra},state.port);return sent.at(-1);};
- return{worker,state,saved,inputs,unknown,command,sent,send,open:()=>send('open',{command,origin:'https://fixture.test'})};
+ return{worker,state,saved,local,inputs,unknown,command,sent,send,open:()=>send('open',{command,origin:'https://fixture.test'})};
 }
 test('native worker validates sealed fingerprint and closed envelope before debugger work',async()=>{
  for(const mode of ['fingerprint','extra','identity']){const f=await fixture();if(mode==='fingerprint')f.command.fingerprintSHA256='0'.repeat(64);if(mode==='extra')f.command.extra=true;if(mode==='identity')f.command.identity={...identity,frameId:2};const result=await f.open();assert.ok(result.errorCode);assert.equal(f.inputs.length,0);assert.equal(f.state.busy,false);}
@@ -98,4 +98,56 @@ test('ambiguous unavailable minimized or mismatched windows never produce a badg
 });
 test('badge metadata does not survive authority loss during window lookup',async()=>{
  const f=await fixture();f.state.dropAfterWindow=true;const result=await f.send('open',{command:f.command,origin:'https://fixture.test',controlBadge:true});assert.equal(result.errorCode,'playwrightAuthorityChanged');assert.equal(result.result?.opened,undefined);assert.equal(result.result?.controlBadgeWindow,undefined);assert.equal(result.result?.receipt?.dispatchState,'notDispatched');assert.equal(f.inputs.length,0);
+});
+
+test('durable terminal receipts survive extension reload with session cleared and never repeat input',async()=>{
+ for(const dispatch of ['dispatched','notDispatched','unknown']){
+  const f=await fixture();await f.open();
+  if(dispatch!=='notDispatched')await f.send('send',{method:'Input.insertText',params:{text:'PUBLIC-PAYLOAD-CANARY'}});
+  if(dispatch==='unknown')await f.send('close');else{await f.send('receipt',{dispatchState:dispatch,effectState:dispatch==='dispatched'?'unverified':'none'});await f.send('close');}
+  const before=JSON.stringify(f.local),restored=await fixture({},structuredClone(f.local));await restored.worker.recover();
+  assert.equal((await restored.worker.query(restored.command)).dispatchState,dispatch);
+  assert.equal(restored.unknown.has('attempt'),dispatch==='unknown');assert.ok((await restored.open()).errorCode);assert.equal(restored.inputs.length,0);assert.equal(JSON.stringify(restored.local),before);
+  assert.ok(!before.includes('PUBLIC-PAYLOAD-CANARY'));assert.ok(!before.includes('save'));assert.ok(!before.includes('https://'));
+ }
+});
+test('durable interrupted readiness/input keeps original uncertainty across update without inventing a missing receipt',async()=>{
+ for(const phase of ['ready','input']){
+  const f=await fixture();await f.open();if(phase==='input')await f.send('send',{method:'Input.insertText',params:{text:'PUBLIC-CANARY'}});
+  const restored=await fixture({},structuredClone(f.local));await restored.worker.recover();
+  assert.equal((await restored.worker.query(restored.command)).dispatchState,phase==='ready'?'notDispatched':'unknown');assert.ok((await restored.open()).errorCode);assert.equal(restored.inputs.length,0);
+  await f.send('close');
+ }
+ const missing=await fixture();await missing.worker.recover();assert.equal(await missing.worker.query(missing.command),null);assert.deepEqual(missing.local,{});
+});
+test('journal migration copies exact legacy metadata and rejects conflicting terminal receipts or untrusted payloads',async()=>{
+ const f=await fixture();await f.open();await f.send('close');const legacy=structuredClone(f.saved),local=structuredClone(f.local);
+ const migrated=await fixture(legacy,{});await migrated.worker.recover();assert.deepEqual(migrated.local,local);
+ for(const mode of ['conflict','payload','receiptPayload','fingerprint','unsupportedAccess']){
+  const old=structuredClone(legacy),stored=structuredClone(local),record=stored.mechanizePlaywrightJournalV1.records.attempt;
+  if(mode==='conflict')old['playwrightAttempt:attempt'].receipt.error.code='playwrightUnavailable';
+  if(mode==='payload')record.value='SECRET-CANARY';if(mode==='receiptPayload')record.receipt.content='SECRET-CANARY';if(mode==='fingerprint')record.receipt.fingerprintSHA256='b'.repeat(64);
+  const bad=await fixture(old,stored);if(mode==='unsupportedAccess')bad.state.failAccess=true;
+  const before=JSON.stringify(bad.local);await assert.rejects(()=>bad.worker.recover());assert.ok((await bad.open()).errorCode);assert.equal(bad.inputs.length,0);assert.equal(JSON.stringify(bad.local),before);
+ }
+});
+test('journal capacity refuses new admission without evicting originals and local failure forbids input',async()=>{
+ const original=await fixture();await original.open();const record=original.local.mechanizePlaywrightJournalV1.records.attempt;await original.send('close');
+ const records={};for(let n=0;n<512;n++){const next=structuredClone(record);next.attemptId='retained-'+n;records[next.attemptId]=next;}
+ const f=await fixture({},{mechanizePlaywrightJournalV1:{version:1,records}}),before=JSON.stringify(f.local);
+ assert.equal((await f.open()).errorCode,'playwrightReceiptCapacity');assert.equal(f.inputs.length,0);assert.equal(JSON.stringify(f.local),before);
+ const failed=await fixture();failed.state.failLocal=true;assert.ok((await failed.open()).errorCode);assert.equal(failed.inputs.length,0);assert.deepEqual(failed.local,{});
+ const oversized=structuredClone(records);for(const r of Object.values(oversized)){for(const k of ['profileChannel','browserInstance','documentId'])r.identity[k]='x'.repeat(128);r.requestId='r'.repeat(128);r.controlLease.id='l'.repeat(128);r.brokerEpoch='b'.repeat(128);r.channelEpoch='c'.repeat(128);}
+ const large=await fixture({},{mechanizePlaywrightJournalV1:{version:1,records:oversized}});await assert.rejects(()=>large.worker.recover());assert.equal(large.inputs.length,0);
+});
+test('lost terminal local acknowledgement is immutable and queryable without overwriting or replay',async()=>{
+ const f=await fixture();await f.open();await f.send('send',{method:'Input.insertText',params:{text:'PUBLIC-CANARY'}});f.state.lostLocalAck=true;
+ const result=await f.send('receipt',{dispatchState:'dispatched',effectState:'unverified'});assert.equal(result.result.persisted,true);await f.send('close');
+ const restored=await fixture({},structuredClone(f.local));await restored.worker.recover();assert.equal((await restored.worker.query(restored.command)).dispatchState,'dispatched');assert.ok((await restored.open()).errorCode);assert.equal(restored.inputs.length,0);
+});
+test('journal initialization is shared and no storage or input proceeds before trusted-context restriction',async()=>{
+ const f=await fixture();let release;f.state.blockAccess=new Promise(resolve=>release=resolve);
+ const recovering=f.worker.recover(),query=f.worker.query(f.command),opening=f.open();
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(f.inputs.length,0);assert.deepEqual(f.local,{});assert.equal(f.state.trusted,undefined);release();
+ await recovering;await query;assert.equal((await opening).result.opened,true);assert.equal(f.state.accessCalls,1);await f.send('close');
 });

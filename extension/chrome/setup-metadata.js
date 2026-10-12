@@ -56,12 +56,15 @@ globalThis.MechanizeSetupMetadata = (() => {
       nativeConnected: current.nativeConnected === true, executorQualified: current.executorQualified === true,
       loadedDirectoryAvailable: false};
   }
+  const validMissingReceiptSources=value=>Boolean(value&&Object.keys(value).sort().join()==='count,hashes,truncated,version'&&value.version===1&&Number.isInteger(value.count)&&value.count>0&&value.count<=200&&Array.isArray(value.hashes)&&value.hashes.length===Math.min(value.count,16)&&value.hashes.every(h=>typeof h==='string'&&/^[a-f0-9]{64}$/.test(h))&&new Set(value.hashes).size===value.hashes.length&&value.hashes.every((h,i)=>i===0||value.hashes[i-1]<h)&&value.truncated===(value.count>16));
   async function connectionDiagnostics(state) {
     const current = state();
     const phases = ["idle", "scope", "barriers", "journal", "inventory", "inspect", "prepare", "adopt", "commit"];
     const reasons = ["none", "portChanged", "deadline", "busy", "unknownReceipts", "privateProtection", "lifecycle", "scopeChanged", "journalChanged", "inventoryChanged", "storageFailure", "rendererUnavailable", "executorRefused", "injectionUnavailable", "restrictedBrowserPage", "packagedExecutorUnavailable", "documentChanged", "websitePermissionMissing", "extensionContextInvalidated", "restrictedFrame", "injectionArgumentsRejected", "executorEvaluationFailed"];
     if (!current || !phases.includes(current.phase) || !reasons.includes(current.reason) ||
         ![current.privatePending, current.lifecyclePending].every(v => typeof v === "boolean")) fail("stateUnavailable");
+    let missingReceiptSources;
+    if(current.missingReceiptSources!==null&&current.missingReceiptSources!==undefined){if(current.phase!=='inspect'||current.reason!=='unknownReceipts'||!validMissingReceiptSources(current.missingReceiptSources))fail('stateUnavailable');missingReceiptSources={...current.missingReceiptSources,hashes:[...current.missingReceiptSources.hashes]};}
     const local = await chrome.storage.local.get(["mechanizeProtectedOrigins", "mechanizeRetirementV1", "mechanizeReconnect", "lastGrant"]);
     const session = await chrome.storage.session.get(["mechanizeProtectedOrigins", "mechanizeLifecycleInhibited"]);
     // Only presence and a closed phase vocabulary leave this process. No origin,
@@ -70,7 +73,7 @@ globalThis.MechanizeSetupMetadata = (() => {
     const journal = local.mechanizeReconnect;
     const sameFence = (a,b) => a && b && ["brokerEpoch", "channelEpoch", "scopeHash"].every(key => typeof a[key] === "string" && a[key] !== "" && a[key] === b[key]);
     const old = sameFence(journal?.oldFence, local.lastGrant), next = sameFence(journal?.newFence, local.lastGrant);
-    return {version: 3, phase: current.phase, reason: current.reason,...(current.reason==='inventoryChanged'&&INVENTORY_REASONS.includes(current.inventoryReason)?{inventoryReason:current.inventoryReason}:{}),
+    return {version: 3, phase: current.phase, reason: current.reason,...(missingReceiptSources?{missingReceiptSources}:{}),...(current.reason==='inventoryChanged'&&INVENTORY_REASONS.includes(current.inventoryReason)?{inventoryReason:current.inventoryReason}:{}),
       credentialProtection: current.privatePending || protectedState(local.mechanizeProtectedOrigins) || protectedState(session.mechanizeProtectedOrigins),
       lifecyclePending: current.lifecyclePending || session.mechanizeLifecycleInhibited !== undefined && session.mechanizeLifecycleInhibited !== false,
       retirementPending: local.mechanizeRetirementV1 !== undefined,

@@ -586,3 +586,15 @@ and the broker independently proves no pending private admission/input, unknown
 attempt or retained control. The typed cleanup retires preparation protection only.
 Any child attempt or retained authority excludes this path and requires the
 existing exact-source recovery proof.
+
+Playwright receipt durability: version 0.1.65 keeps the closed attempt/fence,
+identity, lease, fingerprint, phase and terminal disposition metadata in
+`mechanizePlaywrightJournalV1` in extension-local storage, restricted to trusted
+extension contexts before access. Tool arguments, page content and result bodies
+are not stored. Session storage is only a compatibility mirror. Updates and
+reloads preserve the local journal; missing legacy receipts are not reconstructed.
+
+The journal has a finite limit of 512 attempts and 512 KiB (4 KiB per record).
+Capacity exhaustion refuses new admission without evicting replay evidence.
+Retiring that history requires a future independently verified backend archival
+flow; reloading or manually clearing storage is not a cleanup protocol.

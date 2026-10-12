@@ -55,14 +55,17 @@ document.getElementById("read-connection-diagnostics")?.addEventListener("click"
     const phases = ["idle", "scope", "barriers", "journal", "inventory", "inspect", "prepare", "adopt", "commit"];
     const reasons = ["none", "portChanged", "deadline", "busy", "unknownReceipts", "privateProtection", "lifecycle", "scopeChanged", "journalChanged", "inventoryChanged", "storageFailure", "rendererUnavailable", "executorRefused", "injectionUnavailable", "restrictedBrowserPage", "packagedExecutorUnavailable", "documentChanged", "websitePermissionMissing", "extensionContextInvalidated", "restrictedFrame", "injectionArgumentsRejected", "executorEvaluationFailed"];
     const inventoryReasons=["none","tabQueryUnavailable","tabListInvalid","tabLimitExceeded","tabMetadataInvalid","tabIDInvalid","tabIDDuplicate","tabURLUnavailable","tabURLInvalid","pendingNavigation","incognitoTab","discardedTab","nonSetupTab","frameQueryUnavailable","frameListUnavailable","frameLimitExceeded","frameMetadataInvalid","frameIDInvalid","frameIDDuplicate","frameParentInvalid","frameDocumentUnavailable","frameError","frameLifecycleInactive","frameTypeDenied","frameRootURLDenied","frameChildURLDenied","frameRootMissing","frameParentMissing","frameCycle","inventoryDrift"];
-    if (!d || Object.keys(d).filter(key=>key!=='inventoryReason').sort().join() !== "credentialProtection,grantRelation,journalVersion,lifecyclePending,phase,reason,reconnectJournal,retirementPending,version" ||
+    const validMissingReceiptSources=value=>Boolean(value&&Object.keys(value).sort().join()==='count,hashes,truncated,version'&&value.version===1&&Number.isInteger(value.count)&&value.count>0&&value.count<=200&&Array.isArray(value.hashes)&&value.hashes.length===Math.min(value.count,16)&&value.hashes.every(h=>typeof h==='string'&&/^[a-f0-9]{64}$/.test(h))&&new Set(value.hashes).size===value.hashes.length&&value.hashes.every((h,i)=>i===0||value.hashes[i-1]<h)&&value.truncated===(value.count>16));
+    if (!d || Object.keys(d).filter(key=>!['inventoryReason','missingReceiptSources'].includes(key)).sort().join() !== "credentialProtection,grantRelation,journalVersion,lifecyclePending,phase,reason,reconnectJournal,retirementPending,version" ||
         Object.hasOwn(d,'inventoryReason')&&(d.reason!=='inventoryChanged'||!inventoryReasons.includes(d.inventoryReason)) ||
+        Object.hasOwn(d,'missingReceiptSources')&&(d.phase!=='inspect'||d.reason!=='unknownReceipts'||!validMissingReceiptSources(d.missingReceiptSources)) ||
         d.version !== 3 || ![-1,0,1,2,3,4,5,6].includes(d.journalVersion) || !["none", "unavailable", "both", "old", "new", "neither"].includes(d.grantRelation) ||
         !phases.includes(d.phase) || !reasons.includes(d.reason) || !["absent", "pending", "adopted", "unrecognized"].includes(d.reconnectJournal) ||
         ![d.credentialProtection, d.lifecyclePending, d.retirementPending].every(v => typeof v === "boolean")) throw Error();
     const text = `Reconnect phase: ${d.phase}. Reason: ${d.reason}. Credential protection: ${d.credentialProtection}. Lifecycle pending: ${d.lifecyclePending}. Retirement pending: ${d.retirementPending}. Reconnect journal: ${d.reconnectJournal}. Journal version: ${d.journalVersion}. Grant relation: ${d.grantRelation}.${d.inventoryReason?' Inventory reason: '+d.inventoryReason+'.':''}${d.inventoryReason==='tabURLUnavailable'?' Chrome withheld a tab URL. Mechanize cannot confirm that only setup pages remain. No recovery state was changed.':''}`;
-    details.textContent = text;
-    details.setAttribute("aria-label", text);
+    const annotated=text+(d.missingReceiptSources?` Missing receipt source hashes (${d.missingReceiptSources.count}${d.missingReceiptSources.truncated?", truncated":""}): ${d.missingReceiptSources.hashes.join(", ")}.`:"");
+    details.textContent = annotated;
+    details.setAttribute("aria-label", annotated);
     view.textContent = "Connection diagnostics ready.";
     view.setAttribute("aria-label", "Connection diagnostics ready");
   } catch {

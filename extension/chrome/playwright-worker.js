@@ -2,6 +2,7 @@
 globalThis.MechanizePlaywrightWorker = (() => {
   const prefix = 'playwrightAttempt:';
   const PRIVATE_BYTES=512*1024;
+  const JOURNAL_KEY='mechanizePlaywrightJournalV1', JOURNAL_BYTES=512*1024, RECORD_BYTES=4096, JOURNAL_CAPACITY=512;
   const id = value => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value);
   const sameIdentity = (a,b) => a && b && ['profileChannel','browserInstance','tabId','frameId','documentId','documentGeneration'].every(k => a[k] === b[k]);
   const closed = (v,required,optional=[]) => v && typeof v === 'object' && !Array.isArray(v) && required.every(k=>Object.hasOwn(v,k)) && Object.keys(v).every(k=>required.includes(k)||optional.includes(k));
@@ -16,8 +17,61 @@ globalThis.MechanizePlaywrightWorker = (() => {
       catch{return false;}finally{clearTimeout(timer);}
     };
     const relay=MechanizePlaywrightRelay.create(api,current);
-    const write=record=>api.storage.session.set({[prefix+record.attemptId]:record});
-    const receipt=(record,state,code)=>({requestId:record.requestId,attemptId:record.attemptId,identity:record.identity,controlLease:record.controlLease,fingerprintVersion:2,fingerprintSHA256:record.fingerprintSHA256,dispatchState:state,effectState:state==='unknown'?'unknown':state==='dispatched'?'unverified':'none',...(code?{error:MechanizeProtocol.error(code,'Local Playwright receipt requires reconciliation',state)}:{})});
+    const canonical=value=>JSON.stringify(value&&typeof value==='object'?Array.isArray(value)?value.map(v=>JSON.parse(canonical(v))):Object.fromEntries(Object.keys(value).sort().map(k=>[k,JSON.parse(canonical(value[k]))])):value);
+    const copy=value=>JSON.parse(JSON.stringify(value));
+    const codes=new Set(('AttemptCapacity AttemptConflict ChildExited ChildLaunch ExecutionRequired IntentRequired RuntimeQualification AttemptReplay AuthorityChanged AuthorityRequired AuthorityDenied BindingChanged BindingDenied BindingRequired Busy CDPDenied CommandDenied Deadline DocumentChanged EnvelopeDenied FingerprintMismatch FrameTooLarge HostDeadline HostDenied HostDisconnected HostRequired InputReplay InputSequenceDenied InputUncertain Interrupted IPCFrame IPCProtocol IPCWrite LocatorDenied OriginDenied PrivateDOMDenied ReadDenied ReadInputDenied ReadTooLarge ReceiptCapacity ReceiptDenied ReceiptFinal ReceiptPending ReceiptUncertain RedactionDenied RelayDenied RequestReplay TargetChanged TargetDenied TargetUnpinned Unavailable Uncertain JournalInvalid').split(' ').map(v=>'playwright'+v));
+    function validRecord(record){
+      const identity=record?.identity,lease=record?.controlLease,r=record?.receipt;
+      if(!closed(record,['phase','requestId','attemptId','identity','controlLease','brokerEpoch','channelEpoch','scopeHash','fingerprintSHA256'],['receipt'])||!id(record.attemptId)||!id(record.requestId)||!['ready','input','done'].includes(record.phase)||
+        !closed(identity,['profileChannel','browserInstance','tabId','frameId','documentId','documentGeneration'])||!['profileChannel','browserInstance','documentId'].every(k=>id(identity[k]))||!Number.isSafeInteger(identity.tabId)||identity.tabId<1||identity.frameId!==0||!Number.isSafeInteger(identity.documentGeneration)||identity.documentGeneration<1||
+        !closed(lease,['id','generation'])||!id(lease.id)||!Number.isSafeInteger(lease.generation)||lease.generation<1||!['brokerEpoch','channelEpoch'].every(k=>id(record[k]))||!/^([a-f0-9]{64})$/.test(record.scopeHash)||!/^([a-f0-9]{64})$/.test(record.fingerprintSHA256)||(record.phase==='done')!==Boolean(r)||new TextEncoder().encode(JSON.stringify(record)).length>RECORD_BYTES)throw fail('playwrightJournalInvalid');
+      if(r&&(!closed(r,['requestId','attemptId','identity','controlLease','fingerprintVersion','fingerprintSHA256','dispatchState','effectState'],['error','inputSemantics'])||r.requestId!==record.requestId||r.attemptId!==record.attemptId||!sameIdentity(r.identity,identity)||canonical(r.identity)!==canonical(identity)||canonical(r.controlLease)!==canonical(lease)||r.fingerprintVersion!==2||r.fingerprintSHA256!==record.fingerprintSHA256||!['notDispatched','dispatched','unknown'].includes(r.dispatchState)||r.effectState!==({notDispatched:'none',dispatched:'unverified',unknown:'unknown'})[r.dispatchState]||r.inputSemantics!==undefined&&r.inputSemantics!=='Local Playwright over scoped extension CDP'||r.error&&(!codes.has(r.error.code)||canonical(r.error)!==canonical(MechanizeProtocol.error(r.error.code,'Local Playwright receipt requires reconciliation',r.dispatchState)))))throw fail('playwrightJournalInvalid');
+      return record;
+    }
+    const core=record=>{const result={...record};delete result.phase;delete result.receipt;return canonical(result);};
+    const advances=(before,after)=>core(before)===core(after)&&(canonical(before)===canonical(after)||before.phase!=='done'&&['ready','input','done'].indexOf(after.phase)>['ready','input','done'].indexOf(before.phase));
+    function decodeJournal(value){
+      if(value===undefined)return {version:1,records:{}};
+      if(!closed(value,['version','records'])||value.version!==1||!value.records||typeof value.records!=='object'||Array.isArray(value.records)||Object.keys(value.records).length>JOURNAL_CAPACITY||new TextEncoder().encode(JSON.stringify(value)).length>JOURNAL_BYTES)throw fail('playwrightJournalInvalid');
+      for(const [key,record] of Object.entries(value.records))if(validRecord(record).attemptId!==key)throw fail('playwrightJournalInvalid');
+      return copy(value);
+    }
+    let journalReady, journalLane=Promise.resolve();
+    async function persistJournal(value){
+      if(new TextEncoder().encode(JSON.stringify(value)).length>JOURNAL_BYTES)throw fail('playwrightReceiptCapacity');
+      try{await api.storage.local.set({[JOURNAL_KEY]:value});}catch{ /* Exact readback below is the only lost-ack recovery. */ }
+      if(canonical((await api.storage.local.get(JOURNAL_KEY))[JOURNAL_KEY])!==canonical(value))throw fail('playwrightJournalInvalid');
+    }
+    function initializeJournal(){
+      return journalReady ||= (async()=>{
+        if(typeof api.storage.local?.setAccessLevel!=='function')throw fail('playwrightJournalInvalid');
+        await api.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
+        const journal=decodeJournal((await api.storage.local.get(JOURNAL_KEY))[JOURNAL_KEY]),session=await api.storage.session.get(null);let changed=false;
+        for(const [key,value] of Object.entries(session))if(key.startsWith(prefix)){
+          const record=validRecord(value);if(key!==prefix+record.attemptId)throw fail('playwrightJournalInvalid');
+          const retained=journal.records[record.attemptId];
+          if(retained){if(!advances(record,retained))throw fail('playwrightJournalInvalid');}
+          else{if(Object.keys(journal.records).length>=JOURNAL_CAPACITY)throw fail('playwrightReceiptCapacity');journal.records[record.attemptId]=copy(record);changed=true;}
+        }
+        if(changed)await persistJournal(journal);
+      })();
+    }
+    async function journalSnapshot(){
+      await initializeJournal();
+      const journal=decodeJournal((await api.storage.local.get(JOURNAL_KEY))[JOURNAL_KEY]);
+      return Object.fromEntries(Object.values(journal.records).map(record=>[prefix+record.attemptId,record]));
+    }
+    const write=record=>{
+      const task=journalLane.then(async()=>{
+        validRecord(record);await initializeJournal();const journal=decodeJournal((await api.storage.local.get(JOURNAL_KEY))[JOURNAL_KEY]),before=journal.records[record.attemptId];
+        if(before&&!advances(before,record)||!before&&record.phase!=='ready')throw fail('playwrightJournalInvalid');
+        if(!before&&Object.keys(journal.records).length>=JOURNAL_CAPACITY)throw fail('playwrightReceiptCapacity');
+        journal.records[record.attemptId]=copy(record);await persistJournal(journal);
+        // Compatibility mirror only: all authority reads use durable local data.
+        await api.storage.session.set({[prefix+record.attemptId]:copy(record)});
+      });journalLane=task.catch(()=>{});return task;
+    };
+    const receipt=(record,state,code)=>({requestId:record.requestId,attemptId:record.attemptId,identity:record.identity,controlLease:record.controlLease,fingerprintVersion:2,fingerprintSHA256:record.fingerprintSHA256,dispatchState:state,effectState:state==='unknown'?'unknown':state==='dispatched'?'unverified':'none',...(code?{error:MechanizeProtocol.error(codes.has(code)?code:'playwrightUnavailable','Local Playwright receipt requires reconciliation',state)}:{})});
     async function finish(held,closedCode) {
       held.closed=true;clearTimeout(held.timer);held.unsubscribe?.();held.session?.close();
       try {
@@ -31,15 +85,14 @@ globalThis.MechanizePlaywrightWorker = (() => {
       } finally {if(active===held){active=null;hooks.release(held);}}
     }
     async function recover() {
-      const saved=await api.storage.session.get(null);
-      for(const [key,record] of Object.entries(saved))if(key.startsWith(prefix)){
-        if(!closed(record,['phase','requestId','attemptId','identity','controlLease','brokerEpoch','channelEpoch','scopeHash','fingerprintSHA256'],['receipt'])||!id(record.attemptId)||!id(record.requestId)||key!==prefix+record.attemptId||!['ready','input','done'].includes(record.phase)||!closed(record.identity,['profileChannel','browserInstance','tabId','frameId','documentId','documentGeneration'])||!closed(record.controlLease,['id','generation'])||!id(record.controlLease.id)||!Number.isSafeInteger(record.controlLease.generation)||record.controlLease.generation<1||!['brokerEpoch','channelEpoch'].every(k=>id(record[k]))||!/^([a-f0-9]{64})$/.test(record.scopeHash)||!/^([a-f0-9]{64})$/.test(record.fingerprintSHA256)||record.phase==='done'&&!record.receipt||record.receipt&&(!['notDispatched','dispatched','unknown'].includes(record.receipt.dispatchState)||record.receipt.attemptId!==record.attemptId||!sameIdentity(record.receipt.identity,record.identity)||record.receipt.fingerprintSHA256!==record.fingerprintSHA256))throw fail('playwrightJournalInvalid');
+      const saved=await journalSnapshot();
+      for(const [key,record] of Object.entries(saved)){
         if(!record.receipt){record.receipt=receipt(record,record.phase==='input'?'unknown':'notDispatched',record.phase==='input'?'playwrightReceiptUncertain':'playwrightInterrupted');record.phase='done';await write(record);}
         if(record.receipt.dispatchState==='unknown')hooks.unknown(record.attemptId,true);
       }
     }
     async function query(command) {
-      const record=(await api.storage.session.get(prefix+command.attemptId))[prefix+command.attemptId];
+      const record=(await journalSnapshot())[prefix+command.attemptId];
       if(!record)return null;
       if(!sameIdentity(record.identity,command.identity)||['brokerEpoch','channelEpoch','scopeHash'].some(k=>record[k]!==command[k]))throw MechanizeProtocol.error('staleIdentity','Original Playwright receipt identity required');
       return {...(record.receipt||receipt(record,record.phase==='input'?'unknown':'notDispatched','playwrightReceiptPending')),requestId:command.requestId,receiptAvailable:Boolean(record.receipt)};
@@ -47,7 +100,7 @@ globalThis.MechanizePlaywrightWorker = (() => {
     async function exportReceipts(command,readRenderer) {
       const stableIdentity=(a,b)=>a&&b&&['profileChannel','browserInstance','tabId','frameId','documentId'].every(k=>a[k]===b[k]);
       const canonical=v=>JSON.stringify(v&&typeof v==='object'?Array.isArray(v)?v.map(x=>JSON.parse(canonical(x))):Object.fromEntries(Object.keys(v).sort().map(k=>[k,JSON.parse(canonical(v[k]))])):v);
-      const retained=async()=>Object.entries(await api.storage.session.get(null)).filter(([k,r])=>k.startsWith(prefix)&&stableIdentity(r?.identity,command.identity)).sort(([a],[b])=>a.localeCompare(b)).map(([,r])=>r);
+      const retained=async()=>Object.entries(await journalSnapshot()).filter(([k,r])=>k.startsWith(prefix)&&stableIdentity(r?.identity,command.identity)).sort(([a],[b])=>a.localeCompare(b)).map(([,r])=>r);
       const records=await retained();
       if(!records.length)return readRenderer(command);
       const stamp=canonical(records),rows=[];
@@ -93,8 +146,8 @@ globalThis.MechanizePlaywrightWorker = (() => {
           active=held;
           if(!await current(held))throw fail('playwrightAuthorityChanged');
           if(mutation){
-            const saved=await api.storage.session.get(null);
-            if(saved[prefix+command.attemptId]||saved['browserIntent:'+command.attemptId])throw fail('playwrightAttemptReplay');
+            const saved=await journalSnapshot(),browser=await api.storage.session.get('browserIntent:'+command.attemptId);
+            if(saved[prefix+command.attemptId]||browser['browserIntent:'+command.attemptId])throw fail('playwrightAttemptReplay');
             if(Object.keys(saved).filter(k=>k.startsWith(prefix)).length>=512)throw fail('playwrightReceiptCapacity');
             held.record={phase:'ready',requestId:command.requestId,attemptId:command.attemptId,identity:command.identity,controlLease:command.controlLease,brokerEpoch:command.brokerEpoch,channelEpoch:command.channelEpoch,scopeHash:command.scopeHash,fingerprintSHA256:command.fingerprintSHA256};
             await write(held.record);
@@ -169,7 +222,7 @@ globalThis.MechanizePlaywrightWorker = (() => {
           // Only a read-back of the exact original journal proves completion.
           // Cleanup failures must never replace its authoritative dispatch state.
           if(held.record?.receipt){try{
-            const saved=(await api.storage.session.get(prefix+held.command.attemptId))[prefix+held.command.attemptId];
+            const saved=(await journalSnapshot())[prefix+held.command.attemptId];
             if(saved?.phase==='done'&&JSON.stringify(saved)===JSON.stringify(held.record))terminal=saved.receipt;
           }catch{}}
         }
@@ -177,7 +230,7 @@ globalThis.MechanizePlaywrightWorker = (() => {
       }
     }
     function enqueue(fn){const operation=lane.then(fn);lane=operation.catch(()=>{});return operation;}
-    return {recover,query,exportReceipts,receive:(message,originalPort)=>enqueue(()=>handle(message,originalPort)),invalidate(predicate=()=>true){const held=active;if(held&&predicate(held)){held.closed=true;held.session?.close();void enqueue(()=>finish(held));}}};
+    return {recover,query,exportReceipts,journalSnapshot,receive:(message,originalPort)=>enqueue(()=>handle(message,originalPort)),invalidate(predicate=()=>true){const held=active;if(held&&predicate(held)){held.closed=true;held.session?.close();void enqueue(()=>finish(held));}}};
   }
   return {create};
 })();

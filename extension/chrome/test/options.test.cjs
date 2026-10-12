@@ -540,3 +540,9 @@ test('manual connection reply retains qualified status and reports connected att
   try{await f.click();assert.match(f.status(),response.qualified?/executor qualified/:/could not be independently quiesced/);}finally{f.page.window.close();}
  }
 });
+test('Options renders only closed missing-receipt hashes and never raw identity fields',async()=>{
+ let response={diagnostics:{version:3,journalVersion:2,grantRelation:'old',phase:'inspect',reason:'unknownReceipts',credentialProtection:false,lifecyclePending:false,retirementPending:false,reconnectJournal:'pending',missingReceiptSources:{version:1,count:1,hashes:['a'.repeat(64)],truncated:false}}};
+ const f=fixture(()=>response),doc=f.page.window.document;
+ try{doc.getElementById('read-connection-diagnostics').click();await new Promise(r=>setImmediate(r));assert.ok(doc.getElementById('connection-diagnostics-detail').getAttribute('aria-label').includes('a'.repeat(64)));assert.equal(f.saved.length,0);
+ response.diagnostics.missingReceiptSources.hashes=['PRIVATE_CANARY'];doc.getElementById('read-connection-diagnostics').click();await new Promise(r=>setImmediate(r));assert.equal(doc.getElementById('connection-diagnostics-detail').textContent,'');assert.ok(!doc.body.textContent.includes('PRIVATE_CANARY'));}finally{f.page.window.close();}
+});
