@@ -148,7 +148,7 @@ const setupState = () => {
   return {activeCommands: setupActiveCommands, unknownAttempts: unknownAttempts.size,
     mutationBusy, lifecycleInhibited: Boolean(lifecycleGuardId), nativeConnected: Boolean(port), executorQualified: Boolean(grant)};
 };
-let reconnectDiagnosticPhase = "idle", reconnectDiagnosticReason = "none", reconnectInventoryReason="none", reconnectJournalDiagnostic=null,reconnectRecoveryDiagnostic=null,reconnectMissingReceiptSources=null;
+let reconnectDiagnosticPhase = "idle", reconnectDiagnosticReason = "none", reconnectInventoryReason="none", reconnectJournalDiagnostic=null,reconnectRecoveryDiagnostic=null,reconnectMissingReceiptSources=null,reconnectMissingDocuments=[];
 // Safe authenticated status projection: exactly the vocabulary exposed by the
 // extension's local setup metadata, with no storage, identity, or error text.
 const reconnectPhases = new Set(["idle", "scope", "barriers", "journal", "inventory", "inspect", "prepare", "adopt", "commit"]);
@@ -1323,6 +1323,7 @@ async function reconnectMatchReceipts(rows,census,renderer,session){
  const missing=new Map();for(const row of rows)if(live.has(row.identity.documentId)&&!receipts.has(row.attemptId))missing.set(key(row.identity),row.identity);
  if(missing.size){
   const hashes=await Promise.all([...missing.values()].map(async i=>{const bytes=new TextEncoder().encode(JSON.stringify(['mechanize.reconnect.missing-document.v1',i.profileChannel,i.browserInstance,i.tabId,i.frameId,i.documentId]));const digest=await crypto.subtle.digest('SHA-256',bytes);return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');}));
+  reconnectMissingDocuments=[...missing.values()].map(i=>({tabId:i.tabId,frameId:i.frameId,documentId:i.documentId}));
   reconnectMissingReceiptSources={version:1,count:missing.size,hashes:hashes.sort().slice(0,16),truncated:missing.size>16};
   reconnectRecoveryDiagnostic.missingLiveReceipts=missing.size;throw reconnectRefuse('unknownReceipts');
  }
@@ -1330,7 +1331,7 @@ async function reconnectMatchReceipts(rows,census,renderer,session){
  // and journal receipts remain untouched; absence never proves business success.
 }
 async function prepareNativeReconnect(previous,candidate,enrollment,command,ownPort,qualification) {
-  reconnectDiagnosticPhase = "scope"; reconnectDiagnosticReason = "none";reconnectInventoryReason="none";reconnectJournalDiagnostic=null;reconnectRecoveryDiagnostic=null;reconnectMissingReceiptSources=null;
+  reconnectDiagnosticPhase = "scope"; reconnectDiagnosticReason = "none";reconnectInventoryReason="none";reconnectJournalDiagnostic=null;reconnectRecoveryDiagnostic=null;reconnectMissingReceiptSources=null;reconnectMissingDocuments=[];
   if(!ownPort || reconnectPorts.has(ownPort) || qualifiedNativePorts.has(ownPort) || command.type!=="processQualified" || command.fixtureOnly!==false ||
     previous.leaseRequired!==true || previous.mutationFingerprintVersion!==2 || candidate.mutationFingerprintVersion!==2 ||
     previous.scopeHash!==candidate.scopeHash || previous.trustScope!==candidate.trustScope || previous.scopeQualified!==true ||
@@ -1690,7 +1691,7 @@ async function receiveCommand(command, qualification) {
     send(reconnectAttention(value));
   };
   if (command?.type === "enrolled" || command?.type === "processQualified") {
-    reconnectMissingReceiptSources=null;
+    reconnectMissingReceiptSources=null;reconnectMissingDocuments=[];
     playwrightWorker.invalidate();
     MechanizeCDP.invalidate(chrome);
     grant = null;
@@ -1800,6 +1801,9 @@ async function receiveCommand(command, qualification) {
       // empty inventory remains explicitly empty; it proves no available tab.
       if (command.type === "processQualified") replyTo({type: "executorPrepared", executorChallenge: command.executorChallenge, mutationFingerprintVersion});
       replyTo({type: "documents", ...snapshot, capabilities: [...MechanizeProtocol.actions], inputSemantics: chrome.runtime.getManifest().permissions?.includes("debugger") ? "Browser protocol pointer input v1; DOM text and selection" : "DOM activation; isTrusted=false", unsupported: ["browser-protocol credential input", "browser-protocol text input", "file selection", "custom editors", "closed shadow roots", "network response bodies", "capture", "tab open/close", "production signed-parent enrollment"]});
+      // Failure-generation dedup lasts across port loss and failed proofs. Only
+      // committed authenticated qualification starts a new recovery budget.
+      if(command.type==='processQualified')missingReceiptRecoveryEvents.clear();
     } catch(error) {
       if(port===commandPort&&qualificationFlight===qualification)grant = null;
       replyTo({type: "attention", error: error?.code==='storedFenceMismatch'?reconnectFail():MechanizeProtocol.error("inventoryUnavailable", "Enrollment storage or document inventory unavailable")});
@@ -1958,7 +1962,7 @@ async function connectionSettings(){
 }
 function closeNativeConnection(expected=port){
  if(!expected||port!==expected)return;
- reconnectMissingReceiptSources=null;
+ reconnectMissingReceiptSources=null;reconnectMissingDocuments=[];
  verifiedPendingArchives.clear();
  if(queuedQualification?.port===expected)queuedQualification=null;
  playwrightWorker.invalidate();MechanizeCDP.invalidate(chrome);controllers.reset();
@@ -1982,6 +1986,31 @@ function scheduleInventoryRecovery(){
   if(port!==expected||!idleUnqualifiedReconnect()||reconnectDiagnosticPhase!=='inventory'||reconnectDiagnosticReason!=='inventoryChanged')return;
   inventoryRecoveryLast=Date.now();void connect().catch(()=>{});
  },delay);inventoryRecoveryTimer?.unref?.();
+}
+// A missing receipt is never resolved by a navigation event. The event only
+// requests a new complete authenticated census after its exact source changes.
+let missingReceiptRecoveryTimer=null;
+const missingReceiptRecoveryEvents=new Set();
+function missingReceiptRecoveryEligible(){
+ const d=reconnectRecoveryDiagnostic;
+ return idleUnqualifiedReconnect()&&reconnectDiagnosticPhase==='inspect'&&reconnectDiagnosticReason==='unknownReceipts'&&
+  d?.missingLiveReceipts>0&&d.unknownLiveReceipts===0&&d.privateSources===0&&d.unavailableExecutors===0&&reconnectMissingDocuments.length>0;
+}
+function scheduleMissingReceiptRecovery(event,removed=false){
+ if(missingReceiptRecoveryTimer||!missingReceiptRecoveryEligible())return;
+ const tabId=removed?event:event?.tabId;
+ if(!Number.isSafeInteger(tabId)||tabId<1||!removed&&(event?.frameId!==0||!channelShape(event.documentId)))return;
+ const source=reconnectMissingDocuments.find(i=>i.tabId===tabId&&(removed||i.frameId===event.frameId&&i.documentId!==event.documentId));
+ if(!source)return;
+ const eventKey=JSON.stringify([source.tabId,source.frameId,source.documentId,removed?'removed':event.documentId]);
+ if(missingReceiptRecoveryEvents.has(eventKey)||missingReceiptRecoveryEvents.size>=200)return;
+ missingReceiptRecoveryEvents.add(eventKey);
+ const expected=port;
+ missingReceiptRecoveryTimer=setTimeout(()=>{
+  missingReceiptRecoveryTimer=null;
+  if(port!==expected||!missingReceiptRecoveryEligible())return;
+  void connect().catch(()=>{});
+ },100);missingReceiptRecoveryTimer?.unref?.();
 }
 async function connect(){
  const settings=await connectionSettings();
@@ -2188,6 +2217,7 @@ async function openSetupPage() {
 // A material tab lifecycle change can remove an inventory blocker. Request a
 // fresh authenticated handshake only through the existing idle recovery gate.
 chrome.tabs.onRemoved?.addListener(scheduleInventoryRecovery);
-for(const event of [chrome.webNavigation.onCommitted,chrome.webNavigation.onCompleted])event?.addListener(details=>{if(details?.frameId===0)scheduleInventoryRecovery();});
+chrome.tabs.onRemoved?.addListener(tabId=>scheduleMissingReceiptRecovery(tabId,true));
+for(const event of [chrome.webNavigation.onCommitted,chrome.webNavigation.onCompleted])event?.addListener(details=>{if(details?.frameId===0){scheduleInventoryRecovery();scheduleMissingReceiptRecovery(details);}});
 chrome.tabs.onUpdated?.addListener((_id,change)=>{if(change?.status==='complete')scheduleInventoryRecovery();});
 chrome.action?.onClicked?.addListener(() => { void openSetupPage(); });
