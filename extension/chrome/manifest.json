@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Mechanize",
-  "version": "0.1.63",
+  "version": "0.1.64",
   "description": "Explicitly enrolled semantic browser transport for Mechanize.",
   "permissions": [
     "nativeMessaging",
@@ -21,7 +21,7 @@
   },
   "options_page": "options.html",
   "action": {
-    "default_title": "Mechanize browser automation (0.1.63)"
+    "default_title": "Mechanize browser automation (0.1.64)"
   },
   "minimum_chrome_version": "106",
   "incognito": "not_allowed",

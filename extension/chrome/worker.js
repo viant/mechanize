@@ -122,7 +122,8 @@ const playwrightWorker = MechanizePlaywrightWorker.create(chrome, {
     if(!permitted())return false;
     const enrollment=await config();
     if(i.profileChannel!==enrollment.profileChannel||i.browserInstance!==enrollment.browserInstance||!allowedOrigin(held.origin,enrollment))return false;
-    const tab=await chrome.tabs.get(i.tabId),frames=await chrome.webNavigation.getAllFrames({tabId:i.tabId});
+    const tab=await chrome.tabs.get(i.tabId);if(suspendDiscardedTab(tab))return false;
+    const frames=await chrome.webNavigation.getAllFrames({tabId:i.tabId});
     const frame=frames?.find(f=>f.frameId===0&&f.documentId===i.documentId&&!f.errorOccurred&&f.frameType!=='fenced_frame');
     if(frame)noteInactiveFrame(i.tabId,frame,frames);
     if(!permitted()||nonExecutableTreeFrame(frame,frames)||inactiveLeaseDocuments.has(key)||new URL(tab.url).origin!==held.origin||new URL(frame.url).origin!==held.origin)return false;
@@ -196,12 +197,20 @@ function noteInactiveFrame(tabId,frame,frames){
  if(documentControlLeases.has(key))inactiveLeaseDocuments.add(key);
  playwrightWorker.invalidate(held=>held.identity.tabId===tabId&&held.identity.documentId===frame.documentId);
 }
+function suspendDiscardedTab(tab) {
+  if(tab?.discarded!==undefined&&typeof tab.discarded!=='boolean')throw MechanizeProtocol.error('documentDenied','Valid discarded-tab metadata required');
+  if(tab?.discarded!==true)return false;
+  for(const [key,identity] of documents)if(identity.tabId===tab.id&&documentControlLeases.has(key))inactiveLeaseDocuments.add(key);
+  playwrightWorker.invalidate(held=>held.identity.tabId===tab.id);
+  return true;
+}
 const MAX_INVENTORY_DOCUMENTS = 200;
 async function inventory(enrollment, qualification) {
   const read=operation=>qualification?qualificationRead(qualification,operation):operation();
   if (privatePending) return {documents: [], truncated: true};
   const result = [], credentialCandidates=[];
   for (const tab of await read(()=>chrome.tabs.query({}))) {
+    if(suspendDiscardedTab(tab))continue;
     if (!allowedOrigin(tab.url, enrollment)) continue;
     if(isProtectedURL(tab.url,{profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,tabId:tab.id,frameId:0})&&!(privatePrivacy?.active&&privatePrivacy.identity.tabId===tab.id)) {
       // Private routing metadata only. Never read the protected tab's title or DOM.
@@ -257,6 +266,7 @@ function executorTrustMetadata(qualified) {
 async function attach(command, enrollment) {
   const privateAcquire=command.action==='executor.acquire'&&privateAdmission?.port===port&&privateAdmission.deadline>Date.now()&&['profileChannel','browserInstance','tabId','frameId','documentId','documentGeneration'].every(k=>command.identity?.[k]===privateAdmission.identity[k]);
   const tab = await chrome.tabs.get(command.identity.tabId);
+  if(suspendDiscardedTab(tab))throw MechanizeProtocol.error('documentDenied','Discarded document cannot receive executor authority');
   if (isProtectedURL(tab.url,command.identity)&&!privacyDocument(command.identity)&&!privateAcquire) throw MechanizeProtocol.error("secureDocumentRequired", "Protected origin requires private control");
   if (!allowedOrigin(tab.url, enrollment)) throw MechanizeProtocol.error("originDenied", "Top-level tab origin is not enrolled");
   const frames = await chrome.webNavigation.getAllFrames({tabId: tab.id});
@@ -329,7 +339,7 @@ async function receiveCredentialInspect(command) {
     }
     inspectionReason="documentUnavailable";const tab=await chrome.tabs.get(i.tabId),frames=await chrome.webNavigation.getAllFrames({tabId:i.tabId});
     const frame=frames?.find(f=>f.frameId===0 && f.documentId===i.documentId);
-    if(!frame || new URL(tab.url).origin!==command.origin || new URL(frame.url).origin!==command.origin || !allowedOrigin(command.origin,enrollment)) throw Error();
+    if(suspendDiscardedTab(tab)||!frame || new URL(tab.url).origin!==command.origin || new URL(frame.url).origin!==command.origin || !allowedOrigin(command.origin,enrollment)) throw Error();
     if(port!==originalPort || grant!==originalGrant || command.deadlineUnixMs<=Date.now()) throw Error();
     if(!documents.has(key)) {
       inspectionReason="rendererBindingUnavailable";
@@ -1185,12 +1195,33 @@ async function reconnectBindingSnapshot(journal,command,ownPort,qualification){
 }
 // Browser-owned frame metadata, not public DOM inventory, proves exact source
 // absence. Every accessible website frame is retained, including protected ones.
+// A discarded tab is retained as an unavailable, non-executable owner scope.
+// It never supplies document absence for bindings/private records on that tab.
+// Keep any browser-provided document IDs so moved sources remain detectable.
+async function reconnectDiscardedTabCensus(tab,qualification){
+ suspendDiscardedTab(tab);
+ let frames;try{frames=await qualificationRead(qualification,()=>chrome.webNavigation.getAllFrames({tabId:tab.id}));}catch{qualificationCurrent(qualification);frames=null;}
+ if(frames!==null&&frames!==undefined&&!Array.isArray(frames))throw reconnectInventoryRefuse('frameListUnavailable');
+ frames=frames||[];if(frames.length>200)throw reconnectInventoryRefuse('frameLimitExceeded');
+ const result=[{tabId:tab.id,discarded:true,identityUnknown:true,origin:null,executable:false,protected:false}],ids=new Set();
+ for(const frame of frames){
+  if(!frame||!Number.isSafeInteger(frame.frameId)||frame.frameId<0||ids.has(frame.frameId))throw reconnectInventoryRefuse('frameIDInvalid');ids.add(frame.frameId);
+  if(!Number.isSafeInteger(frame.parentFrameId)||frame.frameId===0&&frame.parentFrameId!==-1)throw reconnectInventoryRefuse('frameParentInvalid');
+  if(!channelShape(frame.documentId))throw reconnectInventoryRefuse('frameDocumentUnavailable');
+  result.push({tabId:tab.id,frameId:frame.frameId,parentFrameId:frame.parentFrameId,documentId:frame.documentId,origin:null,executable:false,protected:false,discarded:true});
+ }
+ if(frames.length)reconnectFrameForest(frames);
+ return result;
+}
 async function reconnectCurrentCensus(enrollment,qualification){
  const tabs=await qualificationRead(qualification,()=>chrome.tabs.query({}));
  if(!Array.isArray(tabs)||tabs.length>200)throw reconnectInventoryRefuse('tabLimitExceeded');
  const result=[],seen=new Set();
  for(const tab of tabs){
   if(!tab||!Number.isSafeInteger(tab.id)||tab.id<1||seen.has(tab.id))throw reconnectInventoryRefuse('tabIDInvalid');seen.add(tab.id);
+  if(tab.discarded!==undefined&&typeof tab.discarded!=='boolean')throw reconnectInventoryRefuse('tabMetadataInvalid');
+  if(tab.incognito||tab.pendingUrl)throw reconnectInventoryRefuse(tab.pendingUrl?'pendingNavigation':'incognitoTab');
+  if(tab.discarded===true){result.push(...await reconnectDiscardedTabCensus(tab,qualification));continue;}
   if(typeof tab.url!=='string'){result.push(...await reconnectInternalTabCensus(tab,qualification));continue;}
   if(tab.incognito||tab.discarded||tab.pendingUrl)throw reconnectInventoryRefuse(tab.pendingUrl?'pendingNavigation':tab.incognito?'incognitoTab':'discardedTab');
   let url;try{url=new URL(tab.url);}catch{throw reconnectInventoryRefuse('tabURLInvalid');}
@@ -1349,16 +1380,27 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
   if(recovering){
     try{recoveryInventory=await emptyReconnectInventory(undefined,qualification);}
     catch(error){
-      if(reconnectInventoryReason!=="nonSetupTab"||command.reconnectBindingsVersion!==1)throw error;
+      if(!["nonSetupTab","discardedTab"].includes(reconnectInventoryReason)||command.reconnectBindingsVersion!==1)throw error;
       reconnectRecoveryDiagnostic={missingLiveReceipts:0,unknownLiveReceipts:0,unavailableExecutors:0,privateSources:0};
       recoveryBinding=await reconnectBindingSnapshot(journal,command,ownPort,qualification);
       reconnectRows(recoveryBinding.bindings,enrollment,previous.scopeHash);
       recoveryCensus=await reconnectCurrentCensus(enrollment,qualification);
       recoverySession=await reconnectStorage(()=>chrome.storage.session.get(null),qualification);
       const unknown=new Set(),privateSources=new Set(),unavailable=new Set();
-      for(const row of recoveryBinding.bindings){const source=recoveryCensus.find(i=>i.documentId===row.identity.documentId);if(source){if(row.dispatchState==='unknown')unknown.add(source.documentId);if(source.protected)privateSources.add(source.documentId);if(!source.executable||source.tabId!==row.identity.tabId||source.frameId!==row.identity.frameId)unavailable.add(source.documentId);}}
-      reconnectRecoveryDiagnostic.unknownLiveReceipts=unknown.size;reconnectRecoveryDiagnostic.privateSources=privateSources.size;reconnectRecoveryDiagnostic.unavailableExecutors=unavailable.size;
-      const unidentified=recoveryCensus.filter(i=>i.identityUnknown),knownIDs=new Set(recoveryCensus.filter(i=>i.documentId).map(i=>i.documentId));
+      const discardedTabs=new Set(recoveryCensus.filter(i=>i.discarded&&i.identityUnknown).map(i=>i.tabId));
+      for(const row of recoveryBinding.bindings){
+       const source=recoveryCensus.find(i=>i.documentId===row.identity.documentId),discarded=discardedTabs.has(row.identity.tabId)?row.identity.tabId:source?.discarded?source.tabId:null;
+       if(discarded!==null){const key='discarded:'+discarded;unavailable.add(key);if(row.dispatchState==='unknown')unknown.add(key);}
+       else if(source){if(row.dispatchState==='unknown')unknown.add(source.documentId);if(source.protected)privateSources.add(source.documentId);if(!source.executable||source.tabId!==row.identity.tabId||source.frameId!==row.identity.frameId)unavailable.add(source.documentId);}
+      }
+      for(const record of protectionScopes.records())if(record.identity.profileChannel===enrollment.profileChannel&&record.identity.browserInstance===enrollment.browserInstance){
+       const tabId=discardedTabs.has(record.identity.tabId)?record.identity.tabId:recoveryCensus.find(i=>i.discarded&&i.documentId===record.identity.documentId)?.tabId;
+       if(tabId!==undefined){privateSources.add('discarded:'+tabId);unavailable.add('discarded:'+tabId);}
+      }
+      reconnectRecoveryDiagnostic.unknownLiveReceipts=Math.min(200,unknown.size);reconnectRecoveryDiagnostic.privateSources=Math.min(200,privateSources.size);reconnectRecoveryDiagnostic.unavailableExecutors=Math.min(200,unavailable.size);
+      // Generic unidentified children retain the existing global absence guard.
+      // Discarded markers instead deny every retained owner on that exact tab.
+      const unidentified=recoveryCensus.filter(i=>i.identityUnknown&&!i.discarded),knownIDs=new Set(recoveryCensus.filter(i=>i.documentId).map(i=>i.documentId));
       if(unidentified.length&&recoveryBinding.bindings.some(row=>!knownIDs.has(row.identity.documentId))){reconnectRecoveryDiagnostic.unavailableExecutors=unidentified.length;throw reconnectInventoryRefuse('childSourceIdentityUnavailable');}
       if(privateSources.size)throw reconnectRefuse('privateProtection');if(unknown.size)throw reconnectRefuse('unknownReceipts');if(unavailable.size)throw reconnectRefuse('executorRefused');
       reconnectInventoryReason="none";
