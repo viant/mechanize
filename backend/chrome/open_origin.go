@@ -168,6 +168,7 @@ func (g *Gateway) executeBrowserOperation(ctx context.Context, p auth.Principal,
 		return result, operationError(action, "openOriginAuthorityChanged", "notDispatched")
 	}
 	pending.request.ControlBadge = b.controlBadge != nil && c.controlBadgeVersion == 2
+	c.invalidateConsentReconnect()
 	c.openOriginPending = pending
 	b.mu.Unlock()
 	defer func() {

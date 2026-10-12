@@ -327,6 +327,7 @@ func (g *Gateway) DeliverVaultCredential(ctx context.Context, p auth.Principal, 
 				c.privateCredentialAttempts = map[string]bool{}
 			}
 			c.privateCredentialAttempts[attemptID] = true
+			c.invalidateConsentReconnect()
 			c.privateCredential = pending
 			b.mu.Unlock()
 			phase = "deliveryEncoding"

@@ -27,7 +27,7 @@ func controllerFixture(t *testing.T, configure ...func(*Dependencies)) (*Control
 	p.ClientID = "controller:fixture"
 	p.ClientName = "Controller fixture"
 	ctx := auth.WithPrincipal(context.Background(), p)
-	id := chrome.ControllerIdentity{Principal: p, ConversationID: "conversation1", Origin: "https://shell.fixture.test", DocumentID: "doc1"}
+	id := chrome.ControllerIdentity{Principal: p, ConversationID: "conversation1", Origin: "https://shell.fixture.test", DocumentID: "doc1", CatalogToolLimit: 64}
 	count := &atomic.Int32{}
 	runtime, err := automation.New(func(context.Context, auth.Principal, model.Step, map[string]model.Value) (automation.StepResult, error) {
 		count.Add(1)

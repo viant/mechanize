@@ -119,3 +119,52 @@ func TestDispatchCleanupRecoveryCannotRaceHumanRevocation(t *testing.T) {
 		t.Fatal("concurrent human stop was lost")
 	}
 }
+
+func TestDispatchCleanupGuardSpansCASAndNeverReplaysFailedCommit(t *testing.T) {
+	for _, mode := range []string{"confirmed", "missingProof", "humanStop", "canceled"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newFixture(t)
+			g := suspendedDesktopGrant(t, f)
+			options := f.options
+			entered, commits := 0, 0
+			options.WithCleanupProof = func(ctx context.Context, _ consent.Client, _ consent.Scope, commit func(context.Context) error) error {
+				entered++
+				if mode == "missingProof" {
+					return consent.ErrCleanupUnconfirmed
+				}
+				if mode == "humanStop" {
+					if _, err := f.service.Revoke(f.admin, g.ID); err != nil {
+						return err
+					}
+				}
+				if mode == "canceled" {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithCancel(ctx)
+					cancel()
+				}
+				commits++
+				return commit(ctx)
+			}
+			// A failed sealed proof must never fall back to another commit attempt.
+			options.RecoverCleanup = func(context.Context, consent.Client, consent.Scope) error {
+				t.Fatal("guard failure replayed through legacy recovery")
+				return nil
+			}
+			restarted, err := consent.New(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = restarted.RecoverDispatchCleanup(f.client, g.ID)
+			if (err == nil) != (mode == "confirmed") || entered != 1 || commits > 1 {
+				t.Fatalf("mode%s entered%d commits%d err%v", mode, entered, commits, err)
+			}
+			if mode == "confirmed" {
+				lease, err := restarted.Authorize(f.client, operation(g))
+				if err != nil {
+					t.Fatal("recovered authority unavailable", err)
+				}
+				lease.Release()
+			}
+		})
+	}
+}

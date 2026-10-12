@@ -18,7 +18,7 @@ func (s *Service) RecoverDispatchCleanup(ctx context.Context, grantID string) er
 	if err != nil {
 		return err
 	}
-	if s.options.RecoverCleanup == nil {
+	if s.options.RecoverCleanup == nil && s.options.WithCleanupProof == nil {
 		return ErrCleanupUnconfirmed
 	}
 	rows, err := s.read(ctx, "consenttrusted", "*", c.ID)
@@ -53,22 +53,26 @@ func (s *Service) RecoverDispatchCleanup(ctx context.Context, grantID string) er
 	if active != 0 || inhibited {
 		return ErrCleanupUnconfirmed
 	}
+	commit := func(commitCtx context.Context) error {
+		if err := commitCtx.Err(); err != nil {
+			return err
+		}
+		previous := r
+		r.RevocationState = ""
+		r.Revision++
+		if err := s.write(commitCtx, "cleanupRecovery", c.ID, r, &previous, true); err != nil {
+			return err
+		}
+		s.mu.Lock()
+		s.known[key] = true
+		s.mu.Unlock()
+		return nil
+	}
+	if s.options.WithCleanupProof != nil {
+		return s.options.WithCleanupProof(ctx, c, scope, commit)
+	}
 	if err = s.options.RecoverCleanup(ctx, c, scope); err != nil {
 		return err
 	}
-	if err = ctx.Err(); err != nil {
-		return err
-	}
-	previous := r
-	r.RevocationState = ""
-	r.Revision++
-	if err = s.write(ctx, "cleanupRecovery", c.ID, r, &previous, true); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	// Never erase a concurrent human inhibit. Recovery runs only after the old
-	// registry stopped; Authorize independently rechecks both ledger and inhibit.
-	s.known[key] = true
-	s.mu.Unlock()
-	return nil
+	return commit(ctx)
 }

@@ -368,7 +368,13 @@ func (s *Service) FindPermanentGrant(ctx context.Context, op Operation) (*Grant,
 			continue
 		}
 		if r.RevocationState == string(CleanupUnknown) {
-			if r.cleanupMachineOnly && s.options.RecoverCleanup != nil {
+			// Discovery does not recover the broad grant. Authorize requires a
+			// fresh native-only proof before admitting this exact operation.
+			if r.cleanupMachineOnly && s.nativeCleanupEligible(op) {
+				g, e := r.grant(s.options.Now())
+				return &g, e
+			}
+			if r.cleanupMachineOnly && (s.options.RecoverCleanup != nil || s.options.WithCleanupProof != nil) {
 				if recoveryErr := s.RecoverDispatchCleanup(ctx, r.GrantID); recoveryErr == nil {
 					r.RevocationState = ""
 					r.Revision++
@@ -417,6 +423,9 @@ func (s *Service) Authorize(ctx context.Context, op Operation) (*Lease, error) {
 	blocked := s.blocked[key]
 	s.mu.Unlock()
 	if blocked {
+		if s.nativeCleanupEligible(op) {
+			return s.authorizeCleanupNative(ctx, op)
+		}
 		if op.Mode == Observe {
 			lease, _, observationErr := s.AuthorizeCleanupObservation(ctx, op)
 			return lease, observationErr
@@ -426,6 +435,9 @@ func (s *Service) Authorize(ctx context.Context, op Operation) (*Lease, error) {
 	r, err := s.lookup(ctx, op.GrantID, c.ID)
 	if err != nil {
 		return nil, err
+	}
+	if r.RevocationState == string(CleanupUnknown) && s.nativeCleanupEligible(op) {
+		return s.authorizeCleanupNative(ctx, op)
 	}
 	if op.Mode == Observe && r.RevocationState == string(CleanupUnknown) {
 		lease, _, observationErr := s.AuthorizeCleanupObservation(ctx, op)

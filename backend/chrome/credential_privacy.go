@@ -195,6 +195,7 @@ func (g *Gateway) privacyExchange(ctx context.Context, p auth.Principal, s *cred
 		b.mu.Unlock()
 		return Identity{}, credentialPrivacyFailure("fence")
 	}
+	c.invalidateConsentReconnect()
 	c.privacyPending = pending
 	b.mu.Unlock()
 	command := map[string]any{"type": kind, "requestId": pending.requestID, "attemptId": s.submitID, "identity": expected, "brokerEpoch": s.source.BrokerEpoch, "channelEpoch": s.source.ChannelEpoch, "scopeHash": s.source.ScopeHash, "controlLease": s.source.Lease, "deadlineUnixMs": deadline.UnixMilli(), "origin": s.source.Document.Origin, "permitId": s.permitID}

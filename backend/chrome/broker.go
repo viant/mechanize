@@ -55,6 +55,7 @@ type pending struct {
 	done              chan Reply
 }
 type channel struct {
+	consentReconnect             *consentReconnectProof
 	credentialPublicReadVersion  int
 	controllerResultChunkVersion int
 	reconnectBindings            *reconnectBindingExchange
@@ -323,6 +324,7 @@ func (b *Broker) serve(conn net.Conn) {
 		delete(b.connections, conn)
 		for _, c := range b.channels {
 			if c.conn == conn {
+				c.consentReconnect = nil
 				c.conn = nil
 				for _, s := range c.controllerSessions {
 					cancelControllerSession(s)
@@ -411,32 +413,33 @@ func (b *Broker) serve(conn net.Conn) {
 		return
 	}
 	var hello struct {
-		Type                               string `json:"type"`
-		SetupMetadataVersion               int    `json:"setupMetadataVersion"`
-		ManualPrivacyDocumentVersion       int    `json:"manualPrivacyDocumentVersion"`
-		FocusedLocationVersion             int    `json:"focusedLocationVersion"`
-		TabMetadataVersion                 int    `json:"tabMetadataVersion"`
-		OpenOriginVersion                  int    `json:"openOriginVersion"`
-		ProtectionScopeVersion             int    `json:"protectionScopeVersion"`
-		CredentialPublicReadVersion        int    `json:"credentialPublicReadVersion"`
-		ControllerResultChunkVersion       int    `json:"controllerResultChunkVersion"`
-		PrivateInspectionDiagnosticVersion int    `json:"privateInspectionDiagnosticVersion"`
-		PlaywrightRelayVersion             int    `json:"playwrightRelayVersion"`
-		PlaywrightLocatorVersion           int    `json:"playwrightLocatorVersion"`
-		ControlBadgeVersion                int    `json:"controlBadgeVersion"`
-		VisibilityUnknownVersion           int    `json:"visibilityUnknownVersion"`
-		ProtocolVersion                    int    `json:"protocolVersion"`
-		WorkerBuild                        int    `json:"workerBuild"`
-		ExtensionVersion                   string `json:"extensionVersion"`
-		ProfileChannel                     string `json:"profileChannel"`
-		BrowserInstance                    string `json:"browserInstance"`
-		ExtensionOrigin                    string `json:"extensionOrigin"`
-		Credential                         string `json:"credential"`
-		FixtureEnrollment                  bool   `json:"fixtureEnrollment"`
-		ProfileDirectory                   string `json:"profileDirectory"`
-		ProfileLaunchQualified             bool   `json:"profileLaunchQualified"`
-		TrustScope                         string `json:"trustScope"`
-		ProfileQualified                   *bool  `json:"profileQualified"`
+		LastGrant                          json.RawMessage `json:"lastGrant"`
+		Type                               string          `json:"type"`
+		SetupMetadataVersion               int             `json:"setupMetadataVersion"`
+		ManualPrivacyDocumentVersion       int             `json:"manualPrivacyDocumentVersion"`
+		FocusedLocationVersion             int             `json:"focusedLocationVersion"`
+		TabMetadataVersion                 int             `json:"tabMetadataVersion"`
+		OpenOriginVersion                  int             `json:"openOriginVersion"`
+		ProtectionScopeVersion             int             `json:"protectionScopeVersion"`
+		CredentialPublicReadVersion        int             `json:"credentialPublicReadVersion"`
+		ControllerResultChunkVersion       int             `json:"controllerResultChunkVersion"`
+		PrivateInspectionDiagnosticVersion int             `json:"privateInspectionDiagnosticVersion"`
+		PlaywrightRelayVersion             int             `json:"playwrightRelayVersion"`
+		PlaywrightLocatorVersion           int             `json:"playwrightLocatorVersion"`
+		ControlBadgeVersion                int             `json:"controlBadgeVersion"`
+		VisibilityUnknownVersion           int             `json:"visibilityUnknownVersion"`
+		ProtocolVersion                    int             `json:"protocolVersion"`
+		WorkerBuild                        int             `json:"workerBuild"`
+		ExtensionVersion                   string          `json:"extensionVersion"`
+		ProfileChannel                     string          `json:"profileChannel"`
+		BrowserInstance                    string          `json:"browserInstance"`
+		ExtensionOrigin                    string          `json:"extensionOrigin"`
+		Credential                         string          `json:"credential"`
+		FixtureEnrollment                  bool            `json:"fixtureEnrollment"`
+		ProfileDirectory                   string          `json:"profileDirectory"`
+		ProfileLaunchQualified             bool            `json:"profileLaunchQualified"`
+		TrustScope                         string          `json:"trustScope"`
+		ProfileQualified                   *bool           `json:"profileQualified"`
 	}
 	if json.Unmarshal(data, &hello) != nil || hello.Type != "hello" || hello.ProtocolVersion != 1 {
 		rejectNativeStartup(conn, "brokerHelloRejected")
@@ -490,6 +493,10 @@ func (b *Broker) serve(conn net.Conn) {
 	c.scopeQualified = true
 	c.executorQualified = c.fixtureOnly
 	c.executorChallenge = newID()
+	c.consentReconnect = nil
+	if hello.WorkerBuild == 32 {
+		c.consentReconnect = newConsentReconnectProof(c, conn, b.epoch, hello.LastGrant)
+	}
 	b.mu.Unlock()
 	_ = conn.SetReadDeadline(time.Time{})
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
@@ -657,6 +664,7 @@ func (b *Broker) serve(conn net.Conn) {
 			continue
 		}
 		if event.Type == "attention" {
+			c.invalidateConsentReconnect()
 			var attention struct {
 				Code string `json:"code"`
 			}
@@ -694,6 +702,9 @@ func (b *Broker) serve(conn net.Conn) {
 			}
 			c.mutationFingerprintVersion = event.MutationFingerprintVersion
 			c.executorQualified = true
+			if proof := c.consentReconnect; proof != nil && proof.conn == conn && proof.challenge == event.ExecutorChallenge && event.MutationFingerprintVersion == 2 {
+				proof.prepared = true
+			}
 			if x := c.reconnectBindings; x != nil && !x.published {
 				x.published = true
 				close(x.prepared)
@@ -708,6 +719,7 @@ func (b *Broker) serve(conn net.Conn) {
 		}
 		if event.Type == "documents" {
 			if !channelScopeQualified(c) || (!c.executorQualified && !c.lifecycleInhibited) {
+				c.invalidateConsentReconnect()
 				c.documents = nil
 				c.credentialCandidates = nil
 				c.inventoryComplete = false
@@ -715,6 +727,7 @@ func (b *Broker) serve(conn net.Conn) {
 				continue
 			}
 			if event.Truncated || len(event.Documents) > 200 || len(event.CredentialCandidates) > 200 {
+				c.invalidateConsentReconnect()
 				c.documents = nil
 				c.credentialCandidates = nil
 				c.inventoryComplete = false
@@ -757,8 +770,10 @@ func (b *Broker) serve(conn net.Conn) {
 				}
 				c.credentialCandidates = append([]credentialCandidate(nil), event.CredentialCandidates...)
 				c.inventoryComplete = true
+				c.observeConsentReconnectInventory()
 				c.inventoryAt = time.Now()
 			} else {
+				c.invalidateConsentReconnect()
 				c.documents = nil
 				c.credentialCandidates = nil
 				c.inventoryComplete = false

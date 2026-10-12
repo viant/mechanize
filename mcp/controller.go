@@ -31,11 +31,12 @@ type ControllerDispatcher struct {
 	clients map[string]*controllerClient
 }
 type controllerClient struct {
-	initialized *schema.InitializeResult
-	client      client.Interface
-	mu          sync.Mutex
-	sessions    map[string]bool
-	closed      bool
+	initialized      *schema.InitializeResult
+	client           client.Interface
+	mu               sync.Mutex
+	sessions         map[string]bool
+	closed           bool
+	catalogToolLimit int
 }
 
 func NewControllerDispatcher(s *server.Server, r *automation.Runtime) (*ControllerDispatcher, error) {
@@ -62,12 +63,12 @@ func (d *ControllerDispatcher) clientFor(ctx context.Context, id chrome.Controll
 		c.mu.Lock()
 		closed := c.closed
 		c.mu.Unlock()
-		if closed {
+		if closed || c.catalogToolLimit != controllerCatalogLimit(id) {
 			return nil, auth.ErrUnauthorized
 		}
 		return c, nil
 	}
-	c := &controllerClient{client: d.server.AsClient(auth.WithPrincipal(context.Background(), p)), sessions: map[string]bool{}}
+	c := &controllerClient{client: d.server.AsClient(auth.WithPrincipal(context.Background(), p)), sessions: map[string]bool{}, catalogToolLimit: controllerCatalogLimit(id)}
 	if c.initialized, err = c.client.Initialize(ctx); err != nil {
 		return nil, errors.New("controller MCP unavailable")
 	}
@@ -85,9 +86,12 @@ func (d *ControllerDispatcher) ListTools(ctx context.Context, id chrome.Controll
 	}
 	result := &schema.ListToolsResult{Tools: []schema.Tool{}}
 	for _, tool := range listed.Tools {
-		if controllerTools[tool.Name] {
+		if controllerToolAvailable(id, tool.Name) {
 			result.Tools = append(result.Tools, tool)
 		}
+	}
+	if len(result.Tools) > controllerCatalogLimit(id) {
+		return nil, errors.New("controller catalog capacity exceeded")
 	}
 	return result, nil
 }
@@ -246,7 +250,7 @@ func controllerRejected(dispatch string, codes ...string) *schema.CallToolResult
 	return &schema.CallToolResult{IsError: &yes, StructuredContent: body, Content: []schema.CallToolResultContentElem{schema.TextContent{Type: "text", Text: string(raw)}}}
 }
 func (d *ControllerDispatcher) CallTool(ctx context.Context, id chrome.ControllerIdentity, call chrome.ControllerToolCall) (*schema.CallToolResult, error) {
-	if !controllerTools[call.Name] {
+	if !controllerToolAvailable(id, call.Name) {
 		return controllerRejected("notDispatched"), nil
 	}
 	args, session, err := controllerArgs(call.Name, call.Arguments)

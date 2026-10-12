@@ -190,6 +190,8 @@ func (h *Host) executeNativeControl(ctx context.Context, p auth.Principal, step 
 		if finish != nil {
 			defer finish()
 		}
+	} else if prepared, ok := ctx.Value(nativeStepAuthorityKey{}).(*nativeStepAuthority); ok {
+		lease, err = prepared.consume(ctx, h, p, step, admission.Epoch)
 	} else {
 		lease, err = h.authorizeNativeControlStep(ctx, p, step)
 	}

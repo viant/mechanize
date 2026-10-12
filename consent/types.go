@@ -172,9 +172,14 @@ type Options struct {
 	// Host-owned, read-only lifecycle proof: confirm original executors have
 	// stopped and input is released. Tool arguments cannot supply this callback.
 	RecoverCleanup func(context.Context, Client, Scope) error
-	Now            func() time.Time
-	RequestTTL     time.Duration
-	MaxDuration    time.Duration
+	// Optional held proof spans the existing recovery CAS; never a tool callback.
+	WithCleanupProof func(context.Context, Client, Scope, func(context.Context) error) error
+	// Native-only physical lifecycle proof. It never restores the suspended grant
+	// for browser/desktop operations and cannot be supplied by tool arguments.
+	RecoverNativeCleanup func(context.Context, Client, Scope) error
+	Now                  func() time.Time
+	RequestTTL           time.Duration
+	MaxDuration          time.Duration
 }
 
 func validateInput(in RequestInput, max time.Duration) error {

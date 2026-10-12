@@ -94,6 +94,7 @@ func (g *Gateway) FreshCredentialBinding(ctx context.Context, p auth.Principal, 
 	}
 	conn := c.conn
 	pending := &credentialAdmissionPending{requestID: newPrivateID(), identity: a.Document.Identity, recipientID: a.PrivateRecipientID, done: make(chan credentialAdmissionReply, 1)}
+	c.invalidateConsentReconnect()
 	c.privateInspection = pending
 	b.mu.Unlock()
 	confirmed := false

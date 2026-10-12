@@ -23,12 +23,13 @@ type lifecycleFixture struct {
 	ctx       context.Context
 	channel   *channel
 	commands  atomic.Int32
+	inputs    atomic.Int32
 	badPeer   atomic.Bool
 	badReply  atomic.Bool
 	roots     []Identity
 }
 
-func newLifecycleFixture(t *testing.T, total int) *lifecycleFixture {
+func newLifecycleFixture(t *testing.T, total int, reconnect ...bool) *lifecycleFixture {
 	t.Helper()
 	dir, e := os.MkdirTemp("/private/tmp", "life-test-")
 	if e != nil {
@@ -59,7 +60,13 @@ func newLifecycleFixture(t *testing.T, total int) *lifecycleFixture {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { conn.Close() })
-	WriteFrame(conn, map[string]any{"type": "hello", "protocolVersion": 1, "profileChannel": "p1", "browserInstance": "b1", "extensionOrigin": grant.ExtensionOrigin, "credential": cred, "profileDirectory": dir, "profileLaunchQualified": true})
+	hello := map[string]any{"type": "hello", "protocolVersion": 1, "profileChannel": "p1", "browserInstance": "b1", "extensionOrigin": grant.ExtensionOrigin, "credential": cred, "profileDirectory": dir, "profileLaunchQualified": true}
+	if len(reconnect) > 0 && reconnect[0] {
+		hello["workerBuild"] = 32
+		hello["extensionVersion"] = "0.1.62"
+		hello["lastGrant"] = map[string]any{"brokerEpoch": "old-broker", "channelEpoch": "old-channel", "scopeHash": b.channels[channelKey("p1", "b1")].scopeHash, "trustScope": "profile", "scopeQualified": true, "profileQualified": true, "leaseRequired": true, "mutationFingerprintVersion": 2}
+	}
+	WriteFrame(conn, hello)
 	raw, e := ReadFrame(conn)
 	if e != nil {
 		t.Fatal(e)
@@ -91,6 +98,29 @@ func newLifecycleFixture(t *testing.T, total int) *lifecycleFixture {
 			}
 			if json.Unmarshal(raw, &wire) != nil {
 				return
+			}
+			if wire.Type != "lifecycle" && len(reconnect) > 0 && reconnect[0] {
+				reply := Reply{RequestID: wire.RequestID, Identity: wire.Identity, ControlLease: wire.ControlLease}
+				switch wire.Action {
+				case "observe":
+				case "executor.acquire", "executor.validate":
+					reply.Validated = true
+				case "executor.retire":
+					reply.RetiredAuthorityQuiesced = true
+				case "element.press":
+					f.inputs.Add(1)
+					reply.AttemptID = wire.AttemptID
+					reply.FingerprintVersion = wire.FingerprintVersion
+					reply.FingerprintSHA256 = wire.FingerprintSHA256
+					reply.DispatchState = "dispatched"
+					reply.EffectState = "unverified"
+				default:
+					return
+				}
+				if WriteFrame(conn, reply) != nil {
+					return
+				}
+				continue
 			}
 			if wire.Type != "lifecycle" || wire.GuardID == "" {
 				return

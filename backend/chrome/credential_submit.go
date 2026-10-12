@@ -140,6 +140,7 @@ func (g *Gateway) SubmitVaultCredential(ctx context.Context, p auth.Principal, a
 	}
 	conn := c.conn
 	pending := &credentialDeliveryPending{requestID: newPrivateID(), attemptID: submitAttemptID, identity: a.Document.Identity, done: make(chan string, 1), replyType: "credentialSubmitResult", lease: &a.Lease}
+	c.invalidateConsentReconnect()
 	c.privateCredential = pending
 	c.privateCredentialAttempts[submitAttemptID] = true
 	flow.submitAttempt = submitAttemptID
@@ -241,6 +242,7 @@ func (g *Gateway) AdvanceVaultCredential(ctx context.Context, p auth.Principal, 
 	}
 	conn := c.conn
 	pending := &credentialAdvancePending{requestID: newPrivateID(), attemptID: submitAttemptID, previous: a.Document.Identity, done: make(chan credentialAdvanceReply, 1)}
+	c.invalidateConsentReconnect()
 	c.privateAdvance = pending
 	b.mu.Unlock()
 	completed := false

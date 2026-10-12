@@ -42,7 +42,14 @@ func TestControllerCanonicalToolCallActualExtensionProjection(t *testing.T) {
 func TestControllerLocalhostPatternActualExtensionProjection(t *testing.T) {
 	controllerCanonicalRoundtrip(t, "localhost")
 }
-func controllerCanonicalRoundtrip(t *testing.T, mode string) {
+func TestControllerLegacyCatalogActualExtensionProjection(t *testing.T) {
+	controllerCanonicalRoundtrip(t, "catalog", "0.1.62")
+}
+func controllerCanonicalRoundtrip(t *testing.T, mode string, versions ...string) {
+	version := "0.1.63"
+	if len(versions) > 0 {
+		version = versions[0]
+	}
 	origin, policyOrigin := "https://shell.fixture.test", "https://shell.fixture.test"
 	if mode == "localhost" {
 		origin = "http://localhost:49173"
@@ -51,6 +58,7 @@ func controllerCanonicalRoundtrip(t *testing.T, mode string) {
 	}
 
 	d, id, ctx, _ := controllerFixture(t, func(deps *Dependencies) {
+		allCanonicalCatalogDependencies(deps)
 		v := reflect.ValueOf(deps).Elem()
 		for i := 0; i < v.NumField(); i++ {
 			f := v.Field(i)
@@ -59,6 +67,9 @@ func controllerCanonicalRoundtrip(t *testing.T, mode string) {
 			}
 		}
 	})
+	if version == "0.1.62" {
+		id.CatalogToolLimit = 32
+	}
 	listed, e := d.ListTools(ctx, id)
 	if e != nil {
 		t.Fatal(e)
@@ -105,7 +116,7 @@ func controllerCanonicalRoundtrip(t *testing.T, mode string) {
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
-	if e = chrome.WriteFrame(conn, map[string]any{"type": "hello", "protocolVersion": 1, "profileChannel": grant.ProfileChannel, "browserInstance": grant.BrowserInstance, "extensionOrigin": grant.ExtensionOrigin, "fixtureEnrollment": true, "credential": credential}); e != nil {
+	if e = chrome.WriteFrame(conn, map[string]any{"type": "hello", "protocolVersion": 1, "profileChannel": grant.ProfileChannel, "browserInstance": grant.BrowserInstance, "extensionOrigin": grant.ExtensionOrigin, "fixtureEnrollment": true, "credential": credential, "extensionVersion": version}); e != nil {
 		t.Fatal(e)
 	}
 	raw, e := chrome.ReadFrame(conn)
@@ -124,7 +135,7 @@ func controllerCanonicalRoundtrip(t *testing.T, mode string) {
 	if e != nil {
 		t.Skip("Node unavailable")
 	}
-	child := exec.CommandContext(deadline, node, "../extension/chrome/test/controller-roundtrip.cjs", mode, origin, policyOrigin)
+	child := exec.CommandContext(deadline, node, "../extension/chrome/test/controller-roundtrip.cjs", mode, origin, policyOrigin, version)
 	input, e := child.StdinPipe()
 	if e != nil {
 		t.Fatal(e)

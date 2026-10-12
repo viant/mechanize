@@ -24,12 +24,14 @@ type ConsentBroker struct {
 	policyGrants map[string]*consent.Grant
 }
 type ConsentBrokerOptions struct {
-	ControllerPolicy func(context.Context, auth.Principal) (context.Context, time.Time, func(), error)
-	Invoke           func(context.Context, auth.Principal, exec.ComponentRequest) (any, error)
-	Enrolled         func(context.Context, auth.Principal) (User, error)
-	SessionOwned     func(context.Context, auth.Principal, string) error
-	Policy           func(context.Context, auth.Principal, consent.Scope, []consent.Mode, int) error
-	RecoverCleanup   func(context.Context, auth.Principal, consent.Scope) error
+	ControllerPolicy     func(context.Context, auth.Principal) (context.Context, time.Time, func(), error)
+	Invoke               func(context.Context, auth.Principal, exec.ComponentRequest) (any, error)
+	Enrolled             func(context.Context, auth.Principal) (User, error)
+	SessionOwned         func(context.Context, auth.Principal, string) error
+	Policy               func(context.Context, auth.Principal, consent.Scope, []consent.Mode, int) error
+	RecoverCleanup       func(context.Context, auth.Principal, consent.Scope) error
+	WithCleanupProof     func(context.Context, auth.Principal, consent.Scope, func(context.Context) error) error
+	RecoverNativeCleanup func(context.Context, auth.Principal, consent.Scope) error
 }
 
 func NewConsentBroker(o ConsentBrokerOptions) (*ConsentBroker, error) {
@@ -65,7 +67,28 @@ func (b *ConsentBroker) bound(ctx context.Context, p auth.Principal) (context.Co
 		return ctx, s, nil
 	}
 	namespace := actual.Namespace
+	var recoverNative func(context.Context, consent.Client, consent.Scope) error
+	if b.options.RecoverNativeCleanup != nil {
+		recoverNative = func(ctx context.Context, c consent.Client, scope consent.Scope) error {
+			p, err := auth.FromContext(ctx)
+			if err != nil || p.Namespace != namespace || p.ClientID != c.ID {
+				return consent.ErrCleanupUnconfirmed
+			}
+			return b.options.RecoverNativeCleanup(ctx, p, scope)
+		}
+	}
+	var withProof func(context.Context, consent.Client, consent.Scope, func(context.Context) error) error
+	if b.options.WithCleanupProof != nil {
+		withProof = func(ctx context.Context, c consent.Client, scope consent.Scope, commit func(context.Context) error) error {
+			p, err := auth.FromContext(ctx)
+			if err != nil || p.Namespace != namespace || p.ClientID != c.ID {
+				return consent.ErrCleanupUnconfirmed
+			}
+			return b.options.WithCleanupProof(ctx, p, scope, commit)
+		}
+	}
 	s, err := consent.New(consent.Options{Namespace: namespace,
+		WithCleanupProof: withProof,
 		RecoverCleanup: func(ctx context.Context, c consent.Client, scope consent.Scope) error {
 			p, err := auth.FromContext(ctx)
 			if err != nil || p.Namespace != namespace || p.ClientID != c.ID || b.options.RecoverCleanup == nil {
@@ -73,6 +96,7 @@ func (b *ConsentBroker) bound(ctx context.Context, p auth.Principal) (context.Co
 			}
 			return b.options.RecoverCleanup(ctx, p, scope)
 		},
+		RecoverNativeCleanup: recoverNative,
 		Invoke: func(ctx context.Context, req exec.ComponentRequest) (any, error) {
 			p, e := auth.FromContext(ctx)
 			if e != nil || p.Namespace != namespace {

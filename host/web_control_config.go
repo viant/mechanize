@@ -127,6 +127,5 @@ func (h *Host) prepareStepExecutor(ctx context.Context, p auth.Principal, step m
 	if step.Target.Surface.Kind != "native" {
 		return nil, 0, ErrNativeControlUnqualified
 	}
-	epoch, err := h.controlLeaseEpoch(ctx, p)
-	return ctx, epoch, err
+	return h.prepareNativeStepExecutor(ctx, p, step)
 }

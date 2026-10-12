@@ -301,6 +301,9 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 			return Reply{}, dispatchGateFailure(ctx.Err())
 		}
 	}
+	b.mu.Lock()
+	c.invalidateConsentReconnect()
+	b.mu.Unlock()
 	for _, check := range beforeSend {
 		if err := check(); err != nil {
 			return Reply{}, dispatchGateFailure(err)

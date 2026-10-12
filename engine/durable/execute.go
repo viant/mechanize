@@ -43,6 +43,14 @@ func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step
 	if !ok || metadata.RunID == "" || metadata.PlanID == "" {
 		return integration.StepResult{}, errors.New("durable execution metadata required")
 	}
+	// Native helper dispatch is synchronous. Retire its prepared consent/fence
+	// on every exit, including an intent failure or a previously completed effect.
+	// Browser and detached external authorities retain their own lifetimes.
+	if step.Effect.Class != model.ReadOnly && step.Target.Surface.Kind == "native" && step.Action != "browser.activateTab" && step.Action != "browser.openOrigin" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+	}
 	epoch := 0
 	var err error
 	if step.Effect.Class != model.ReadOnly {

@@ -225,6 +225,7 @@ func (g *Gateway) AdmitCredentialControl(ctx context.Context, p auth.Principal, 
 	c.privateOwner = p
 	c.privateConsent, _ = auth.ConsentBindingFromContext(ctx)
 	// Seal private demultiplexing before retaining a candidate in the live lease.
+	c.invalidateConsentReconnect()
 	c.privateInspection = &credentialAdmissionPending{done: make(chan credentialAdmissionReply, 1)}
 	found := false
 	for _, d := range c.documents {
@@ -256,6 +257,7 @@ func (g *Gateway) AdmitCredentialControl(ctx context.Context, p auth.Principal, 
 			b.mu.Unlock()
 			return credentialAdmissionReply{}, errCredentialDelivery
 		}
+		c.invalidateConsentReconnect()
 		c.privateInspection = pending
 		b.mu.Unlock()
 		if conn.SetWriteDeadline(deadline) != nil {

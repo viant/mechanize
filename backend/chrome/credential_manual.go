@@ -121,6 +121,7 @@ func (g *Gateway) BeginManualCredentialPrivacy(ctx context.Context, p auth.Princ
 		deadline = d
 	}
 	t := &ManualCredentialTransition{gateway: g, channel: c, conn: c.conn, source: source, oldControl: oldControl, binding: binding, proofID: newPrivateID(), admit: admit, deadline: deadline, documentMode: c.manualPrivacyDocumentVersion == 1}
+	c.invalidateConsentReconnect()
 	c.manualTransition = t
 	b.mu.Unlock()
 	if t.check(ctx, p) != nil {
@@ -210,6 +211,7 @@ func (t *ManualCredentialTransition) exchange(ctx context.Context, p auth.Princi
 		b.mu.Unlock()
 		return nil, ErrManualCredentialPrivacy
 	}
+	c.invalidateConsentReconnect()
 	c.manualPending = pending
 	command := map[string]any{"type": kind, "requestId": pending.requestID, "proofId": t.proofID, "sourceIdentity": t.source.Identity, "brokerEpoch": b.epoch, "channelEpoch": c.epoch, "scopeHash": c.scopeHash, "deadlineUnixMs": t.deadline.UnixMilli(), "origin": t.source.Origin}
 	b.mu.Unlock()

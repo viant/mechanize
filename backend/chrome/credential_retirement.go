@@ -56,6 +56,7 @@ func (g *Gateway) RetireVaultCredential(ctx context.Context, p auth.Principal, a
 	pending := &credentialDeliveryPending{requestID: newPrivateID(), attemptID: attempt, identity: a.Document.Identity, done: make(chan string, 1), replyType: "credentialRetireResult"}
 	f.retireAttempt = attempt
 	c.privateCredentialAttempts[attempt] = true
+	c.invalidateConsentReconnect()
 	c.privateCredential = pending
 	c.unknown[attempt] = true
 	b.mu.Unlock()

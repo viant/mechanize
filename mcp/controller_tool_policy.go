@@ -1,5 +1,7 @@
 package mcp
 
+import "github.com/viant/mechanize/backend/chrome"
+
 // Every canonical registration must have an explicit browser transport policy.
 // TestControllerCanonicalExposurePolicy rejects new unclassified registrations.
 type controllerToolPolicy struct {
@@ -66,3 +68,25 @@ var controllerTools = func() map[string]bool {
 	}
 	return result
 }()
+
+// Preserve the complete pre-0.1.63 catalog on installed 32-tool receivers.
+// Tools introduced with the larger catalog remain available on newer sessions.
+func controllerCatalogLimit(id chrome.ControllerIdentity) int {
+	if id.CatalogToolLimit == 64 {
+		return 64
+	}
+	return 32
+}
+func controllerToolAvailable(id chrome.ControllerIdentity, name string) bool {
+	if !controllerTools[name] {
+		return false
+	}
+	if controllerCatalogLimit(id) == 64 {
+		return true
+	}
+	switch name {
+	case "mechanize_credential_resume_manual", "mechanize_record_pause", "mechanize_record_status", "mechanize_record_stop":
+		return false
+	}
+	return true
+}

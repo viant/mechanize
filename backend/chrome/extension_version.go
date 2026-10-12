@@ -36,3 +36,20 @@ func reportedExtensionVersion(value string) string {
 	}
 	return value
 }
+
+// Version 0.1.63 raised only the controller catalog count to 64. Old or unknown
+// receivers keep the 32-tool contract; this is transport capacity, not authority.
+func controllerCatalogLimit(version string) int {
+	if reportedExtensionVersion(version) == "" {
+		return 32
+	}
+	parts := strings.Split(version, ".")
+	var numbers [4]uint64
+	for i, part := range parts {
+		numbers[i], _ = strconv.ParseUint(part, 10, 16)
+	}
+	if numbers[0] > 0 || numbers[1] > 1 || numbers[1] == 1 && numbers[2] >= 63 {
+		return 64
+	}
+	return 32
+}

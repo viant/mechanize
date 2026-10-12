@@ -22,6 +22,8 @@ type ControllerIdentity struct {
 	DocumentID      string
 	ProfileChannel  string
 	BrowserInstance string
+	// Receiver capability derived from the authenticated extension hello, never page params.
+	CatalogToolLimit int
 }
 type ControllerToolCall struct {
 	Name      string          `json:"name"`
@@ -52,7 +54,7 @@ func (g *Gateway) SetControllerDispatcher(d ControllerDispatcher) error {
 	return nil
 }
 func (b *Broker) initControllerSessionLocked(c *channel, s *ControllerSession) {
-	identity := ControllerIdentity{Principal: c.grant.Principal, ConversationID: s.ID, Origin: s.Origin, DocumentID: s.DocumentID, ProfileChannel: c.grant.ProfileChannel, BrowserInstance: c.grant.BrowserInstance}
+	identity := ControllerIdentity{Principal: c.grant.Principal, ConversationID: s.ID, Origin: s.Origin, DocumentID: s.DocumentID, ProfileChannel: c.grant.ProfileChannel, BrowserInstance: c.grant.BrowserInstance, CatalogToolLimit: controllerCatalogLimit(c.extensionVersion)}
 	raw, _ := json.Marshal([]string{"mechanize.controller.client.v1", b.epoch, c.epoch, c.scopeHash, s.Origin, s.DocumentID, s.ID})
 	digest := sha256.Sum256(raw)
 	identity.Principal.ClientID = "controller:" + hex.EncodeToString(digest[:])

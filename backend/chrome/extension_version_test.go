@@ -14,3 +14,16 @@ func TestReportedExtensionVersionRejectsNonVersionMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestControllerCatalogCapacityFromBoundedExtensionVersion(t *testing.T) {
+	for _, v := range []string{"", "0.1.62", "0.1.62.65535", "0.1", "0.0.999", "0.1.063", "0.1.63-private-canary", "1.2.3.4.5"} {
+		if controllerCatalogLimit(v) != 32 {
+			t.Fatal("old or unknown receiver upgraded", v)
+		}
+	}
+	for _, v := range []string{"0.1.63", "0.1.63.1", "0.1.64", "0.2.0", "1"} {
+		if controllerCatalogLimit(v) != 64 {
+			t.Fatal("new receiver downgraded", v)
+		}
+	}
+}
