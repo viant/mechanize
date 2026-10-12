@@ -1,6 +1,18 @@
 import XCTest
 @testable import MechanizeNativeCore
 final class ReplacementProofTests:XCTestCase {
+ func testComboComparisonDoesNotAuthorizeReplacementOrProtectedValues() {
+  XCTAssertTrue(ReplacementProof.comparisonPermitted(role:"AXComboBox",subrole:nil,subroleKnown:true,labels:["Number Format"]))
+  XCTAssertFalse(ReplacementProof.permitted(role:"AXComboBox",subrole:nil,subroleKnown:true,valueSettable:true,labels:["Number Format"]))
+  for label in ["Password","Credential","secret","Token","api key"] {
+   XCTAssertFalse(ReplacementProof.comparisonPermitted(role:"AXComboBox",subrole:nil,subroleKnown:true,labels:[label]))
+  }
+  for subrole in ["AXSecureTextField","AXSecureComboBox","unknown"] {
+   XCTAssertFalse(ReplacementProof.comparisonPermitted(role:"AXComboBox",subrole:subrole,subroleKnown:true,labels:["Number Format"]))
+  }
+  XCTAssertFalse(ReplacementProof.comparisonPermitted(role:"AXComboBox",subrole:nil,subroleKnown:false,labels:["Number Format"]))
+  XCTAssertFalse(ReplacementProof.comparisonPermitted(role:"AXPopUpButton",subrole:nil,subroleKnown:true,labels:["Number Format"]))
+ }
  func testOnlyKnownNonsecureEditableTextClassification() {
   XCTAssertTrue(ReplacementProof.permitted(role:"AXTextField",subrole:nil,subroleKnown:true,valueSettable:true,labels:["Go to folder"]))
   for value in [("AXTextField", "AXSecureTextField",true,true,"Path"),("AXTextField","",false,true,"Path"),("AXButton","",true,true,"Path"),("AXTextArea","",true,false,"Path"),("AXTextField","",true,true,"Password")] {XCTAssertFalse(ReplacementProof.permitted(role:value.0,subrole:value.1,subroleKnown:value.2,valueSettable:value.3,labels:[value.4]))}

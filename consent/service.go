@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/viant/datly/exec"
 	"github.com/viant/datly/spec"
@@ -15,13 +16,16 @@ import (
 	"time"
 )
 
+var ErrCleanupUnconfirmed = errors.New("existing consent is inhibited pending executor cleanup")
+
 type Service struct {
-	options  Options
-	mu       sync.Mutex
-	active   map[string]map[string]context.CancelFunc
-	blocked  map[string]bool
-	known    map[string]bool
-	bindings map[string]map[string]Client
+	options      Options
+	mu           sync.Mutex
+	active       map[string]map[string]context.CancelFunc
+	blocked      map[string]bool
+	humanBlocked map[string]bool
+	known        map[string]bool
+	bindings     map[string]map[string]Client
 }
 
 func New(options Options) (*Service, error) {
@@ -43,7 +47,7 @@ func New(options Options) (*Service, error) {
 	if options.RequestTTL < time.Second || options.RequestTTL > 5*time.Minute || options.MaxDuration < time.Second || options.MaxDuration > time.Hour {
 		return nil, fmt.Errorf("invalid broker duration ceiling")
 	}
-	return &Service{options: options, active: map[string]map[string]context.CancelFunc{}, blocked: map[string]bool{}, known: map[string]bool{}, bindings: map[string]map[string]Client{}}, nil
+	return &Service{options: options, active: map[string]map[string]context.CancelFunc{}, blocked: map[string]bool{}, humanBlocked: map[string]bool{}, known: map[string]bool{}, bindings: map[string]map[string]Client{}}, nil
 }
 func randomID() (string, error) {
 	var b [16]byte
@@ -104,6 +108,14 @@ func (s *Service) CreateRequest(ctx context.Context, sessionID string, in Reques
 	if err != nil {
 		return Request{}, err
 	}
+	return s.createRequest(ctx, c, sessionID, in, c.ID)
+}
+
+func policyActor(clientID string) string { return "controller-policy:" + clientID }
+
+// Only CreatePolicyGrant supplies the policy actor, after its trusted verifier.
+func (s *Service) createRequest(ctx context.Context, c Client, sessionID string, in RequestInput, actorID string) (Request, error) {
+	var err error
 	if sessionID != c.SessionID {
 		return Request{}, fmt.Errorf("authenticated session mismatch")
 	}
@@ -131,7 +143,7 @@ func (s *Service) CreateRequest(ctx context.Context, sessionID string, in Reques
 	modesJSON, _ := json.Marshal(modes)
 	now := s.options.Now().UTC()
 	r := record{Namespace: ns, ID: id, ClientID: c.ID, ClientName: c.DisplayName, SessionID: c.SessionID, ScopeJSON: string(scope), ModesJSON: string(modesJSON), Purpose: in.Purpose, DurationSeconds: in.DurationSeconds, CreatedAt: int(now.UnixMilli()), RequestExpiresAt: int(now.Add(s.options.RequestTTL).UnixMilli()), RequestState: "pending", GrantID: grantID, GrantState: "none", Revision: 1}
-	if err = s.write(ctx, "create", c.ID, r, nil); err != nil {
+	if err = s.write(ctx, "create", actorID, r, nil); err != nil {
 		return Request{}, err
 	}
 	return r.request()
@@ -148,7 +160,7 @@ func (s *Service) ListRequests(ctx context.Context) ([]Request, error) {
 	result := []Request{}
 	now := int(s.options.Now().UnixMilli())
 	for _, r := range rows {
-		if r.RequestState != "pending" || r.RequestExpiresAt <= now {
+		if r.policyManaged || r.RequestState != "pending" || r.RequestExpiresAt <= now {
 			continue
 		}
 		if _, err = s.resolve(ctx, r); err != nil {
@@ -226,15 +238,22 @@ func (s *Service) Decide(ctx context.Context, requestID string, decision Decisio
 	if err != nil {
 		return nil, err
 	}
+	return s.decide(ctx, requestID, decision, a.ID, false)
+}
+
+func (s *Service) decide(ctx context.Context, requestID string, decision Decision, actorID string, policyManaged bool) (*Grant, error) {
 	if decision != AllowOnce && decision != AllowSession && decision != AllowUntilRevoked && decision != Deny {
 		return nil, fmt.Errorf("invalid consent decision")
 	}
-	r, err := s.lookup(ctx, requestID, a.ID)
+	r, err := s.lookup(ctx, requestID, actorID)
 	if err != nil {
 		return nil, err
 	}
 	if r.ID != requestID {
 		return nil, fmt.Errorf("request identity required")
+	}
+	if r.policyManaged != policyManaged || policyManaged && actorID != policyActor(r.ClientID) {
+		return nil, fmt.Errorf("request decision authority mismatch")
 	}
 	now := int(s.options.Now().UnixMilli())
 	if r.RequestState != "pending" || r.RequestExpiresAt <= now {
@@ -261,7 +280,7 @@ func (s *Service) Decide(ctx context.Context, requestID string, decision Decisio
 			r.GrantExpiresAt = 0
 		}
 	}
-	if err = s.write(ctx, "decide", a.ID, r, &previous); err != nil {
+	if err = s.write(ctx, "decide", actorID, r, &previous); err != nil {
 		return nil, err
 	}
 	if decision == Deny {
@@ -272,6 +291,31 @@ func (s *Service) Decide(ctx context.Context, requestID string, decision Decisio
 	s.mu.Unlock()
 	g, err := r.grant(s.options.Now())
 	return &g, err
+}
+
+// CreatePolicyGrant materializes the existing trusted-controller policy as a
+// bounded session grant. The verifier is supplied only by Host construction;
+// neither requester arguments nor NativeHuman are used as policy authority.
+// Existing generated writers retain request/grant audit and CAS invariants.
+func (s *Service) CreatePolicyGrant(ctx context.Context, sessionID string, in RequestInput) (*Grant, error) {
+	if s.options.VerifyPolicy == nil {
+		return nil, fmt.Errorf("saved policy authority unavailable")
+	}
+	c, err := s.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err = s.options.VerifyPolicy(ctx, c); err != nil {
+		return nil, err
+	}
+	request, err := s.createRequest(ctx, c, sessionID, in, policyActor(c.ID))
+	if err != nil {
+		return nil, err
+	}
+	if err = s.options.VerifyPolicy(ctx, c); err != nil {
+		return nil, err
+	}
+	return s.decide(ctx, request.ID, AllowSession, policyActor(c.ID), true)
 }
 
 // FindPermanentGrant returns a current matching approval for the verified client's
@@ -293,16 +337,14 @@ func (s *Service) FindPermanentGrant(ctx context.Context, op Operation) (*Grant,
 	if err != nil {
 		return nil, err
 	}
+	cleanupBlocked := false
 	for _, r := range rows {
-		if r.Namespace != ns || r.ClientID != c.ID || !r.permanent() || r.GrantState != "active" || r.RevocationState != "" {
+		if r.Namespace != ns || r.ClientID != c.ID || !r.permanent() || r.GrantState != "active" {
 			continue
 		}
 		s.mu.Lock()
 		blocked := s.blocked[ns+":"+r.GrantID]
 		s.mu.Unlock()
-		if blocked {
-			continue
-		}
 		scope, modes, err := r.details()
 		if err != nil {
 			return nil, err
@@ -325,8 +367,35 @@ func (s *Service) FindPermanentGrant(ctx context.Context, op Operation) (*Grant,
 		if err = s.options.Policy(ctx, c, op.Scope, []Mode{op.Mode}, r.DurationSeconds); err != nil {
 			continue
 		}
+		if r.RevocationState == string(CleanupUnknown) {
+			if r.cleanupMachineOnly && s.options.RecoverCleanup != nil {
+				if recoveryErr := s.RecoverDispatchCleanup(ctx, r.GrantID); recoveryErr == nil {
+					r.RevocationState = ""
+					r.Revision++
+					g, grantErr := r.grant(s.options.Now())
+					return &g, grantErr
+				}
+			}
+			if op.Mode == Observe && r.cleanupMachineOnly {
+				s.mu.Lock()
+				humanBlocked := s.humanBlocked[ns+":"+r.GrantID]
+				s.mu.Unlock()
+				if !humanBlocked {
+					grant, err := r.grant(s.options.Now())
+					return &grant, err
+				}
+			}
+			cleanupBlocked = true
+			continue
+		}
+		if blocked || r.RevocationState != "" {
+			continue
+		}
 		g, err := r.grant(s.options.Now())
 		return &g, err
+	}
+	if cleanupBlocked {
+		return nil, ErrCleanupUnconfirmed
 	}
 	return nil, nil
 }
@@ -348,11 +417,19 @@ func (s *Service) Authorize(ctx context.Context, op Operation) (*Lease, error) {
 	blocked := s.blocked[key]
 	s.mu.Unlock()
 	if blocked {
+		if op.Mode == Observe {
+			lease, _, observationErr := s.AuthorizeCleanupObservation(ctx, op)
+			return lease, observationErr
+		}
 		return nil, fmt.Errorf("active bound consent required")
 	}
 	r, err := s.lookup(ctx, op.GrantID, c.ID)
 	if err != nil {
 		return nil, err
+	}
+	if op.Mode == Observe && r.RevocationState == string(CleanupUnknown) {
+		lease, _, observationErr := s.AuthorizeCleanupObservation(ctx, op)
+		return lease, observationErr
 	}
 	if r.Namespace != ns || r.GrantID != op.GrantID || r.ClientID != c.ID || (!r.permanent() && r.SessionID != c.SessionID) || r.GrantState != "active" || r.RevocationState != "" || (!r.permanent() && r.GrantExpiresAt <= int(s.options.Now().UnixMilli())) {
 		return nil, fmt.Errorf("active bound consent required")
@@ -380,6 +457,9 @@ func (s *Service) Authorize(ctx context.Context, op Operation) (*Lease, error) {
 	// or mode. Check before consuming allow-once or admitting dispatch.
 	if err = s.options.Policy(ctx, c, op.Scope, []Mode{op.Mode}, r.DurationSeconds); err != nil {
 		return nil, err
+	}
+	if required, _ := ctx.Value(reusableGrantKey{}).(bool); required && r.Decision == string(AllowOnce) {
+		return nil, fmt.Errorf("session or permanent consent required for private preparation")
 	}
 	if r.Decision == string(AllowOnce) {
 		previous := r
@@ -617,6 +697,7 @@ func (s *Service) cancellationsLocked(key string) []context.CancelFunc {
 func (s *Service) inhibit(key string) {
 	s.mu.Lock()
 	s.blocked[key] = true
+	s.humanBlocked[key] = true
 	cancellations := s.cancellationsLocked(key)
 	s.mu.Unlock()
 	for _, cancel := range cancellations {

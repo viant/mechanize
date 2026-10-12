@@ -28,7 +28,7 @@ func registerOperationOutputs(base *protocol.DefaultHandler, runtime *automation
 	if err := output.Load((*automation.OperationOutputs)(nil)); err != nil {
 		return err
 	}
-	base.Registry.RegisterToolWithSchema("mechanize_operation_outputs", "Read explicitly named safe element.read bindings from your client's successfully completed live operation. Read only; bounded ephemeral runtime values disappear on session close/restart. This does not read durable state or resolve inputs, secrets or credentials. Pending/failed operations and unknown read bindings are rejected; withheld values have explicit unavailable reasons.", input, &output, func(ctx context.Context, req *schema.CallToolRequest) (*schema.CallToolResult, *jsonrpc.Error) {
+	base.Registry.RegisterToolWithSchema("mechanize_operation_outputs", "Read explicitly named safe element.read bindings or browser.openOrigin tab-handle bindings from your client's successfully completed live operation. Read only; bounded ephemeral runtime values disappear on session close/restart. This does not read durable state or resolve inputs, secrets or credentials. Pending/failed operations and unknown read bindings are rejected; withheld values have explicit unavailable reasons.", input, &output, func(ctx context.Context, req *schema.CallToolRequest) (*schema.CallToolResult, *jsonrpc.Error) {
 		if req == nil {
 			return failure(errors.New("explicit operation output request required"))
 		}

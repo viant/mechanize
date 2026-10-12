@@ -1,7 +1,5 @@
 -- Infrastructure schema only. Product reads and writes belong to generated components.
-PRAGMA foreign_keys=ON;
-PRAGMA journal_mode=WAL;
-PRAGMA synchronous=FULL;
+-- Connection PRAGMAs are fixed by the Datly connector DSN, outside transactions.
 CREATE TABLE IF NOT EXISTS plan_revisions(namespace TEXT NOT NULL,id TEXT NOT NULL,parent_id TEXT,objective_id TEXT NOT NULL,content_hash TEXT NOT NULL,content_json TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(namespace,id));
 CREATE TABLE IF NOT EXISTS runs(namespace TEXT NOT NULL,id TEXT NOT NULL,plan_id TEXT NOT NULL,status TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1,endly_session_id TEXT,endly_operation_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(namespace,id),FOREIGN KEY(namespace,plan_id) REFERENCES plan_revisions(namespace,id));
 CREATE TABLE IF NOT EXISTS attempts(namespace TEXT NOT NULL,id TEXT NOT NULL,run_id TEXT NOT NULL,step_id TEXT NOT NULL,plan_id TEXT NOT NULL,lease_epoch INTEGER NOT NULL,state TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(namespace,id),FOREIGN KEY(namespace,run_id) REFERENCES runs(namespace,id));

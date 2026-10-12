@@ -24,6 +24,7 @@ GEMINI.md
 /.idea/
 /.vscode/
 /mechanize
+node_modules/
 *.test
 *.prof
 __pycache__/
@@ -43,3 +44,29 @@ __pycache__/
 *.db
 *.db-shm
 *.db-wal
+
+# Local site-specific skills, workflows and private test material
+/skills/*/
+!/skills/mechanize-app-discovery/
+!/skills/mechanize-desktop/
+!/skills/mechanize-finder/
+!/skills/mechanize-intellij/
+!/skills/mechanize-microsoft-office/
+!/skills/mechanize-openoffice/
+!/skills/mechanize-recording/
+!/skills/mechanize-scenario/
+/local-guides/
+/private-scenarios/
+roblox/
+roblocx/
+/skills/mechanize-roblox/
+/skills/mechanize-roblocx/
+
+# Defense in depth: private vault material must live outside Git
+.secret/
+.secrets/
+vault-data/
+vault-storage/
+vault-keys/
+.key-write.lock
+.vault-write.lock

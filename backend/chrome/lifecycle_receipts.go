@@ -16,6 +16,7 @@ import (
 )
 
 type LifecycleReceiptInventory struct {
+	AllWebsites                                                                                                 bool `json:"allWebsites,omitempty"`
 	GuardID, Owner, ClientID, ProfileChannel, BrowserInstance, BrokerEpoch, ChannelEpoch, ScopeHash, TrustScope string
 	Process                                                                                                     nativepeer.ChromeProcessEvidence
 	ProcessTrust                                                                                                *nativepeer.ChromeProcessPolicy
@@ -90,6 +91,7 @@ func (g *Gateway) BeginLifecycleReceiptExport(ctx context.Context, p auth.Princi
 	}
 	guard.inventory.ExtensionOrigin = c.grant.ExtensionOrigin
 	guard.inventory.ProfileDirectory = c.grant.ProfileDirectory
+	guard.inventory.AllWebsites = c.grant.AllWebsites
 	guard.inventory.Origins = append([]string(nil), c.grant.Origins...)
 	guard.inventory.ProfileQualified = c.profileQualified
 	guard.active.Store(true)
@@ -132,7 +134,7 @@ func (g *LifecycleReceiptGuard) validLocked() bool {
 	if b.channels[channelKey(g.inventory.ProfileChannel, g.inventory.BrowserInstance)] != c || b.closed || c.lifecycleGuard != g || !c.lifecycleInhibited || c.executorQualified || c.conn != g.conn || c.epoch != g.inventory.ChannelEpoch || c.scopeHash != g.inventory.ScopeHash || b.epoch != g.inventory.BrokerEpoch || c.grant.TrustScope != g.inventory.TrustScope || c.grant.Principal.Namespace != g.owner.Namespace || c.processEvidence == nil || c.processEvidence.NativeHost != g.peer.NativeHost || c.processEvidence.ChromeParent != g.peer.ChromeParent || !channelScopeQualified(c) || !c.inventoryComplete || len(c.unknown) != 0 {
 		return false
 	}
-	if !reflect.DeepEqual(b.processTrust, g.inventory.ProcessTrust) || c.grant.ExtensionOrigin != g.inventory.ExtensionOrigin || c.grant.ProfileDirectory != g.inventory.ProfileDirectory || c.profileQualified != g.inventory.ProfileQualified || !reflect.DeepEqual(c.grant.Origins, g.inventory.Origins) {
+	if c.grant.AllWebsites != g.inventory.AllWebsites || !reflect.DeepEqual(b.processTrust, g.inventory.ProcessTrust) || c.grant.ExtensionOrigin != g.inventory.ExtensionOrigin || c.grant.ProfileDirectory != g.inventory.ProfileDirectory || c.profileQualified != g.inventory.ProfileQualified || !reflect.DeepEqual(c.grant.Origins, g.inventory.Origins) {
 		return false
 	}
 	roots, err := lifecycleRoots(c.documents)

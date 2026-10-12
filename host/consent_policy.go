@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"github.com/viant/mechanize/auth"
+	"github.com/viant/mechanize/backend/chrome"
 	"github.com/viant/mechanize/consent"
 	"github.com/viant/mechanize/model"
+	"github.com/viant/mechanize/vault"
 )
 
 func (h *Host) enrolled(ctx context.Context, p auth.Principal) (User, error) {
@@ -32,6 +34,8 @@ func (h *Host) ConsentPolicy(ctx context.Context, p auth.Principal, scope consen
 	}
 	allowed := false
 	switch scope.Kind {
+	case "browser":
+		allowed = user.DesktopAccess && h.chromeAllWebsites[p.Namespace]
 	case "desktop":
 		allowed = user.DesktopAccess
 	case "application":
@@ -75,6 +79,90 @@ func (h *Host) ConsentPolicy(ctx context.Context, p auth.Principal, scope consen
 	return nil
 }
 func (h *Host) AuthorizeOperation(ctx context.Context, p auth.Principal, surface model.Surface, mutation bool, requested consent.Mode) (*consent.Lease, error) {
+	if h.chromeStartupUnqualified && surface.Kind == "web" {
+		return nil, chrome.ErrProcessQualification
+	}
+	// Browser delivery protects its exact DOM/value scope; it is not a global
+	// native desktop prohibition. Existing native value-read restrictions and
+	// secure Vault entry exclusion remain independent of effect uncertainty.
+	if surface.Kind == "native" {
+		if _, err := h.enrolled(ctx, p); err != nil {
+			return nil, err
+		}
+	}
+	// Durable browser protection survives restart. Its generated scoped reader
+	// honors an existing held user lock; no browser lane is acquired here.
+	if h.durable != nil {
+		if surface.Kind == "web" {
+			scopes, err := h.durable.CredentialProtectionScopes(ctx, p, surface.Origin)
+			if err != nil {
+				return nil, vault.ErrUnavailable
+			}
+			if len(scopes) > 0 {
+				if !mutation && requested == consent.Observe {
+					if lease, handled, e := h.authorizeCredentialPublicRead(ctx, p, surface); handled {
+						return lease, e
+					}
+				}
+				if h.credentials != nil {
+					if lease, e := h.credentials.authorizeDOM(ctx, p, surface, mutation, requested); e == nil {
+						return lease, nil
+					} else {
+						var reason *model.MechanizeError
+						if errors.As(e, &reason) && reason.Code == "credentialPurposeMismatch" && reason.Stage == "consent" && reason.DispatchState == "notDispatched" && reason.EffectState == "none" {
+							return nil, e
+						}
+					}
+				}
+				return h.authorizeDisjointWeb(ctx, p, surface, mutation, requested, scopes)
+			}
+		} else if surface.Kind != "native" {
+			blocked, err := h.durable.CredentialDeliveryBlocked(ctx, p)
+			if err != nil {
+				return nil, vault.ErrUnavailable
+			}
+			if blocked {
+				return nil, vault.ErrDeliveryProtected
+			}
+		}
+	}
+
+	// The permit covers the entire consent lease, including recording lifetimes
+	// and retained capture/control permits. Entry cannot begin until they release.
+	var releaseExposure func()
+	if h.vaultExposure != nil {
+		var err error
+		if surface.Kind == "native" {
+			releaseExposure, err = h.vaultExposure.AcquireNativeExposureContext(ctx)
+		} else {
+			releaseExposure, err = h.vaultExposure.AcquireExposureContext(ctx)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	retained := false
+	defer func() {
+		if !retained && releaseExposure != nil {
+			releaseExposure()
+		}
+	}()
+	lease, err := h.authorizeConsentOperation(ctx, p, surface, mutation, requested)
+	if err != nil {
+		return nil, err
+	}
+	if releaseExposure != nil {
+		previous := lease.Release
+		lease.Release = func() { defer releaseExposure(); previous() }
+		retained = true
+	}
+	return lease, nil
+}
+
+// authorizeConsentOperation shares actual policy, session and durable consent
+// checks. Callers supply either ordinary exposure or an exact private delivery
+// lease; this helper alone is never an exposed authorization API.
+func (h *Host) authorizeConsentOperation(ctx context.Context, p auth.Principal, surface model.Surface, mutation bool, requested consent.Mode) (*consent.Lease, error) {
 	if h.consent == nil {
 		return nil, errors.New("native permission broker is unavailable")
 	}
@@ -82,7 +170,7 @@ func (h *Host) AuthorizeOperation(ctx context.Context, p auth.Principal, surface
 	if !ok || binding.Purpose == "" {
 		return nil, &model.MechanizeError{Code: "permissionRequired", Message: "Request native consent for this client, session and exact target before dispatch", Stage: "consent", DispatchState: "notDispatched"}
 	}
-	scope, err := ConsentScope(surface)
+	scope, err := h.operationConsentScope(p, surface)
 	if err != nil {
 		return nil, err
 	}
@@ -100,8 +188,14 @@ func (h *Host) AuthorizeOperation(ctx context.Context, p auth.Principal, surface
 	}
 	operation := consent.Operation{GrantID: binding.GrantID, SessionID: binding.SessionID, Scope: scope, Mode: mode, Purpose: binding.Purpose}
 	if binding.GrantID == "" {
-		grant, err := h.consent.FindPermanentGrant(ctx, p, operation)
+		grant, err := h.consent.ResolveControllerPolicyGrant(ctx, p, operation)
+		if err == nil && grant == nil {
+			grant, err = h.consent.FindPermanentGrant(ctx, p, operation)
+		}
 		if err != nil {
+			if errors.Is(err, consent.ErrCleanupUnconfirmed) {
+				return nil, &model.MechanizeError{Code: "consentCleanupUnconfirmed", Stage: "cleanup", DispatchState: "notDispatched", Message: "Existing approval is retained but executor cleanup is unconfirmed. Recover the previous automation before continuing."}
+			}
 			return nil, err
 		}
 		if grant == nil {
@@ -116,7 +210,10 @@ func (h *Host) AuthorizeOperation(ctx context.Context, p auth.Principal, surface
 		return nil, err
 	}
 	if gate != nil {
-		return gate.retain(generation, lease)
+		lease, err = gate.retain(generation, lease)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return lease, nil
 }

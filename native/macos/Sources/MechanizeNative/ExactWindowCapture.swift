@@ -31,7 +31,7 @@ struct ExactWindowCapture {
         configuration.width = geometry.widthPixels
         configuration.height = geometry.heightPixels
         configuration.destinationRect = CGRect(x: 0, y: 0, width: geometry.widthPixels, height: geometry.heightPixels)
-        configuration.showsCursor = false
+        configuration.showsCursor = true
         configuration.ignoreShadowsDisplay = true
         configuration.includeChildWindows = false
     }

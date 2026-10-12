@@ -13,7 +13,7 @@ func ValidateKeyboardChord(key string) error {
 	}
 	parts := strings.Split(key, "+")
 	name := parts[len(parts)-1]
-	valid := len(name) == 1 && name[0] >= 'A' && name[0] <= 'Z'
+	valid := len(name) == 1 && (name[0] >= 'A' && name[0] <= 'Z' || name[0] >= '0' && name[0] <= '9')
 	if len(name) >= 2 && name[0] == 'F' {
 		if number, err := strconv.Atoi(name[1:]); err == nil && number >= 1 && number <= 20 && strconv.Itoa(number) == name[1:] {
 			valid = true

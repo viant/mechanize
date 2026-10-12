@@ -1,0 +1,45 @@
+CREATE TABLE IF NOT EXISTS browser_activation_bindings (
+ namespace TEXT NOT NULL CHECK(length(namespace)=64 AND namespace NOT GLOB '*[^0-9a-f]*'),
+ id TEXT NOT NULL CHECK(length(id)=64 AND id NOT GLOB '*[^0-9a-f]*'),
+ client_id TEXT NOT NULL,
+ action TEXT NOT NULL CHECK(action='browser.activateTab'),
+ run_id TEXT NOT NULL,
+ plan_id TEXT NOT NULL,
+ step_id TEXT NOT NULL,
+ step_index INTEGER NOT NULL CHECK(step_index>=0),
+ durable_attempt_id TEXT NOT NULL CHECK(length(durable_attempt_id)=64 AND durable_attempt_id NOT GLOB '*[^0-9a-f]*'),
+ effect_id TEXT NOT NULL CHECK(length(effect_id)=64 AND effect_id NOT GLOB '*[^0-9a-f]*'),
+ browser_attempt_id TEXT NOT NULL CHECK(length(browser_attempt_id)=64 AND browser_attempt_id NOT GLOB '*[^0-9a-f]*'),
+ profile_channel TEXT NOT NULL,
+ browser_instance TEXT NOT NULL,
+ origin TEXT NOT NULL,
+ tab_id INTEGER NOT NULL CHECK(tab_id BETWEEN 1 AND 2147483647),
+ chrome_pid INTEGER NOT NULL CHECK(chrome_pid>0),
+ chrome_start_token TEXT NOT NULL,
+ native_host_pid INTEGER NOT NULL CHECK(native_host_pid>0),
+ native_host_start_token TEXT NOT NULL,
+ broker_epoch TEXT NOT NULL,
+ channel_epoch TEXT NOT NULL,
+ scope_hash TEXT NOT NULL CHECK(length(scope_hash)=64 AND scope_hash NOT GLOB '*[^0-9a-f]*'),
+ channel_operation_epoch INTEGER NOT NULL CHECK(channel_operation_epoch>0),
+ fingerprint_version INTEGER NOT NULL CHECK(fingerprint_version=1),
+ fingerprint_digest TEXT NOT NULL CHECK(length(fingerprint_digest)=64 AND fingerprint_digest NOT GLOB '*[^0-9a-f]*'),
+ plan_content_digest TEXT NOT NULL CHECK(length(plan_content_digest)=64 AND plan_content_digest NOT GLOB '*[^0-9a-f]*'),
+ step_digest TEXT NOT NULL CHECK(length(step_digest)=64 AND step_digest NOT GLOB '*[^0-9a-f]*'),
+ business_key TEXT NOT NULL,
+ business_key_digest TEXT NOT NULL CHECK(length(business_key_digest)=64 AND business_key_digest NOT GLOB '*[^0-9a-f]*'),
+ committed_run_revision INTEGER NOT NULL CHECK(committed_run_revision>0),
+ endly_session_id TEXT NOT NULL,
+ endly_operation_id TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(namespace,id), UNIQUE(namespace,durable_attempt_id), UNIQUE(namespace,browser_attempt_id),
+ FOREIGN KEY(namespace,run_id) REFERENCES runs(namespace,id),
+ FOREIGN KEY(namespace,plan_id) REFERENCES plan_revisions(namespace,id),
+ FOREIGN KEY(namespace,durable_attempt_id) REFERENCES attempts(namespace,id),
+ FOREIGN KEY(namespace,effect_id) REFERENCES effects(namespace,id)
+);
+CREATE TRIGGER IF NOT EXISTS browser_activation_binding_immutable_update BEFORE UPDATE ON browser_activation_bindings
+BEGIN SELECT RAISE(ABORT,'browser activation binding is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS browser_activation_binding_immutable_delete BEFORE DELETE ON browser_activation_bindings
+BEGIN SELECT RAISE(ABORT,'browser activation binding history is retained'); END;
+PRAGMA user_version=16;

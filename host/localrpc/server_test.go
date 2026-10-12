@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/viant/mechanize/auth"
 )
@@ -97,5 +98,56 @@ func TestMissingSignedPeerPolicyFailsClosed(t *testing.T) {
 	_ = os.Chmod(dir, 0700)
 	if _, e := New(context.Background(), Options{SocketPath: filepath.Join(dir, "consent.sock"), Verifier: fixtureVerifier{}, Handle: func(context.Context, string, json.RawMessage) (any, error) { return nil, nil }}); e == nil {
 		t.Fatal("missing peer policy accepted")
+	}
+}
+
+func TestConsoleImageRevocationAfterHandshakeBlocksGenericUIRequest(t *testing.T) {
+	dir, err := os.MkdirTemp("/private/tmp", "mc-peer-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	p, _ := auth.NewPrincipal("fixture", "", "human", []string{"consent:admin"})
+	var revoked atomic.Bool
+	var called atomic.Int32
+	s, err := New(context.Background(), Options{SocketPath: filepath.Join(dir, "ui.sock"), Verifier: fixtureVerifier{p}, VerifyPeer: func(*net.UnixConn) error {
+		if revoked.Load() {
+			return errors.New("PRIVATE-PEER-CANARY")
+		}
+		return nil
+	}, Handle: func(context.Context, string, json.RawMessage) (any, error) {
+		called.Add(1)
+		return map[string]bool{"available": true}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	c, err := net.Dial("unix", filepath.Join(dir, "ui.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	hello := send(t, c, map[string]any{"jsonrpc": "2.0", "id": "1", "method": "hello", "params": map[string]any{"protocolVersion": 1, "credential": "fixture-enrollment", "clientBundleID": "com.viant.mechanize.consent"}})
+	session := hello.Result.(map[string]any)["sessionID"].(string)
+	revoked.Store(true)
+	raw, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": "2", "method": "browserSetupMetadata", "params": map[string]any{"sessionID": session}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header [4]byte
+	binary.BigEndian.PutUint32(header[:], uint32(len(raw)))
+	if _, err = c.Write(append(header[:], raw...)); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.ReadFull(c, header[:])
+	if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatal("revoked console image retained request authority")
+	}
+	if called.Load() != 0 {
+		t.Fatal("revoked peer reached native handler")
 	}
 }

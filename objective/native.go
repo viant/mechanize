@@ -139,7 +139,7 @@ func (a *NativeAdapter) evaluateOnce(ctx context.Context, p auth.Principal, name
 	}
 	for key := range inputs {
 		switch key {
-		case "bundleID", "processId", "processStartToken", "strategy", "selector", "name", "nativeRoot", "windowTitle", "windowRole", "ancestorID", "attribute", "expected":
+		case "bundleID", "processId", "processStartToken", "strategy", "selector", "name", "nativeRoot", "nativeMenu", "windowTitle", "windowRole", "ancestorID", "attribute", "expected":
 		default:
 			return Result{}, errors.New("unsupported native predicate input")
 		}
@@ -169,12 +169,12 @@ func (a *NativeAdapter) evaluateOnce(ctx context.Context, p auth.Principal, name
 		return Result{}, err
 	}
 	switch attribute {
-	case "value", "name", "identifier", "role", "staticText", "focused", "enabled":
+	case "value", "name", "identifier", "role", "staticText", "focused", "enabled", "checked":
 	default:
 		return Result{}, errors.New("unsupported native observation attribute")
 	}
 	expected := ""
-	booleanAttribute := attribute == "focused" || attribute == "enabled"
+	booleanAttribute := attribute == "focused" || attribute == "enabled" || attribute == "checked"
 	if booleanAttribute {
 		if inputs["expected"].Kind != model.BoolValue || inputs["expected"].Validate() != nil {
 			return Result{}, errors.New("native boolean comparison requires typed boolean expectation")
@@ -221,6 +221,13 @@ func (a *NativeAdapter) evaluateOnce(ctx context.Context, p auth.Principal, name
 			return Result{}, errors.New("native root requires menuBar or focusedElement without window inputs")
 		}
 		target.Scope.NativeRoot = root
+	}
+	if value, exists := inputs["nativeMenu"]; exists {
+		name, err := boundedNativeString(value, 256, false)
+		if err != nil || target.Scope.NativeRoot != "menuBar" || !model.ValidNativeMenuName(name) || surface.ProcessID <= 0 || surface.ProcessStartToken == "" {
+			return Result{}, errors.New("named menu requires exact native menuBar process scope")
+		}
+		target.Scope.NativeMenu = name
 	}
 	if value, exists := inputs["windowTitle"]; exists {
 		window, err := boundedNativeString(value, 512, false)

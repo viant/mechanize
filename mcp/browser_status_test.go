@@ -33,6 +33,8 @@ func TestBrowserStatusMCPClosedAuthenticatedReadOnly(t *testing.T) {
 	calls := 0
 	callbackFailure := false
 	want := chrome.BrowserStatus{Available: true, Channels: []chrome.BrowserChannelStatus{{TrustScope: chrome.TrustScopeDesktop, Connected: true, ProcessQualified: true, ScopeQualified: true, AttentionCode: "inventoryUnavailable", UnknownCount: 1}}}
+	setup := want.SetupStatus()
+	want.Setup = &setup
 	s, err := New(Dependencies{Runtime: runtime, Policy: func(context.Context, auth.Principal) (script.Policy, error) { return script.Policy{}, nil }, BrowserStatus: func(c context.Context, actor auth.Principal) (chrome.BrowserStatus, error) {
 		calls++
 		actual, err := auth.FromContext(c)
@@ -100,6 +102,17 @@ func TestBrowserStatusMCPClosedAuthenticatedReadOnly(t *testing.T) {
 	var got chrome.BrowserStatus
 	if err = json.Unmarshal(raw, &got); err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("diagnostic changed: %s %v", raw, err)
+	}
+	want.Channels[0].ProcessQualified = false
+	want.Channels[0].ScopeQualified = false
+	want.Channels[0].ProcessVerificationReason = "scopeChanged"
+	out, err = client.CallTool(ctx, &schema.CallToolRequestParams{Name: "mechanize_browser_status", Arguments: map[string]any{}})
+	if err != nil || out == nil || out.IsError != nil && *out.IsError {
+		t.Fatal("closed process reason unavailable", err)
+	}
+	raw, _ = json.Marshal(out.StructuredContent)
+	if json.Unmarshal(raw, &got) != nil || got.Channels[0].ProcessVerificationReason != "scopeChanged" {
+		t.Fatal("closed process reason lost at MCP boundary")
 	}
 	want = chrome.BrowserStatus{Available: false, Channels: []chrome.BrowserChannelStatus{}}
 	out, err = client.CallTool(ctx, &schema.CallToolRequestParams{Name: "mechanize_browser_status", Arguments: map[string]any{}})

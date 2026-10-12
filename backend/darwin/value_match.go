@@ -57,7 +57,7 @@ func (g *Gateway) ValueMatches(ctx context.Context, p auth.Principal, target mod
 	if err != nil {
 		return ValueMatchProof{}, err
 	}
-	observation, err := g.observeWindowSnapshot(ctx, target.Surface, target.Scope.NativeRoot, false, windowScope)
+	observation, err := g.observeWindowSnapshot(ctx, target.Surface, target.Scope.NativeRoot, false, windowScope, target.Scope.NativeMenu)
 	if err != nil {
 		return ValueMatchProof{}, err
 	}

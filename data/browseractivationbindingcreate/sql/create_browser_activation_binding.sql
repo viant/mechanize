@@ -1,0 +1,2 @@
+SELECT * FROM  (SELECT b.* FROM browser_activation_bindings b WHERE b.namespace=:Namespace AND b.client_id=:ClientID AND b.durable_attempt_id=:AttemptID AND b.effect_id=:EffectID AND b.run_id=:RunID AND b.plan_id=:PlanID
+)  bindings

@@ -50,11 +50,25 @@ func (s *Supervisor) ReconcileNoRawInput(ctx context.Context, p auth.Principal, 
 	return s.reconcileStopped(ctx, p, generation, "Persisted enrolled helper profile excluded raw input; application effects remain unresolved", true, nil)
 }
 
+// ReconcileReleasedInput repairs physical cleanup only. The trusted host proof
+// runs under the historical fence after independent old-helper death checks.
+// The current owned generation is derived from disk, never supplied by a tool.
+func (s *Supervisor) ReconcileReleasedInput(ctx context.Context, p auth.Principal, proof func(context.Context, Lease, ProcessIdentity) error) (CleanupReport, error) {
+	if proof == nil {
+		return CleanupReport{}, ErrCleanupUnknown
+	}
+	return s.reconcileStoppedGeneration(ctx, p, 0, "Stopped helper and fresh native state prove no held input; application effects remain unresolved", true, proof, true)
+}
+
 func (s *Supervisor) reconcileStopped(ctx context.Context, p auth.Principal, generation uint64, reason string, businessUnknown bool, proof func(context.Context, Lease, ProcessIdentity) error) (CleanupReport, error) {
+	return s.reconcileStoppedGeneration(ctx, p, generation, reason, businessUnknown, proof, false)
+}
+
+func (s *Supervisor) reconcileStoppedGeneration(ctx context.Context, p auth.Principal, generation uint64, reason string, businessUnknown bool, proof func(context.Context, Lease, ProcessIdentity) error, deriveGeneration bool) (CleanupReport, error) {
 	if err := actor(ctx, p); err != nil {
 		return CleanupReport{}, err
 	}
-	if generation == 0 {
+	if generation == 0 && !deriveGeneration {
 		return CleanupReport{}, ErrCleanupUnknown
 	}
 	s.mu.Lock()
@@ -93,7 +107,13 @@ func (s *Supervisor) reconcileStopped(ctx context.Context, p auth.Principal, gen
 		return CleanupReport{}, ErrCleanupUnknown
 	}
 	var prior record
-	if json.Unmarshal(raw, &prior) != nil || prior.Generation != generation || prior.Lease == nil || prior.Lease.Generation != generation || prior.Lease.Owner != p.Namespace || prior.Lease.ID == "" || prior.Lease.Scope.Validate() != nil || prior.Helper == nil || prior.Helper.PID <= 0 || prior.Helper.StartToken == "" || prior.Helper.UID != uint32(os.Getuid()) || filepath.Clean(prior.Helper.Executable) != filepath.Clean(s.options.HelperExecutable) || prior.LastCleanup == nil || !prior.LastCleanup.UnknownInputs {
+	if json.Unmarshal(raw, &prior) != nil {
+		return CleanupReport{}, ErrCleanupUnknown
+	}
+	if deriveGeneration {
+		generation = prior.Generation
+	}
+	if generation == 0 || prior.Generation != generation || prior.Lease == nil || prior.Lease.Generation != generation || prior.Lease.Owner != p.Namespace || prior.Lease.ID == "" || prior.Lease.Scope.Validate() != nil || prior.Helper == nil || prior.Helper.PID <= 0 || prior.Helper.StartToken == "" || prior.Helper.UID != uint32(os.Getuid()) || filepath.Clean(prior.Helper.Executable) != filepath.Clean(s.options.HelperExecutable) || prior.LastCleanup == nil || !prior.LastCleanup.UnknownInputs {
 		return CleanupReport{}, ErrCleanupUnknown
 	}
 	if err = s.proveStopped(*prior.Helper); err != nil {

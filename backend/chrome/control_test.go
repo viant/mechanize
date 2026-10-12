@@ -21,7 +21,7 @@ import (
 func controlFixture(t *testing.T) (*Gateway, auth.Principal, context.Context, *atomic.Int64) {
 	return controlFixtureVersion(t, 0)
 }
-func controlFixtureVersion(t *testing.T, version int) (*Gateway, auth.Principal, context.Context, *atomic.Int64) {
+func controlFixtureVersion(t *testing.T, version int, privateStage ...func() string) (*Gateway, auth.Principal, context.Context, *atomic.Int64) {
 	t.Helper()
 	dir, err := os.MkdirTemp("/private/tmp", "control-test-")
 	if err != nil {
@@ -66,15 +66,86 @@ func controlFixtureVersion(t *testing.T, version int) (*Gateway, auth.Principal,
 			if err != nil {
 				return
 			}
+			var private struct {
+				Type      string   `json:"type"`
+				RequestID string   `json:"requestId"`
+				AttemptID string   `json:"attemptId"`
+				Identity  Identity `json:"identity"`
+				Lease     *Lease   `json:"controlLease"`
+				PermitID  string   `json:"permitId"`
+			}
+			json.Unmarshal(raw, &private)
+			if private.Type == "credentialPrivacy" || private.Type == "credentialPrivacyCommit" || private.Type == "credentialPrivacyVerify" {
+				next := private.Identity
+				if private.Type == "credentialPrivacy" {
+					if len(privateStage) > 0 && privateStage[0]() == "spaPrivacy" {
+						next.Generation++
+					} else {
+						next.DocumentID += "-public"
+					}
+				}
+				if private.Type == "credentialPrivacyVerify" && len(privateStage) > 0 && privateStage[0]() == "privacyGenerationDrift" {
+					next.Generation++
+				}
+				WriteFrame(conn, map[string]any{"type": "credentialPrivacyResult", "requestId": private.RequestID, "attemptId": private.AttemptID, "permitId": private.PermitID, "identity": next, "ready": true, "retiredAuthorityQuiesced": true, "redactionReady": true})
+				continue
+			}
+			if private.Type == "credentialRetire" {
+				count.Add(1)
+				status := "dispatched"
+				if len(privateStage) > 0 {
+					status = privateStage[0]()
+				}
+				WriteFrame(conn, map[string]any{"type": "credentialRetireResult", "requestId": private.RequestID, "attemptId": private.AttemptID, "identity": private.Identity, "status": status})
+				continue
+			}
+			if private.Type == "credentialSubmit" {
+				count.Add(1)
+				WriteFrame(conn, map[string]any{"type": "credentialSubmitResult", "requestId": private.RequestID, "attemptId": private.AttemptID, "identity": private.Identity, "status": "dispatched", "retiredAuthorityQuiesced": true, "controlLease": private.Lease})
+				continue
+			}
+			if private.Type == "credentialAdvance" {
+				next := private.Identity
+				next.DocumentID = "private-next"
+				stage := "password"
+				if len(privateStage) > 0 {
+					stage = privateStage[0]()
+				}
+				if stage == "pending" || stage == "rejected" || stage == "spaPrivacy" {
+					next = private.Identity
+					next.Generation++
+					if stage == "spaPrivacy" {
+						stage = "unavailable"
+					}
+				}
+				WriteFrame(conn, map[string]any{"type": "credentialAdvanceResult", "requestId": private.RequestID, "attemptId": private.AttemptID, "identity": next, "ready": stage == "password", "stage": stage})
+				continue
+			}
 			var cmd Command
 			json.Unmarshal(raw, &cmd)
 			r := Reply{RequestID: cmd.RequestID, Identity: cmd.Identity, ControlLease: cmd.ControlLease}
 			switch cmd.Action {
-			case "executor.acquire":
+			case "observe":
+				if len(privateStage) > 0 && privateStage[0]() == "noObservation" {
+					r.Error = browserError("secureDocumentRequired", "No DOM observation permitted", "notDispatched")
+				}
+			case "receipt.query":
+				r.FingerprintVersion = cmd.FingerprintVersion
+				r.FingerprintSHA256 = cmd.FingerprintSHA256
+				r.AttemptID = cmd.AttemptID
+				r.DispatchState = "notDispatched"
+				r.EffectState = "none"
+				if len(privateStage) > 0 && privateStage[0]() == "wrongReceiptFingerprint" {
+					r.FingerprintSHA256 = strings.Repeat("f", 64)
+				}
+			case "executor.acquire", "executor.validate":
 				r.Validated = true
 			case "executor.retire":
 				r.RetiredAuthorityQuiesced = true
-			case "element.press", "element.fill":
+			case "element.press", "element.fill", "browser.navigate", "browser.activate":
+				if cmd.Action == "browser.navigate" {
+					r.RetiredAuthorityQuiesced = true
+				}
 				count.Add(1)
 				r.FingerprintVersion = cmd.FingerprintVersion
 				r.FingerprintSHA256 = cmd.FingerprintSHA256

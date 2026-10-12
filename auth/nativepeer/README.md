@@ -43,6 +43,20 @@ See Apple's [static code validation API](https://developer.apple.com/documentati
 [guest code lookup API](https://developer.apple.com/documentation/security/seccodecopyguestwithattributes(_:_:_:_:)),
 and [audit-token guest attribute](https://developer.apple.com/documentation/security/ksecguestattributeaudit).
 
+## Chrome launch-image hardlinks
+
+`VerifyChromeExecutable` is limited to the enrolled canonical Chrome main image.
+Chromium's [CodeSignCloneManager](https://chromium.googlesource.com/chromium/src/+/refs/tags/135.0.7049.7/chrome/browser/mac/code_sign_clone_manager.mm)
+hardlinks that executable into its launch clone. Chrome verification permits that
+link count while retaining the exact canonical static code requirement, ownership,
+mode and no-symlink checks. A different running path qualifies only when canonical
+and actual main executable have identical device/inode and stable file metadata.
+Both paths are rechecked across canonical static verification, exact dynamic PID
+signature verification, and PID/birth/UID/ancestry reinspection. Clone resource
+metadata does not replace canonical bundle validation. Process evidence preserves
+the kernel-reported path; neither a clone-name substring nor copied file bytes
+qualifies. Native-host and broker executable verification still requires one link.
+
 ## Native helper rendezvous
 
 `backend/darwin.Options` accepts `Requirement` and `ExpectedUID` as trusted

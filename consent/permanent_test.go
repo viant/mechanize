@@ -229,4 +229,14 @@ func TestPermanentCleanupReportRecognizesEveryAdmittedSession(t *testing.T) {
 	if one.Context.Err() == nil || two.Context.Err() == nil {
 		t.Fatal("cleanup uncertainty did not cancel both sessions")
 	}
+	op.SessionID = current.SessionID
+	found, err := service.FindPermanentGrant(f.client, op)
+	if found != nil || !errors.Is(err, consent.ErrCleanupUnconfirmed) {
+		t.Fatalf("cleanup uncertainty looked like missing consent: %+v %v", found, err)
+	}
+	otherScope := op
+	otherScope.Scope = consent.Scope{Kind: "application", BundleID: "com.fixture.Unapproved"}
+	if found, err := service.FindPermanentGrant(f.client, otherScope); found != nil || err != nil {
+		t.Fatalf("unapproved scope learned unrelated cleanup state: %+v %v", found, err)
+	}
 }

@@ -9,7 +9,15 @@ globalThis.MechanizeRecorder = class {
     this.listener = event => this.capture(event);
     for (const kind of ["click", "input", "change"]) doc.addEventListener(kind, this.listener, true);
   }
+  suppressProtectedDocument() {
+    if (!MechanizeDOM.protectedDocument(this.doc)) return false;
+    this.active = false;
+    this.doc.defaultView.clearTimeout(this.expiryTimer);
+    this.events = []; // Never export earlier buffered page data after quarantine.
+    return true;
+  }
   control(action, args = {}) {
+    if (this.suppressProtectedDocument()) throw MechanizeProtocol.error("secureDocumentRequired", "Credential document recording is unavailable");
     if (this.active && Date.now() >= this.expiresAt) this.expire();
     if (Object.keys(args).some(k => !["recordingId", "afterSequence", "limit", "leaseExpiresUnixMs"].includes(k)) || typeof args.recordingId !== "string" || !args.recordingId || args.recordingId.length > 128) throw MechanizeProtocol.error("invalidRecording", "Bounded recordingId required");
     let expiry;
@@ -48,6 +56,7 @@ globalThis.MechanizeRecorder = class {
     if (this.events.length > 128) this.droppedThrough = this.events.shift().sequence;
   }
   capture(event) {
+    if (this.suppressProtectedDocument()) return;
     if (this.active && Date.now() >= this.expiresAt) this.expire();
     if (!this.active || !event.isTrusted) return; // Excludes Mechanize/page-injected DOM events.
     if (this.seenEvents.has(event)) return;

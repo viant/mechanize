@@ -2,6 +2,13 @@
   "name": "mechanize-chrome-extension",
   "private": true,
   "version": "0.1.0",
-  "scripts": {"test": "node --test test/*.test.cjs"},
-  "devDependencies": {"jsdom": "26.1.0"}
+  "scripts": {
+    "test": "node --test test/*.test.cjs",
+    "build-accessibility": "node accessibility/build.mjs"
+  },
+  "devDependencies": {
+    "dom-accessibility-api": "0.7.1",
+    "esbuild": "0.27.4",
+    "jsdom": "26.1.0"
+  }
 }

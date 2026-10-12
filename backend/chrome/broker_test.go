@@ -66,7 +66,7 @@ func connectHost(t *testing.T, b *Broker, grant Enrollment) net.Conn {
 		t.Fatal(e)
 	}
 	var result map[string]any
-	if json.Unmarshal(hello, &result) != nil || result["type"] != "enrolled" {
+	if json.Unmarshal(hello, &result) != nil || result["type"] != "enrolled" || result["allWebsites"] != grant.AllWebsites {
 		t.Fatal("missing grant")
 	}
 	conn.SetReadDeadline(time.Time{})

@@ -10,7 +10,7 @@ public struct TargetedKeyChord: Equatable {
         guard let key = pieces.last, !key.isEmpty else { throw NativeFailure("invalidKey", "Named key required") }
         let special: Set<String> = ["Space", "Tab", "Return", "Enter", "Escape", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Backspace", "Delete"]
         let functionKeys = Set((1...20).map { "F\($0)" })
-        guard special.contains(key) || functionKeys.contains(key) || (key.utf8.count == 1 && key.utf8.allSatisfy({ (65...90).contains($0) })) else { throw NativeFailure("invalidKey", "Unsupported named key") }
+        guard special.contains(key) || functionKeys.contains(key) || (key.utf8.count == 1 && key.utf8.allSatisfy({ (65...90).contains($0) || (48...57).contains($0) })) else { throw NativeFailure("invalidKey", "Unsupported named key") }
         let mods = pieces.dropLast().map { $0 == "Cmd" ? "Command" : $0 }
         guard mods.count <= 4, Set(mods).count == mods.count, mods.allSatisfy({ ["Command", "Shift", "Option", "Control"].contains($0) }) else { throw NativeFailure("invalidModifier", "Unique closed modifier names required") }
         self.key = key == "Enter" ? "Return" : key

@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import plistlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -36,6 +37,17 @@ def fixture(path, version):
 
 
 class ExtensionPackageTests(unittest.TestCase):
+    def test_real_worker_imports_are_in_the_runtime_package(self):
+        source = Path(__file__).resolve().parents[1] / 'extension/chrome'
+        with tempfile.TemporaryDirectory() as temp:
+            destination = Path(temp).resolve() / 'runtime'
+            package.build(source, destination)
+            imports = re.findall(r'import "\./([^"/]+)";', (destination / 'worker.js').read_text())
+            self.assertIn('cdp-transport.js', imports)
+            self.assertIn('browser-input.js', imports)
+            for name in imports:
+                self.assertTrue((destination / name).is_file(), name)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -50,9 +62,10 @@ class ExtensionPackageTests(unittest.TestCase):
         destination = self.root / 'dist/extension/chrome'
         result = package.build(self.source, destination)
         self.assertEqual(result, self.expected)
-        self.assertEqual(len(package.FILES), 11)
+        self.assertEqual(len(package.FILES), 25)
         self.assertEqual({p.name for p in destination.iterdir()}, set(package.FILES))
         self.assertTrue((destination / 'retirement.js').is_file())
+        self.assertTrue((destination / 'setup-metadata.js').is_file())
         self.assertEqual(package.verify(destination, result['files'], result['sha256']), result)
         self.assertEqual((destination / 'worker.js').read_bytes(), (self.source / 'worker.js').read_bytes())
         self.assertEqual((self.source / 'README.md').read_bytes(), b'never-package')
@@ -67,7 +80,7 @@ class ExtensionPackageTests(unittest.TestCase):
                             for n in ast.walk(tree)))
 
     def test_exact_set_hash_modes_links_and_manifest_fail_closed(self):
-        for bad in ['extra', 'missing', 'missing-retirement', 'changed', 'digest', 'inventory', 'file-mode', 'directory-mode', 'symlink', 'hardlink', 'entry-point']:
+        for bad in ['extra', 'missing', 'missing-retirement', 'missing-setup', 'changed', 'digest', 'inventory', 'file-mode', 'directory-mode', 'symlink', 'hardlink', 'entry-point']:
             with self.subTest(bad=bad):
                 target = self.root / bad
                 fixture(target, 'new-desktop-worker')
@@ -75,6 +88,7 @@ class ExtensionPackageTests(unittest.TestCase):
                 if bad == 'extra': (target / 'unlisted.js').write_bytes(b'never-load')
                 elif bad == 'missing': (target / 'content.js').unlink()
                 elif bad == 'missing-retirement': (target / 'retirement.js').unlink()
+                elif bad == 'missing-setup': (target / 'setup-metadata.js').unlink()
                 elif bad == 'changed': (target / 'worker.js').write_bytes(b'old-worker')
                 elif bad == 'digest': expected['sha256'] = '0' * 64
                 elif bad == 'inventory': expected['files']['../unlisted.js'] = '0' * 64
@@ -207,7 +221,7 @@ class LegacyExtensionCompatibilityTests(unittest.TestCase):
     def test_exact_historical_backups_upgrade_and_rollback_without_accepting_arbitrary_subsets(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp).resolve()
-            self.assertEqual(len(package.FILES), 11)
+            self.assertEqual(len(package.FILES), 25)
             self.assertEqual(len(package.OLDEST_LEGACY_FILES), 9)
             self.assertEqual(len(package.INTERMEDIATE_LEGACY_FILES), 10)
             source = root / 'source'
@@ -219,9 +233,16 @@ class LegacyExtensionCompatibilityTests(unittest.TestCase):
 
             historical_versions = [
                 ('oldest-v1', package.OLDEST_LEGACY_FILES,
-                 {'fingerprint.js', 'retirement.js'}),
+                 {'controller.js', 'fingerprint.js', 'retirement.js', 'secure-input.js', 'setup-metadata.js'}),
                 ('intermediate-v2', package.INTERMEDIATE_LEGACY_FILES,
-                 {'retirement.js'}),
+                 {'controller.js', 'retirement.js', 'secure-input.js', 'setup-metadata.js'}),
+                ('previous-current-v3', package.PREVIOUS_CURRENT_FILES,
+                 {'controller.js', 'secure-input.js', 'setup-metadata.js'}),
+                ('before-secure-v4', package.BEFORE_SECURE_FILES, {'controller.js', 'secure-input.js'}),
+                ('before-controller-v5', package.BEFORE_CONTROLLER_FILES, {'controller.js'}),
+                ('before-playwright-v7', package.BEFORE_PLAYWRIGHT_FILES, set()),
+                ('before-lifecycle-v8', package.BEFORE_LIFECYCLE_FILES, set()),
+                ('before-accessibility-v9', package.BEFORE_ACCESSIBILITY_FILES, set()),
             ]
             for version, expected_files, removed_files in historical_versions:
                 with self.subTest(version=version):
@@ -229,7 +250,8 @@ class LegacyExtensionCompatibilityTests(unittest.TestCase):
                     original = installation / 'extension/chrome'
                     original.parent.mkdir(mode=0o700, parents=True)
                     fixture(original, version)
-                    for name in removed_files:
+                    removed = set(package.FILES) - set(expected_files)
+                    for name in removed:
                         (original / name).unlink()
 
                     old = package.inventory(original, allow_legacy=True)
@@ -255,7 +277,7 @@ class LegacyExtensionCompatibilityTests(unittest.TestCase):
                     self.assertEqual({p.name for p in original.iterdir()}, set(expected_files))
 
                     # Exact-set compatibility remains closed: missing an extra
-                    # historical resource is not silently accepted as a third version.
+                    # historical resource is not silently accepted as another version.
                     arbitrary = installation / 'arbitrary'
                     fixture(arbitrary, version + '-arbitrary')
                     (arbitrary / 'retirement.js').unlink()

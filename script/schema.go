@@ -36,7 +36,7 @@ func Schema() map[string]any {
 	surface := map[string]any{"oneOf": []any{object(map[string]any{"kind": kind("native"), "bundleId": str, "processId": map[string]any{"type": "integer", "minimum": 1, "maximum": 2147483647}, "processStartToken": map[string]any{"type": "string", "maxLength": 27, "pattern": `^[1-9][0-9]{0,19}:(0|[1-9][0-9]{0,5})$`}}, "kind", "bundleId"), object(map[string]any{"kind": kind("web"), "origin": str, "title": str, "tabId": str}, "kind")}}
 	surface["oneOf"].([]any)[0].(map[string]any)["dependentRequired"] = map[string]any{"processId": []string{"processStartToken"}, "processStartToken": []string{"processId"}}
 	locator := object(map[string]any{"strategy": enum("role", "name", "id", "testId", "label", "text"), "value": ref("value"), "name": ref("value"), "exact": boolean}, "strategy", "value", "exact")
-	scope := object(map[string]any{"nativeRoot": enum("menuBar", "focusedElement"), "window": values, "frame": values})
+	scope := object(map[string]any{"nativeRoot": enum("menuBar", "focusedElement"), "nativeMenu": map[string]any{"type": "string", "minLength": 1, "maxLength": 256}, "window": values, "frame": values})
 	selector := object(map[string]any{"surface": ref("surface"), "scope": ref("scope"), "locator": ref("locator"), "ancestor": ref("selector"), "cardinality": enum("one", "all", "nth"), "limit": integer, "index": integer, "order": enum("tree", "document")}, "surface", "scope", "cardinality")
 	assertion := object(map[string]any{"matcher": enum("toBeVisible", "toBeEnabled", "toHaveText", "toHaveValue", "toBeChecked"), "not": boolean, "expected": ref("value")}, "matcher", "not")
 	span := object(map[string]any{"offset": integer, "line": integer, "column": integer}, "offset", "line", "column")

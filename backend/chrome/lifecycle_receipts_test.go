@@ -168,6 +168,37 @@ func TestLifecycleReceiptGuardAuthenticatedExportAndPersistentInhibition(t *test
 	}
 	again.Close()
 }
+
+// replacementLifecycleChannel preserves the fixture channel's state while giving
+// the replacement its own write mutex. Callers hold the broker mutex.
+func replacementLifecycleChannel(c *channel) *channel {
+	return &channel{
+		lifecycleInhibited:         c.lifecycleInhibited,
+		lifecycleOwner:             c.lifecycleOwner,
+		lifecycleGuard:             c.lifecycleGuard,
+		mutationFingerprintVersion: c.mutationFingerprintVersion,
+		fixtureOnly:                c.fixtureOnly,
+		processEvidence:            c.processEvidence,
+		profileQualified:           c.profileQualified,
+		scopeQualified:             c.scopeQualified,
+		attentionCode:              c.attentionCode,
+		executorQualified:          c.executorQualified,
+		executorChallenge:          c.executorChallenge,
+		grant:                      c.grant,
+		credential:                 c.credential,
+		epoch:                      c.epoch,
+		scopeHash:                  c.scopeHash,
+		conn:                       c.conn,
+		documents:                  c.documents,
+		inventoryComplete:          c.inventoryComplete,
+		inventoryAt:                c.inventoryAt,
+		pending:                    c.pending,
+		attempts:                   c.attempts,
+		receipts:                   c.receipts,
+		unknown:                    c.unknown,
+	}
+}
+
 func TestLifecycleReceiptGuardRejectsForgedActorChangedFenceAndPeer(t *testing.T) {
 	for _, mode := range []string{"missingActor", "foreignClient", "callerScope", "changedPeer", "changedEpoch", "changedScope", "replacement", "wrongDocument", "canceled", "badReply"} {
 		t.Run(mode, func(t *testing.T) {
@@ -200,8 +231,8 @@ func TestLifecycleReceiptGuardRejectsForgedActorChangedFenceAndPeer(t *testing.T
 				f.gateway.broker.mu.Unlock()
 			case "replacement":
 				f.gateway.broker.mu.Lock()
-				clone := *f.channel
-				f.gateway.broker.channels[channelKey("p1", "b1")] = &clone
+				clone := replacementLifecycleChannel(f.channel)
+				f.gateway.broker.channels[channelKey("p1", "b1")] = clone
 				f.gateway.broker.mu.Unlock()
 			case "wrongDocument":
 				i.DocumentID = "foreign"
@@ -236,8 +267,8 @@ func TestLifecycleReceiptBeginRejectsReplacementWhileWaitingLane(t *testing.T) {
 	}()
 	time.Sleep(10 * time.Millisecond)
 	b.mu.Lock()
-	clone := *f.channel
-	b.channels[channelKey("p1", "b1")] = &clone
+	clone := replacementLifecycleChannel(f.channel)
+	b.channels[channelKey("p1", "b1")] = clone
 	b.mu.Unlock()
 	<-b.lane
 	if e := <-done; e == nil {

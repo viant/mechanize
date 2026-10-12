@@ -49,7 +49,7 @@ final class ScreenVideoCapture: NSObject, SCStreamOutput, SCStreamDelegate {
                 let scale = min(1.0, 1920.0 / Double(max(width, height, 1)))
                 config.width = max(1, Int(Double(width) * scale)); config.height = max(1, Int(Double(height) * scale))
                 config.minimumFrameInterval = CMTime(value: 1, timescale: 2)
-                config.queueDepth = 3; config.showsCursor = false; config.capturesAudio = false
+                config.queueDepth = 3; config.showsCursor = true; config.capturesAudio = false
                 let stream = SCStream(filter: filter, configuration: config, delegate: self)
                 try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
                 queue.sync { displayIDs[ObjectIdentifier(stream)] = display }

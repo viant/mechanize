@@ -1,0 +1,2 @@
+SELECT r.revision, r.namespace, r.client_id, r.session_id, r.preparation_id, r.grant_id, r.purpose_hash, r.origin, r.selected_revision, r.protection_state, r.created_at FROM (SELECT preparations.* FROM  (SELECT p.* FROM credential_delivery_preparations p WHERE p.namespace=:Namespace AND p.client_id=:ClientID AND p.preparation_id=:PreparationID
+)  preparations) r WHERE $criteria.CompositeIn("r", $CredentialPreparationFinishKeys)

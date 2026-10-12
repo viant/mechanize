@@ -55,7 +55,28 @@ func (hooks *RecordLifecycle) Validate(ctx context.Context, entity *Record, stat
 			}
 		}
 	}
-	return data.ValidateConsentMutation(ctx, "revoke", raw, previous, *a.Id, *a.ActorId, *a.Kind, *a.CreatedAt, *a.PayloadJson)
+	operation := data.ConsentCleanupOperation(ctx)
+	if operation == "cleanupRecovery" {
+		// Never undo a human-requested stop. Missing history cannot establish
+		// that this was solely an infrastructure cleanup suspension.
+		machineStop := false
+		if state.Previous == nil || state.Previous.ClientId == nil {
+			return fmt.Errorf("cleanup history unavailable")
+		}
+		for _, audit := range state.Previous.Audit {
+			if audit.Kind == nil || *audit.Kind != "revoke" {
+				continue
+			}
+			if audit.ActorId == nil || *audit.ActorId != *state.Previous.ClientId {
+				return fmt.Errorf("human revocation cannot be recovered automatically")
+			}
+			machineStop = true
+		}
+		if !machineStop {
+			return fmt.Errorf("cleanup history unavailable")
+		}
+	}
+	return data.ValidateConsentMutation(ctx, operation, raw, previous, *a.Id, *a.ActorId, *a.Kind, *a.CreatedAt, *a.PayloadJson)
 }
 func (hooks *RecordLifecycle) AfterSequence(ctx context.Context, entity *Record, state xhandler.LifecycleContext[Record, xhandler.NoParent, RevokeOutput]) error {
 	return nil

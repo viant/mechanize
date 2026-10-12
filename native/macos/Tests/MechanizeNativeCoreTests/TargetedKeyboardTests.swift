@@ -13,6 +13,15 @@ final class TargetedKeyboardTests: XCTestCase {
     func testRejectsRawCodesTextSequencesAndAmbiguousModifiers() {
         for key in ["", "49", "F0", "F01", "F21", "F0001", "0x7A", "Space Space", "Command+Command+G", "Cmd+Command+G", "Alt+G", "+G", "Command+", "g", "Cmd+Shift+G+Space", String(repeating:"X",count:65)] { XCTAssertThrowsError(try TargetedKeyChord(key)) }
     }
+    func testDigitChordsStaySingleNamedKeys() throws {
+        for digit in 0...9 {
+            XCTAssertEqual(try TargetedKeyChord("Cmd+\(digit)").key, String(digit))
+            XCTAssertEqual(try TargetedKeyChord(String(digit)).key, String(digit))
+        }
+        for key in ["Cmd+01", "Cmd+10", "Cmd+١", "Cmd+１", "Cmd+1+2", "Cmd+Command+1", "0x1", "Cmd+-1"] {
+            XCTAssertThrowsError(try TargetedKeyChord(key))
+        }
+    }
     func testPreflightRevocationIsInsideInhibitionLockBeforeAnyEvent() {
         let input = InputSafety(); input.enable(); var events:[String]=[]
         XCTAssertThrowsError(try input.press(token:"key",preflight:{throw NativeFailure("staleFocus","focus or birth changed")},down:{events.append("down");return true},up:{events.append("up");return true}))

@@ -19,6 +19,7 @@ struct ApplicationAccessListView: View {
     let busy: Bool
     let message: String
     let onToggle: (ApplicationAccessListRow, Bool) -> Void
+    @State private var selectedSkillsBundle: String?
     @State private var query = ""
     @State private var page = 0
     @StateObject private var launcher = ApplicationLauncher()
@@ -36,6 +37,24 @@ struct ApplicationAccessListView: View {
     }
 
     var body: some View {
+        Group {
+            if let bundleID = selectedSkillsBundle {
+                VStack(alignment: .leading, spacing: 12) {
+                    Button {
+                        selectedSkillsBundle = nil
+                    } label: {
+                        Label("Applications", systemImage: "chevron.left")
+                    }
+                    .accessibilityIdentifier("applications.skills.back")
+                    ApplicationSkillsView(bundleID: bundleID)
+                }
+            } else {
+                applicationList
+            }
+        }
+    }
+
+    private var applicationList: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Installed applications").font(.title2.weight(.semibold))
             Text("Switching an application on updates Mechanize's confirmed access policy. It does not grant consent for a pending tool request or change macOS permissions.")
@@ -87,6 +106,17 @@ struct ApplicationAccessListView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 8)
+                            Button {
+                                selectedSkillsBundle = row.bundleID
+                            } label: {
+                                Image(systemName: "book.closed")
+                                    .foregroundStyle(ConsoleSkills.catalog.skills(for: row.bundleID).isEmpty ? Color.secondary : Color.accentColor)
+                            }
+                            .buttonStyle(.borderless)
+                            .help(ConsoleSkills.catalog.skills(for: row.bundleID).isEmpty ? "No skills defined" : "View application skills")
+                            .accessibilityLabel("Skills for \(row.displayName)")
+                            .accessibilityIdentifier("applications.skills.\(row.bundleID)")
+                            .disabled(ConsoleSkills.catalog.skills(for: row.bundleID).isEmpty)
                             Toggle("Allow \(row.displayName)", isOn: Binding(
                                 get: { row.enabled }, set: { onToggle(row, $0) }
                             )).labelsHidden().accessibilityLabel("Allow \(row.displayName)")

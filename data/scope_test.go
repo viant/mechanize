@@ -2,7 +2,8 @@ package data
 
 import (
 	"context"
-	"github.com/viant/datly/bootstrap/connector"
+	"fmt"
+	"github.com/viant/mechanize/data/schemaapply"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,127 +53,39 @@ func TestScopeAndProvisionPaths(t *testing.T) {
 }
 
 func TestInfrastructureSchemaMigrationAndFutureVersion(t *testing.T) {
-	scope := Scope{Namespace: strings.Repeat("c", 64)}
-	ctx, err := WithScope(context.Background(), scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := t.TempDir()
-	cfg, err := Provision(ctx, root, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	connections, err := connector.Open(ctx, []connector.Config{cfg}, "user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db, err := connections.SQL.Connector(ctx, "user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Only infrastructure schema/version manipulation, never product rows.
-	if _, err = db.ExecContext(ctx, "DROP TABLE run_variables; PRAGMA user_version=1"); err != nil {
-		t.Fatal(err)
-	}
-	_ = connections.Close()
-	cfg, err = Provision(ctx, root, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	connections, err = connector.Open(ctx, []connector.Config{cfg}, "user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db, err = connections.SQL.Connector(ctx, "user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var version int
-	if err = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil || version != 9 {
-		t.Fatalf("migration version %d %v", version, err)
-	}
-	var count int
-	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='run_variables'").Scan(&count); err != nil || count != 1 {
-		t.Fatalf("migration schema %d %v", count, err)
-	}
-	// Recreate the exact pre-feature schema boundary and exercise migration 7.
-	if _, err = db.ExecContext(ctx, "DROP TABLE chrome_retirement_audit; DROP TABLE chrome_retirement_manifests; DROP TABLE chrome_retirements; PRAGMA user_version=6"); err != nil {
-		t.Fatal(err)
-	}
-	_ = connections.Close()
-	cfg, err = Provision(ctx, root, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	connections, err = connector.Open(ctx, []connector.Config{cfg}, "user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db, err = connections.SQL.Connector(ctx, "user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil || version != 9 {
-		t.Fatalf("retirement migration version %d %v", version, err)
-	}
-	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('chrome_retirements','chrome_retirement_manifests','chrome_retirement_audit')").Scan(&count); err != nil || count != 3 {
-		t.Fatalf("retirement migration tables %d %v", count, err)
-	}
-	// Exercise the actual v7-to-v8 boundary with the new table absent.
-	if _, err = db.ExecContext(ctx, "DROP TABLE chrome_attempt_bindings; PRAGMA user_version=7"); err != nil {
-		t.Fatal(err)
-	}
-	_ = connections.Close()
-	cfg, err = Provision(ctx, root, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	connections, err = connector.Open(ctx, []connector.Config{cfg}, "user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db, err = connections.SQL.Connector(ctx, "user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil || version != 9 {
-		t.Fatalf("binding migration version %d %v", version, err)
-	}
-	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chrome_attempt_bindings'").Scan(&count); err != nil || count != 1 {
-		t.Fatalf("binding migration table %d %v", count, err)
-	}
-	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='chrome_attempt_bindings_fence'").Scan(&count); err != nil || count != 1 {
-		t.Fatalf("binding migration fence index %d %v", count, err)
-	}
-	// Infrastructure-only v8-to-v9 migration with the review table absent.
-	if _, err = db.ExecContext(ctx, "DROP TABLE workflow_review_requests; PRAGMA user_version=8"); err != nil {
-		t.Fatal(err)
-	}
-	_ = connections.Close()
-	cfg, err = Provision(ctx, root, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	connections, err = connector.Open(ctx, []connector.Config{cfg}, "user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db, err = connections.SQL.Connector(ctx, "user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil || version != 9 {
-		t.Fatalf("review migration version %d %v", version, err)
-	}
-	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='workflow_review_requests'").Scan(&count); err != nil || count != 1 {
-		t.Fatalf("review migration table %d %v", count, err)
-	}
-
-	if _, err = db.ExecContext(ctx, "PRAGMA user_version=99"); err != nil {
-		t.Fatal(err)
-	}
-	_ = connections.Close()
-	if _, err = Provision(ctx, root, scope); err == nil {
-		t.Fatal("future schema admitted")
+	for _, prior := range []int{1, 6, 7, 8, 10, 13} {
+		t.Run(fmt.Sprint(prior), func(t *testing.T) {
+			scope := Scope{Namespace: strings.Repeat("c", 64)}
+			ctx, e := WithScope(context.Background(), scope)
+			if e != nil {
+				t.Fatal(e)
+			}
+			root := t.TempDir()
+			cfg, e := schemaConnector(ctx, root, scope)
+			if e != nil {
+				t.Fatal(e)
+			}
+			authorized, e := schemaContext(ctx, scope.Namespace)
+			if e != nil {
+				t.Fatal(e)
+			}
+			server := schemaTestHost(t, authorized, cfg)
+			for version := 0; version < prior; version++ {
+				if e = applySchemaVersion(authorized, server, scope.Namespace, version); e != nil {
+					t.Fatal(e)
+				}
+			}
+			before, e := schemaapply.Read(authorized, server, scope.Namespace)
+			if e != nil || before.Version != prior {
+				t.Fatal("prior schema boundary unavailable", e)
+			}
+			if _, e = Provision(ctx, root, scope); e != nil {
+				t.Fatal(e)
+			}
+			after, e := schemaapply.Read(authorized, server, scope.Namespace)
+			if e != nil || after.Version != 15 || after.VariablesTable != 1 || after.RetirementTables != 3 || after.AttemptBindingsTable != 1 || after.AttemptFenceIndex != 1 || after.WorkflowReviewsTable != 1 || after.PurposeColumns != 1 || after.LineageTriggers != 2 || after.ForeignKeyViolations != 0 {
+				t.Fatal("generated schema metadata failed migration assertions", after, e)
+			}
+		})
 	}
 }

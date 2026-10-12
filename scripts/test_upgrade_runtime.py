@@ -21,6 +21,37 @@ upgrade = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(upgrade)
 
 
+class ReconciliationEnrollmentTests(unittest.TestCase):
+    def test_quit_recovery_enrollment_preserves_other_contracts(self):
+        previous = ['native.focus.v1', 'plan.effect.reconcile']
+        result = upgrade.reconciliation_enrollment(previous, ['native.app.quit.v1', 'native.app.quit.v1'])
+        self.assertEqual(result, previous + ['native.app.quit.v1'])
+        self.assertEqual(previous, ['native.focus.v1', 'plan.effect.reconcile'])
+
+    def test_unknown_contracts_and_malformed_enrollment_are_rejected(self):
+        for existing, requested in [(None, []), ([], 'native.app.quit.v1'), (['foreign.contract'], []),
+                                    ([], ['native.app.quit.force.v1']), ([True], [])]:
+            with self.subTest(existing=existing, requested=requested):
+                with self.assertRaises(ValueError):
+                    upgrade.reconciliation_enrollment(existing, requested)
+
+
+class ChromeQuiescenceTests(unittest.TestCase):
+    def test_current_user_clone_is_running_not_quiescent(self):
+        config = {'chrome': {'processTrust': {'chromeExecutable': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'}}}
+        root = Path('/fixture/runtime')
+        clone = '/private/var/folders/fixture/X/code_sign_clone/Google Chrome.app.bundle/Contents/MacOS/Google Chrome'
+        with mock.patch.object(upgrade, 'run', return_value=subprocess.CompletedProcess([], 0,
+                f' 123 {os.getuid()} {clone}\n'.encode(), b'')):
+            with self.assertRaises(ValueError): upgrade.require_chrome_stopped(config, root)
+
+    def test_other_users_and_unrelated_processes_do_not_supply_false_running_evidence(self):
+        config = {'chrome': {'processTrust': {'chromeExecutable': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'}}}
+        rows = f'123 {os.getuid()+1} /fixture/Google Chrome\n124 {os.getuid()} /fixture/Other App\n'
+        with mock.patch.object(upgrade, 'run', return_value=subprocess.CompletedProcess([], 0, rows.encode(), b'')):
+            upgrade.require_chrome_stopped(config, Path('/fixture/runtime'))
+
+
 def pin(identifier, value):
     return 'identifier "com.viant.mechanize.' + identifier + '" and cdhash H"' + value * 40 + '"'
 
@@ -322,6 +353,47 @@ class ChromeUpgradeTests(unittest.TestCase):
         for stage in stages:
             import shutil
             shutil.rmtree(stage)
+
+
+class NativeVaultUpgradeTests(unittest.TestCase):
+    def test_unprovisioned_upgrade_requires_absent_key_and_empty_private_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary).resolve()
+            custody = home / '.secret/vault'
+            custody.mkdir(parents=True, mode=0o700)
+            config = {'nativeVault': {'root': str(custody), 'keyAlias': 'vault-master-v1'},
+                      'keychain': {'Items': {'vault-master-v1': {'Service': 'com.viant.mechanize.vault', 'Account': 'opaque-fixture'}}}}
+            with mock.patch.object(upgrade.Path, 'home', return_value=home), mock.patch.object(upgrade.subprocess, 'run') as run:
+                run.return_value = subprocess.CompletedProcess([], 44, stdout=b'withheld', stderr=b'withheld')
+                upgrade.require_unprovisioned_vault(config)
+                self.assertNotIn('-w', run.call_args.args[0])
+                self.assertNotIn('-g', run.call_args.args[0])
+                for code in (0, 1, 36):
+                    run.return_value = subprocess.CompletedProcess([], code)
+                    with self.assertRaises(ValueError):
+                        upgrade.require_unprovisioned_vault(config)
+                run.return_value = subprocess.CompletedProcess([], 44)
+                (custody / 'encrypted.enc').write_bytes(b'synthetic-ciphertext')
+                with self.assertRaises(ValueError):
+                    upgrade.require_unprovisioned_vault(config)
+
+    def test_opt_in_only_enrolls_routing_and_preserves_other_aliases(self):
+        config = {'nativeConsole': {'expectedUID': os.getuid()},
+                  'keychain': {'Items': {'other': {'Service': 'fixture', 'Account': 'opaque'}}}}
+        manifest = {'brokerRequirement': pin('broker', 'a')}
+        upgrade.enable_native_vault(config, manifest)
+        self.assertEqual(config['nativeVault']['root'], str(Path.home() / '.secret/vault'))
+        self.assertEqual(config['nativeVault']['brokerRequirement'], manifest['brokerRequirement'])
+        self.assertEqual(config['keychain']['Items']['other']['Service'], 'fixture')
+        self.assertNotIn('key', config['nativeVault'])
+        with self.assertRaises(ValueError):
+            upgrade.enable_native_vault(config, manifest)
+
+    def test_vault_signing_migration_refuses_before_runtime_replacement(self):
+        config = {'nativeVault': {'brokerRequirement': pin('broker', 'a')}}
+        with self.assertRaisesRegex(ValueError, 'signing migration'):
+            upgrade.updated_config(config, Path('/fixture'), Path('/source'), {'brokerRequirement': pin('broker', 'b')})
+        self.assertEqual(config['nativeVault']['brokerRequirement'], pin('broker', 'a'))
 
 
 if __name__ == '__main__':

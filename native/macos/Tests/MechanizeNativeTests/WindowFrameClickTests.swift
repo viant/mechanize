@@ -18,16 +18,114 @@ final class WindowFrameClickTests: XCTestCase {
     func testExactOwnedPointAndConservativeOcclusion() throws {
         let p=try permit(), point=CGPoint(x:150,y:150)
         try qualifyWindowFramePoint(p,point:point,uid:501,check:{},runtime:runtime([window()]))
-        for r in [runtime([window(1,pid:77),window()]),runtime([window(1,pid:77,alpha:0.001),window()]),runtime([window(alpha:0.5)]),runtime([window(bounds:CGRect(x:101,y:100,width:100,height:100))]),runtime([window()],secure:true),runtime([window()],foreground:77),runtime([window()],birth:"101:1"),runtime([window()],display:nil),runtime([window(),window()]),runtime([window(1,pid:77,bounds:CGRect(x:Double.nan,y:0,width:10,height:10)),window()])] {
+        for r in [runtime([window(1,pid:77),window()]),runtime([window(1,pid:77,alpha:0.001),window()]),runtime([window(alpha:0.5)]),runtime([window(bounds:CGRect(x:101,y:100,width:100,height:100))]),runtime([window()],secure:true),runtime([window()],birth:"101:1"),runtime([window()],display:nil),runtime([window(),window()]),runtime([window(1,pid:77,bounds:CGRect(x:Double.nan,y:0,width:10,height:10)),window()])] {
             XCTAssertThrowsError(try qualifyWindowFramePoint(p,point:point,uid:501,check:{},runtime:r))
         }
         XCTAssertThrowsError(try qualifyWindowFramePoint(p,point:point,uid:501,check:{},runtime:runtime([window(1,pid:77,alpha:0),window()])))
         try qualifyWindowFramePoint(p,point:point,uid:501,check:{},runtime:runtime([window(),window(1,pid:77,alpha:0)]))
         XCTAssertThrowsError(try qualifyWindowFramePoint(p,point:point,uid:501,check:{throw NativeFailure("cancelled","Cancelled")},runtime:runtime([window()])))
     }
+    func testPublicMouseDownRecipientCanProveClickThroughOverlayWithoutWhitelisting() throws {
+        let p = try permit(), point = CGPoint(x:150,y:150)
+        var r = runtime([window(1,pid:77),window()])
+        r.mouseDownWindow = { observed in XCTAssertEqual(observed,point); return 99 }
+        try qualifyWindowFramePoint(p,point:point,uid:501,check:{},runtime:r)
+        for recipient: UInt32? in [nil,0,1,100] {
+            r.mouseDownWindow = { _ in recipient }
+            XCTAssertThrowsError(try qualifyWindowFramePoint(p,point:point,uid:501,check:{},runtime:r))
+        }
+        r = runtime([window()])
+        r.mouseDownWindow = { _ in nil }
+        // Unavailable hit-testing must not fall back even when CG says target is first.
+        XCTAssertThrowsError(try qualifyWindowFramePoint(p,point:point,uid:501,check:{},runtime:r))
+        r.mouseDownWindow = { _ in throw NativeFailure("windowHitTestUnavailable","expired") }
+        XCTAssertThrowsError(try qualifyWindowFramePoint(p,point:point,uid:501,check:{},runtime:r))
+        for rows in [[window(pid:77)], [window(alpha:0.5)], [window(),window()],
+                     [window(1,pid:77,bounds:CGRect(x:Double.nan,y:0,width:10,height:10)),window()]] {
+            r = runtime(rows); r.mouseDownWindow = { _ in 99 }
+            XCTAssertThrowsError(try qualifyWindowFramePoint(p,point:point,uid:501,check:{},runtime:r))
+        }
+    }
+    func testChangedMouseDownRecipientBeforePostingSendsNoInput() throws {
+        let p = try permit(), point = CGPoint(x:150,y:150)
+        var r = runtime([window(1,pid:77),window()]), reads = 0, downs = 0, ups = 0, attempts = 0
+        r.mouseDownWindow = { _ in reads += 1; return reads == 1 ? 99 : 1 }
+        try qualifyWindowFramePoint(p,point:point,uid:501,check:{},runtime:r)
+        let inputs=InputSafety();inputs.enable()
+        XCTAssertThrowsError(try postWindowFrameClick(inputs:inputs,point:point,preflight:{
+            try qualifyWindowFramePoint(p,point:point,uid:501,check:{},runtime:r)
+        },willPost:{attempts += 1},down:{downs += 1;return true},up:{ups += 1;return true}))
+        XCTAssertEqual(reads,2);XCTAssertEqual(downs,0);XCTAssertEqual(ups,0);XCTAssertEqual(attempts,0)
+    }
+    func testDeadlineAfterPointerMoveDoesNotClaimMouseDownDispatch() throws {
+        let inputs=InputSafety();inputs.enable()
+        var checks=0,moves=0,downs=0,attempts=0
+        XCTAssertThrowsError(try postWindowFrameClick(inputs:inputs,point:.zero,preflight:{
+            checks += 1
+            if checks == 2 { throw NativeFailure("deadlineExceeded","expired") }
+        },willPost:{attempts += 1},down:{downs += 1;return true},up:{true},move:{moves += 1})) { error in
+            XCTAssertEqual((error as? NativeFailure)?.code,"deadlineExceeded")
+        }
+        XCTAssertEqual(moves,1);XCTAssertEqual(downs,0);XCTAssertEqual(attempts,0)
+        // The safety lock is released, but the previous frame permit remains
+        // consumed by its caller. A new action still requires a fresh capture.
+        try postWindowFrameClick(inputs:inputs,point:.zero,preflight:{},willPost:{attempts += 1},down:{downs += 1;return true},up:{true})
+        XCTAssertEqual(downs,1);XCTAssertEqual(attempts,1)
+    }
+    func testMouseDownCoordinateTransformIncludesAdjacentDisplaysAndRejectsUncertainty() throws {
+        let primary=CGRect(x:0,y:0,width:1312,height:848)
+        XCTAssertEqual(try appKitMouseDownPoint(CGPoint(x:696,y:400),primaryCG:primary,primaryAppKit:primary),CGPoint(x:696,y:448))
+        XCTAssertEqual(try appKitMouseDownPoint(CGPoint(x:-100,y:-200),primaryCG:primary,primaryAppKit:primary),CGPoint(x:-100,y:1048))
+        for screen in [CGRect(x:1,y:0,width:1312,height:848),CGRect(x:0,y:0,width:1312,height:849),.zero] {
+            XCTAssertThrowsError(try appKitMouseDownPoint(CGPoint(x:696,y:400),primaryCG:primary,primaryAppKit:screen))
+        }
+        XCTAssertThrowsError(try appKitMouseDownPoint(CGPoint(x:Double.nan,y:400),primaryCG:primary,primaryAppKit:primary))
+    }
+    func testPositiveDiagnosticCannotAuthorizeAnOccludedClick() throws {
+        var calls = 0
+        var r = runtime([window(1, pid: 77), window()])
+        r.diagnostic = { _, _ in
+            calls += 1
+            return "hitMatchesTargetOwner=true; hitWindowBoundsMatch=true; hitWindowNumberMatch=true"
+        }
+        XCTAssertThrowsError(try qualifyWindowFramePoint(permit(), point: CGPoint(x: 150, y: 150), uid: 501,
+                                                         check: {}, runtime: r)) { error in
+            XCTAssertEqual((error as? NativeFailure)?.code, "windowClickOccluded")
+        }
+        XCTAssertEqual(calls, 1)
+    }
+    func testCaptureDoesNotChooseAClickPointButClickStillRejectsOcclusion() throws {
+        let p = try permit()
+        let r = runtime([window(1, pid: 77, bounds: CGRect(x: 140, y: 140, width: 20, height: 20)), window()])
+        try qualifyWindowFrameCapture(p, uid: 501, check: {}, runtime: r)
+        XCTAssertThrowsError(try qualifyWindowFramePoint(p, point: CGPoint(x: 150, y: 150), uid: 501, check: {}, runtime: r))
+        try qualifyWindowFramePoint(p, point: CGPoint(x: 110, y: 110), uid: 501, check: {}, runtime: r)
+        for invalid in [runtime([window()], secure: true),
+                        runtime([window()], display: nil), runtime([window()], birth: "101:1"),
+                        runtime([window(), window()]), runtime([window(alpha: 0.5)]),
+                        runtime([window(bounds: CGRect(x: 101, y: 100, width: 100, height: 100))])] {
+            XCTAssertThrowsError(try qualifyWindowFrameCapture(p, uid: 501, check: {}, runtime: invalid))
+        }
+    }
     func image(_ color:CGColor,width:Int=100,height:Int=100) -> CGImage {
         let c=CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
         c.setFillColor(color); c.fill(CGRect(x:0,y:0,width:width,height:height)); return c.makeImage()!
+    }
+    func testFullWindowComparisonPreservesLocalPatchAndGeometryChecks() throws {
+        let context = CGContext(data: nil, width: 100, height: 100, bitsPerComponent: 8,
+            bytesPerRow: 400, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 100, height: 100))
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 44, y: 40, width: 12, height: 20))
+        let original = context.makeImage()!
+        try requireWindowFrameCurrentImage(original, current: original, x: 50, y: 50)
+        XCTAssertThrowsError(try requireWindowFrameCurrentImage(original,
+            current: image(CGColor(red: 1, green: 1, blue: 1, alpha: 1)), x: 50, y: 50))
+        XCTAssertThrowsError(try requireWindowFrameCurrentImage(original,
+            current: original.cropping(to: CGRect(x: 0, y: 0, width: 99, height: 100))!, x: 50, y: 50))
+        XCTAssertThrowsError(try requireWindowFrameCurrentImage(original, current: original, x: 100, y: 50))
     }
     func testBoundedExactPixelPatchRejectsContentChange() throws {
         let original=image(CGColor(red:1,green:0,blue:0,alpha:1))
@@ -99,4 +197,36 @@ final class WindowFrameClickTests: XCTestCase {
         let store=WindowFrameImageStore();store.install("p",image(CGColor(gray:0,alpha:1)));_ = try store.take("p");XCTAssertThrowsError(try store.take("p"))
         store.install("p",image(CGColor(gray:0,alpha:1)));store.clear();XCTAssertThrowsError(try store.take("p"))
     }
+    func testBackgroundPointerKeepsKeyboardForegroundAndOcclusionChecks() throws {
+        let p = try permit(), point = CGPoint(x:150,y:150)
+        var r = runtime([window()],foreground:77)
+        r.mouseDownWindow = { _ in 99 }
+        try qualifyWindowFrameCapture(p,uid:501,check:{},runtime:r)
+        try qualifyWindowFramePoint(p,point:point,uid:501,check:{},runtime:r)
+        XCTAssertThrowsError(try qualifyWindowSessionKey(pid:42,uid:501,birth:"100:1",bundle:"com.fixture.app",windowID:99,check:{},runtime:r.window))
+        r.mouseDownWindow = { _ in 1 }
+        XCTAssertThrowsError(try qualifyWindowFramePoint(p,point:point,uid:501,check:{},runtime:r))
+        r = runtime([window(1,pid:42),window()],foreground:77)
+        r.mouseDownWindow = { _ in 99 }
+        // A modal owned window still prevents input to the document underneath.
+        XCTAssertThrowsError(try qualifyWindowFrameCapture(p,uid:501,check:{},runtime:r))
+    }
+
+    func testOcclusionReportsActualRecipientSeparatelyFromBoundingBox() throws {
+        var r = runtime([window(16,pid:77),window(),window(101,pid:88)])
+        r.mouseDownWindow = { _ in 101 }
+        XCTAssertThrowsError(try qualifyWindowFramePoint(permit(),point:CGPoint(x:150,y:150),uid:501,check:{},runtime:r)) { error in
+            let message = (error as? NativeFailure)?.message ?? ""
+            XCTAssertTrue(message.contains("mouseDownWindowId=101"))
+            XCTAssertTrue(message.contains("mouseDownOwnerPid=88"))
+            XCTAssertTrue(message.contains("boundingBoxFrontWindowId=16"))
+            XCTAssertTrue(message.contains("ownedMatches=true; hitMatches=false"))
+        }
+        r = runtime([window(bounds:CGRect(x:101,y:100,width:100,height:100))])
+        r.mouseDownWindow = { _ in 99 }
+        XCTAssertThrowsError(try qualifyWindowFramePoint(permit(),point:CGPoint(x:150,y:150),uid:501,check:{},runtime:r)) { error in
+            XCTAssertTrue(((error as? NativeFailure)?.message ?? "").contains("ownedMatches=false; hitMatches=true"))
+        }
+    }
+
 }

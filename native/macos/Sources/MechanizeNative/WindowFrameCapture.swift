@@ -63,6 +63,17 @@ func requireWindowFramePatch(_ original: CGImage, current: CGImage, rect: CGRect
     guard before == after else { throw NativeFailure("staleCapture", "Captured point pixels changed; recapture") }
 }
 
+func requireWindowFrameCurrentImage(_ original: CGImage, current: CGImage, x: Int, y: Int) throws {
+    guard current.width == original.width, current.height == original.height else {
+        throw NativeFailure("staleCapture", "Current window image geometry changed; recapture")
+    }
+    let rect = try windowFramePatch(x: x, y: y, width: original.width, height: original.height)
+    guard let patch = current.cropping(to: rect) else {
+        throw NativeFailure("staleCapture", "Current window patch unavailable; recapture")
+    }
+    try requireWindowFramePatch(original, current: patch, rect: rect, x: x, y: y)
+}
+
 func requireWindowFramePNGSize(_ count: Int) throws {
     guard count > 0, count <= FrameCodec.maximumWindowFramePNGBytes else {
         throw NativeFailure("captureTooLarge", "Exact window PNG exceeds 32 MiB limit; no scaling performed")
@@ -108,7 +119,7 @@ extension Helper {
         let pid = Int32(try RecordingConsentLease.integer(params["pid"], maximum: UInt64(Int32.max)))
         let windowID = UInt32(try RecordingConsentLease.integer(params["windowId"], maximum: UInt64(UInt32.max)))
         let heldGeneration = try checkWindowFrameAuthority(request, owner: owner, bundle: bundle, budget: budget)
-        try qualifyWindowSessionKey(pid: pid, uid: getuid(), birth: birth, bundle: bundle, windowID: windowID, check: { try budget.check() })
+        try qualifyWindowFrameTarget(pid: pid, uid: getuid(), birth: birth, bundle: bundle, windowID: windowID, check: { try budget.check() })
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         try budget.check()
         let matches = content.windows.filter { $0.windowID == windowID && $0.owningApplication?.processID == pid && $0.owningApplication?.bundleIdentifier == bundle }
@@ -126,7 +137,7 @@ extension Helper {
                                           contentHash: SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined(), capturedAt: capturedAt, uptime: capturedUptime)
         _ = try await exactFrameCapture(permit, budget)
         guard try checkWindowFrameAuthority(request, owner: owner, bundle: bundle, budget: budget) == heldGeneration else { throw NativeFailure("staleLease", "Frame lease generation changed") }
-        try qualifyWindowFramePoint(permit, point: CGPoint(x: permit.bounds.midX, y: permit.bounds.midY), uid: getuid(), check: { try budget.check() })
+        try qualifyWindowFrameCapture(permit, uid: getuid(), check: { try budget.check() })
         frameImages.install(permit.id, image); framePermits.install(permit)
         // Watchdog may revoke between publication and return; never export a
         // usable proof after its authority disappeared.
@@ -134,7 +145,7 @@ extension Helper {
         catch { clearWindowFrame(); throw error }
         return ["permit": permit.metadata(format: preciseISO.string), "pngBase64": png.base64EncodedString()]
     }
-    func prepareWindowFrameClick(_ request: [String: Any], _ params: [String: Any], _ budget: Budget) async throws -> (WindowFramePermit, CGPoint) {
+    func prepareWindowFrameClick(_ request: [String: Any], _ params: [String: Any], _ budget: Budget, acquire:(NativeForegroundTarget)throws->Void = {_ in}) async throws -> (WindowFramePermit, CGPoint) {
         defer { clearWindowFrame() }
         guard Set(params.keys) == Set(["expectedApp", "pid", "processStartToken", "owner", "permitId", "x", "y"]),
               let bundle = params["expectedApp"] as? String, let birth = params["processStartToken"] as? String,
@@ -146,18 +157,21 @@ extension Helper {
         let image = try frameImages.take(id)
         let pid = try RecordingConsentLease.integer(params["pid"], maximum: UInt64(Int32.max))
         guard permit.bundleId == bundle, permit.processStartToken == birth, UInt64(permit.pid) == pid else { throw NativeFailure("stalePermit", "Captured frame identity differs") }
-        let (x, y, point) = try permit.point(x: params["x"], y: params["y"])
+        let (x, y, mappedPoint) = try permit.point(x: params["x"], y: params["y"])
+        // RobotGo's public pointer API uses integer screen points. Qualify the
+        // actual posted point, including at Retina edges, rather than a proxy.
+        let point = CGPoint(x: mappedPoint.x.rounded(), y: mappedPoint.y.rounded())
+        let foreground=try NativeForegroundTarget.physical(pid:permit.pid,birth:permit.processStartToken,bundle:permit.bundleId,windowID:permit.windowId,budget:budget,pointerDelivery:true)
+        try acquire(foreground)
         try qualifyWindowFramePoint(permit, point: point, uid: getuid(), check: { try budget.check() })
         let exact = try await exactFrameCapture(permit, budget)
-        let rect = try windowFramePatch(x: x, y: y, width: image.width, height: image.height)
-        exact.configuration.sourceRect = CGRect(x: exact.geometry.sourceRect.minX + rect.minX / permit.scale,
-                                               y: exact.geometry.sourceRect.minY + rect.minY / permit.scale, width: rect.width / permit.scale, height: rect.height / permit.scale)
-        exact.configuration.width = Int(rect.width); exact.configuration.height = Int(rect.height)
-        exact.configuration.destinationRect = CGRect(x: 0, y: 0, width: rect.width, height: rect.height)
+        // Match the producer's full-window rendering geometry. A separately
+        // rendered subregion can change compositor sampling around UI edges.
+        // Crop locally only after the same bounded exact-window capture.
         exact.configuration.pixelFormat = kCVPixelFormatType_32BGRA
         exact.configuration.backgroundColor = frameCaptureClearBackground
         let current = try await SCScreenshotManager.captureImage(contentFilter: exact.filter, configuration: exact.configuration)
-        try requireWindowFramePatch(image, current: current, rect: rect, x:x, y:y)
+        try requireWindowFrameCurrentImage(image, current: current, x:x, y:y)
         try validateWindowFrameClick(request, permit, point, budget)
         return (permit, point)
     }

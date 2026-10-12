@@ -1,0 +1,1 @@
+SELECT a.* FROM effects a JOIN (SELECT b.* FROM chrome_attempt_bindings b WHERE b.namespace=:Namespace AND b.profile_channel=:ProfileChannel AND b.browser_instance=:BrowserInstance AND b.scope_hash=:ScopeHash AND b.id>:AfterID ORDER BY b.id LIMIT 128) selected ON a.namespace=selected.namespace AND a.id=selected.effect_id WHERE a.namespace=:Namespace

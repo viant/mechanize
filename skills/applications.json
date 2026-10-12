@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "id": "mechanize-finder",
+      "title": "Finder",
+      "bundleIDs": [
+        "com.apple.finder"
+      ]
+    },
+    {
+      "id": "mechanize-openoffice",
+      "title": "OpenOffice Writer and Calc",
+      "bundleIDs": [
+        "org.openoffice.script"
+      ]
+    },
+    {
+      "id": "mechanize-microsoft-office",
+      "title": "Microsoft Office \u2014 qualified cases and limits",
+      "bundleIDs": [
+        "com.microsoft.Word",
+        "com.microsoft.Excel",
+        "com.microsoft.Outlook",
+        "com.microsoft.Powerpoint"
+      ]
+    },
+    {
+      "id": "mechanize-intellij",
+      "title": "IntelliJ IDEA",
+      "bundleIDs": [
+        "com.jetbrains.intellij",
+        "com.jetbrains.intellij.ce"
+      ]
+    }
+  ]
+}

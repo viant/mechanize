@@ -7,6 +7,8 @@ import (
 	"github.com/viant/datly/spec"
 	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/data"
+	"sync"
+	"time"
 )
 
 type RetirementComponentInvoker func(context.Context, auth.Principal, exec.ComponentRequest) (any, error)
@@ -26,7 +28,9 @@ func (b *Builder) WithChromeRetirementComponents(ctx context.Context, p auth.Pri
 	if err != nil {
 		return err
 	}
-	user.mu.Lock()
+	if err = lockRetirementAdmission(ctx, &user.mu); err != nil {
+		return err
+	}
 	defer user.mu.Unlock()
 	if err = ctx.Err(); err != nil {
 		return err
@@ -34,6 +38,43 @@ func (b *Builder) WithChromeRetirementComponents(ctx context.Context, p auth.Pri
 	held, revoke := b.withHeldUserLock(ctx, actual, user)
 	defer revoke()
 	return fn(held, b.invokeRetirementComponent)
+}
+
+// A recovery deadline also bounds waiting behind an ordinary action. Blocking
+// Mutex.Lock would retain the broker exchange after its request had expired.
+func lockRetirementAdmission(ctx context.Context, mutex *sync.Mutex) error {
+	if ctx == nil || mutex == nil {
+		return errors.New("retirement admission unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if mutex.TryLock() {
+		if err := ctx.Err(); err != nil {
+			mutex.Unlock()
+			return err
+		}
+		return nil
+	}
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if mutex.TryLock() {
+				if err := ctx.Err(); err != nil {
+					mutex.Unlock()
+					return err
+				}
+				return nil
+			}
+		}
+	}
 }
 
 func retirementComponentAllowed(request exec.ComponentRequest) bool {

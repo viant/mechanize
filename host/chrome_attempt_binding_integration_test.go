@@ -22,6 +22,11 @@ import (
 )
 
 func TestGeneratedChromeBindingAdapterCommitsBeforeFixtureKnownAbsence(t *testing.T) {
+	for _, action := range []string{"element.press", "browser.navigate", "browser.activate"} {
+		t.Run(action, func(t *testing.T) { generatedChromeBindingAdapterCase(t, action) })
+	}
+}
+func generatedChromeBindingAdapterCase(t *testing.T, action string) {
 	_, file, _, _ := runtime.Caller(0)
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), ".."))
 	storage := t.TempDir()
@@ -47,7 +52,14 @@ func TestGeneratedChromeBindingAdapterCommitsBeforeFixtureKnownAbsence(t *testin
 		pinned := chrome.ControlAuthority{Owner: p.Namespace, ClientID: p.ClientID, BrokerEpoch: "broker", ChannelEpoch: "channel", ScopeHash: strings.Repeat("a", 64), Lease: chrome.Lease{ID: "lease", Generation: 1}}
 		pinned.Document.Identity = chrome.Identity{ProfileChannel: "profile", BrowserInstance: "browser", TabID: 7, DocumentID: "document", Generation: 1}
 		browserID := data.ChromeAttemptBrowserIDV2(p.Namespace, p.ClientID, actual.AttemptID)
-		fingerprint, err := chrome.FingerprintMutationV2(chrome.Command{Action: step.Action, Identity: pinned.Document.Identity, BrokerEpoch: pinned.BrokerEpoch, ChannelEpoch: pinned.ChannelEpoch, ScopeHash: pinned.ScopeHash, ControlLease: &pinned.Lease, AttemptID: browserID, Locator: &chrome.Locator{Strategy: "id", Value: "save", Exact: true}})
+		command := chrome.Command{Action: step.Action, Identity: pinned.Document.Identity, BrokerEpoch: pinned.BrokerEpoch, ChannelEpoch: pinned.ChannelEpoch, ScopeHash: pinned.ScopeHash, ControlLease: &pinned.Lease, AttemptID: browserID, Locator: &chrome.Locator{Strategy: "id", Value: "save", Exact: true}}
+		if action != "element.press" {
+			command.Locator = nil
+		}
+		if action == "browser.navigate" {
+			command.Args = map[string]any{"url": "https://fixture.test/"}
+		}
+		fingerprint, err := chrome.FingerprintMutationV2(command)
 		if err != nil {
 			callbackErr = err
 			return integration.StepResult{DispatchState: "notDispatched", VerificationState: "unknown"}, err
@@ -77,6 +89,14 @@ func TestGeneratedChromeBindingAdapterCommitsBeforeFixtureKnownAbsence(t *testin
 	plan, err := script.Compile(`web.tab(origin:"https://fixture.test").getById("save",exact:true).click()`)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if action != "element.press" {
+		plan.Steps[0].Action = action
+		plan.Steps[0].Target.Locator = nil
+		plan.Steps[0].Arguments = map[string]model.Value{}
+		if action == "browser.navigate" {
+			plan.Steps[0].Arguments["url"] = model.Value{Kind: model.StringValue, String: "https://fixture.test/"}
+		}
 	}
 	plan.Steps[0].TimeoutMs = 120000
 	plan.Steps[0].Effect.BusinessKey = map[string]model.Value{"case": {Kind: model.StringValue, String: "adapter-case"}}

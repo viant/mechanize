@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/auth/nativepeer"
@@ -17,14 +18,25 @@ import (
 )
 
 type readFixture struct {
-	g             *Gateway
-	p             auth.Principal
-	ctx           context.Context
-	generation    atomic.Uint64
-	value         atomic.Value
-	reads         atomic.Int64
-	wrongDocument atomic.Bool
-	rejectAcquire atomic.Bool
+	publicReadDelay       atomic.Int64
+	publicReadMarked      atomic.Int64
+	lastValidationMarked  atomic.Bool
+	publicReadMode        atomic.Value
+	valueReadVersion      atomic.Int64
+	valueReadCountDelta   atomic.Int64
+	valueReadCountMissing atomic.Bool
+	g                     *Gateway
+	p                     auth.Principal
+	ctx                   context.Context
+	generation            atomic.Uint64
+	value                 atomic.Value
+	reads                 atomic.Int64
+	mutations             atomic.Int64
+	wrongDocument         atomic.Bool
+	rejectAcquire         atomic.Bool
+	staleAcquires         atomic.Int64
+	acquireCalls          atomic.Int64
+	loseAcquire           atomic.Bool
 }
 
 func newReadFixture(t *testing.T) *readFixture {
@@ -78,6 +90,7 @@ func newReadFixtureScope(t *testing.T, trustScope string) *readFixture {
 	})
 	g, _ := NewGateway(b, GatewayOptions{})
 	f := &readFixture{g: g, p: p, ctx: auth.WithPrincipal(context.Background(), p)}
+	f.publicReadMode.Store("ready")
 	f.generation.Store(1)
 	f.value.Store("independent-result")
 	go func() {
@@ -86,24 +99,92 @@ func newReadFixtureScope(t *testing.T, trustScope string) *readFixture {
 			if err != nil {
 				return
 			}
+			var kind struct{ Type string }
+			json.Unmarshal(raw, &kind)
+			if kind.Type == "credentialScope" {
+				var q credentialScopeRequest
+				json.Unmarshal(raw, &q)
+				mode := f.publicReadMode.Load().(string)
+				proof := &credentialPublicDocument{Version: 1, Identity: doc.Identity, RouteSHA256: strings.Repeat("a", 64), Public: true}
+				proof.Identity.Generation = f.generation.Load()
+				reply := credentialScopeReply{Type: "credentialScopeResult", RequestID: q.RequestID, BrokerEpoch: q.BrokerEpoch, ChannelEpoch: q.ChannelEpoch, ScopeHash: q.ScopeHash, Ready: true, Reason: "none", PublicDocument: proof}
+				switch mode {
+				case "private":
+					reply.Ready = false
+					reply.Reason = "scopeTargetProtected"
+					reply.PublicDocument = nil
+				case "wrongDocument":
+					proof.Identity.TabID++
+				case "zeroGeneration":
+					proof.Identity.Generation = 0
+				case "foreignProfile":
+					proof.Identity.ProfileChannel = "foreign"
+				case "missingProof":
+					reply.PublicDocument = nil
+				case "wrongHash":
+					proof.RouteSHA256 = "PRIVATE_CANARY"
+				case "notPublic":
+					proof.Public = false
+				}
+				if WriteFrame(conn, reply) != nil {
+					return
+				}
+				continue
+			}
 			var cmd Command
 			if json.Unmarshal(raw, &cmd) != nil {
 				return
 			}
+			if cmd.PublicRead {
+				f.publicReadMarked.Add(1)
+			}
+			if cmd.Action == "executor.validate" {
+				f.lastValidationMarked.Store(cmd.PublicRead)
+			}
 			reply := Reply{RequestID: cmd.RequestID, Identity: cmd.Identity, ControlLease: cmd.ControlLease}
 			reply.Identity.Generation = f.generation.Load()
 			switch cmd.Action {
+			case "executor.validate":
+				reply.Validated = true
 			case "executor.acquire":
+				f.acquireCalls.Add(1)
+				if f.loseAcquire.Load() {
+					continue
+				}
+				if f.staleAcquires.Load() > 0 {
+					f.staleAcquires.Add(-1)
+					id := cmd.Identity
+					id.Generation = f.generation.Add(1)
+					if WriteFrame(conn, map[string]any{"requestId": cmd.RequestID, "identity": id, "error": map[string]any{"code": "staleGeneration", "message": "DOM changed; observe the current generation before dispatch", "stage": "browser", "dispatchState": "notDispatched", "effectState": "none"}}) != nil {
+						return
+					}
+					continue
+				}
 				reply.Validated = !f.rejectAcquire.Load()
 			case "executor.retire":
 				reply.RetiredAuthorityQuiesced = true
+			case "element.press":
+				f.mutations.Add(1)
+				reply.AttemptID = cmd.AttemptID
+				reply.DispatchState = "dispatched"
+				reply.EffectState = "unverified"
 			case "read":
 				f.reads.Add(1)
 				value := f.value.Load().(string)
 				reply.Value = &value
+				if version := f.valueReadVersion.Load(); version != 0 {
+					reply.ValueReadVersion = int(version)
+					if !f.valueReadCountMissing.Load() {
+						count := len(value) + int(f.valueReadCountDelta.Load())
+						reply.ValueReadBytes = &count
+					}
+				}
 				if f.wrongDocument.Load() {
 					reply.Identity.DocumentID = "replacement-document"
 				}
+			}
+			if delay := f.publicReadDelay.Load(); delay > 0 {
+				time.Sleep(time.Duration(delay) * time.Millisecond)
 			}
 			if WriteFrame(conn, reply) != nil {
 				return
@@ -139,7 +220,7 @@ func TestPinnedReadKeepsOriginalDocumentAcrossLeaseRetirement(t *testing.T) {
 	}
 }
 func TestPinnedReadRejectsDocumentChannelActorAndProcessChanges(t *testing.T) {
-	for _, name := range []string{"document", "origin", "frame", "scope", "epoch", "process", "actor", "zero-pin", "foreign-target"} {
+	for _, name := range []string{"document", "origin", "frame", "scope", "allWebsites", "epoch", "process", "actor", "zero-pin", "foreign-target"} {
 		t.Run(name, func(t *testing.T) {
 			f := newReadFixture(t)
 			pin, err := f.g.PinReadDocument(f.ctx, f.p, readTarget().Surface)
@@ -158,6 +239,9 @@ func TestPinnedReadRejectsDocumentChannelActorAndProcessChanges(t *testing.T) {
 				c.documents[0].Origin = "https://other.test"
 			case "frame":
 				c.documents[0].FrameID = 1
+			case "allWebsites":
+				c.grant.AllWebsites = true
+				c.grant.Origins = nil
 			case "scope":
 				c.scopeHash = "new-scope"
 			case "epoch":
@@ -196,6 +280,47 @@ func TestPinnedReadPreservesProtectedAndCoveragePolicy(t *testing.T) {
 			value, proof, err := f.g.ReadPinned(f.ctx, f.p, pin, readTarget(), test.attribute, nil)
 			if err == nil || value.Kind != "" || proof.RequestID != "" {
 				t.Fatalf("protected/incomplete read became proof %+v %+v %v", value, proof, err)
+			}
+		})
+	}
+}
+
+func TestPinnedReadExactValueCompleteness(t *testing.T) {
+	for _, tc := range []struct {
+		name, value, attribute string
+		version, delta         int64
+		missing, accept        bool
+	}{
+		{name: "long Unicode whitespace", value: "  \n\t" + strings.Repeat("Zażółć 😀 ", 90) + "\n  ", attribute: "value", version: 1, accept: true},
+		{name: "boundary256", value: strings.Repeat("x", 256), attribute: "value", version: 1, accept: true},
+		{name: "max bytes", value: strings.Repeat("😀", 8192), attribute: "value", version: 1, accept: true},
+		{name: "empty", value: "", attribute: "value", version: 1, accept: true},
+		{name: "legacy prefix", value: strings.Repeat("x", 256), attribute: "value"},
+		{name: "oversize", value: strings.Repeat("😀", 8192) + "x", attribute: "value", version: 1},
+		{name: "byte count mismatch", value: "😀", attribute: "value", version: 1, delta: -2},
+		{name: "missing count", value: "safe", attribute: "value", version: 1, missing: true},
+		{name: "unknown version", value: "safe", attribute: "value", version: 2},
+		{name: "text not broadened", value: strings.Repeat("x", 256), attribute: "text", version: 1},
+		{name: "name not broadened", value: "safe", attribute: "name", version: 1},
+		{name: "redacted", value: "[redacted]", attribute: "value", version: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newReadFixture(t)
+			pin, err := f.g.PinReadDocument(f.ctx, f.p, readTarget().Surface)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.value.Store(tc.value)
+			f.valueReadVersion.Store(tc.version)
+			f.valueReadCountDelta.Store(tc.delta)
+			f.valueReadCountMissing.Store(tc.missing)
+			got, proof, err := f.g.ReadPinned(f.ctx, f.p, pin, readTarget(), tc.attribute, nil)
+			if tc.accept {
+				if err != nil || got.String != tc.value || proof.RequestID == "" {
+					t.Fatalf("complete read rejected: %v", err)
+				}
+			} else if err == nil || got.Kind != "" || proof.RequestID != "" {
+				t.Fatal("incomplete value became proof")
 			}
 		})
 	}

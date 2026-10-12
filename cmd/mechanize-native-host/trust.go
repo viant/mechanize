@@ -74,20 +74,25 @@ func verifyHostProcess(ctx context.Context, config *Config) (nativepeer.ChromePr
 	}
 	executable, err := os.Executable()
 	if err != nil || executable != config.ProcessTrust.NativeHostExecutable {
-		return nativepeer.ChromeProcessEvidence{}, errors.New("running native host does not match fixed enrolled executable")
+		return nativepeer.ChromeProcessEvidence{}, nativepeer.ProcessFailure(nativepeer.ErrRunningImageMismatch, err)
 	}
 	if err = nativepeer.VerifyExecutable(executable, nativepeer.Options{ExpectedUID: config.ProcessTrust.ExpectedUID, DesignatedRequirement: config.ProcessTrust.NativeHostRequirement}); err != nil {
-		return nativepeer.ChromeProcessEvidence{}, err
+		return nativepeer.ChromeProcessEvidence{}, nativepeer.ProcessFailure(nativepeer.ErrNativeHostSignatureUnavailable, err)
 	}
-	if err = nativepeer.VerifyExecutable(config.ProcessTrust.ChromeExecutable, nativepeer.Options{ExpectedUID: config.ProcessTrust.ExpectedUID, DesignatedRequirement: config.ProcessTrust.ChromeRequirement}); err != nil {
-		return nativepeer.ChromeProcessEvidence{}, err
+	// Local metadata-only evidence is best effort and never changes admission.
+	// The image has passed its exact static pin; no enrollment credential has
+	// been loaded. Normal independent process verification still follows.
+	diagnostic := nativepeer.InspectChromeLaunchDiagnostic(ctx, os.Getpid(), *config.ProcessTrust)
+	_ = recordProcessDiagnostic(config.SocketPath, config.ProcessTrust.ExpectedUID, os.Getpid(), diagnostic)
+	if err = nativepeer.VerifyChromeExecutable(config.ProcessTrust.ChromeExecutable, nativepeer.Options{ExpectedUID: config.ProcessTrust.ExpectedUID, DesignatedRequirement: config.ProcessTrust.ChromeRequirement}); err != nil {
+		return nativepeer.ChromeProcessEvidence{}, nativepeer.ProcessFailure(nativepeer.ErrChromeSignatureUnavailable, err)
 	}
 	evidence, err := nativepeer.VerifyChromeProcess(ctx, os.Getpid(), *config.ProcessTrust)
 	if err != nil {
-		return nativepeer.ChromeProcessEvidence{}, err
+		return nativepeer.ChromeProcessEvidence{}, diagnoseChromePathFailure(err, diagnostic)
 	}
 	if err := requireImmediateChromeParent(evidence); err != nil {
-		return nativepeer.ChromeProcessEvidence{}, err
+		return nativepeer.ChromeProcessEvidence{}, nativepeer.ProcessFailure(nativepeer.ErrChromeParentUnavailable, err)
 	}
 	return evidence, nil
 }
@@ -153,7 +158,7 @@ func authenticatedCredential(ctx context.Context, config *Config, broker net.Con
 		return "", err
 	}
 	if !config.FixtureEnrollment && (before.NativeHost != after.NativeHost || before.ChromeParent != after.ChromeParent) {
-		return "", errors.New("native-host/Chrome identity changed while loading enrollment")
+		return "", nativepeer.ProcessFailure(nativepeer.ErrAncestryChanged, nil)
 	}
 	if err = ctx.Err(); err != nil {
 		return "", err

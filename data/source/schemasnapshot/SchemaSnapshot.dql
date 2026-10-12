@@ -1,0 +1,10 @@
+#package('github.com/viant/mechanize/data/schemasnapshot')
+#setting($_ = $input_type('SchemaSnapshotInput'))
+#setting($_ = $output_type('SchemaSnapshotOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/schemasnapshot', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $Data<[]*SchemaState>(output/view))
+SELECT state.*,type(state,'SchemaState'),CAST(state.version AS int),CAST(state.foreign_keys AS int),CAST(state.journal_mode AS string),CAST(state.synchronous AS int),CAST(state.object_count AS int),CAST(state.variables_table AS int),CAST(state.retirement_tables AS int),CAST(state.attempt_bindings_table AS int),CAST(state.attempt_fence_index AS int),CAST(state.workflow_reviews_table AS int),CAST(state.purpose_columns AS int),CAST(state.lineage_triggers AS int),CAST(state.foreign_key_violations AS int)
+FROM (${embed:sql/root.sql}) state

@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -40,6 +41,14 @@ func (h *Host) productionWebControl() *WebControlOptions {
 			}
 			if h.durable == nil || p.ClientID == "" || a.MutationFingerprintVersion != 2 || a.Document.MutationFingerprintVersion != 2 {
 				return denied, ErrWebControlUnqualified
+			}
+			if step.Action == "browser.navigate" {
+				// Redirects may reach any ordinary website; require explicit browser-wide
+				// human consent, not an origin-only grant on the source page.
+				scope, e := h.operationConsentScope(p, step.Target.Surface)
+				if e != nil || !a.AllWebsites || scope.Kind != "browser" {
+					return denied, auth.ErrUnauthorized
+				}
 			}
 			attemptID := data.ChromeAttemptBrowserIDV2(p.Namespace, p.ClientID, intent.AttemptID)
 			return h.chrome.ExecuteControlBound(ctx, p, step, values, a, attemptID, func(ctx context.Context, p auth.Principal, descriptor chrome.BoundMutation) (chrome.BindingCommit, error) {
@@ -81,7 +90,17 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, recordUn
 		return errors.Join(cause, recordUnknown(bounded, p), ErrWebControlCleanupUnknown)
 	}
 	readiness := func(a chrome.ControlAuthority, reader *webPostconditionRead) WebControlReadiness {
-		return WebControlReadiness{ScopeQualified: a.ScopeQualified, postconditionRead: reader, Authority: convert(a), NativeHostSignatureQualified: a.Evidence.KernelPeerQualified, KernelPeerQualified: a.Evidence.KernelPeerQualified, ChromeParentQualified: len(a.Evidence.Ancestors) == 1 && a.Evidence.Ancestors[0] == a.Evidence.ChromeParent, ProfileQualified: a.ProfileQualified, ExtensionQualified: a.ExtensionQualified, DocumentQualified: a.DocumentQualified, ExecutorQualified: a.ExecutorQualified, Actions: []string{"element.press", "element.fill"}, Locators: []string{"role", "id", "testId", "label"}, ValidUntil: time.Now().Add(time.Second)}
+		actions := []string{"element.press", "element.fill", "browser.activate"}
+		if a.AllWebsites {
+			actions = append(actions, "browser.navigate")
+		}
+		indexed := false
+		if qualified, ok := gateway.(interface {
+			IndexedControlQualified(chrome.ControlAuthority) bool
+		}); ok {
+			indexed = qualified.IndexedControlQualified(a)
+		}
+		return WebControlReadiness{IndexedQueryQualified: indexed, ScopeQualified: a.ScopeQualified, postconditionRead: reader, Authority: convert(a), NativeHostSignatureQualified: a.Evidence.KernelPeerQualified, KernelPeerQualified: a.Evidence.KernelPeerQualified, ChromeParentQualified: len(a.Evidence.Ancestors) == 1 && a.Evidence.Ancestors[0] == a.Evidence.ChromeParent, ProfileQualified: a.ProfileQualified, ExtensionQualified: a.ExtensionQualified, DocumentQualified: a.DocumentQualified, ExecutorQualified: a.ExecutorQualified, Actions: actions, Locators: []string{"role", "id", "testId", "label"}, ValidUntil: time.Now().Add(time.Second)}
 	}
 	return &WebControlOptions{
 		Qualify: func(ctx context.Context, p auth.Principal, surface model.Surface) (WebControlReadiness, error) {
@@ -98,17 +117,17 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, recordUn
 			mu.Unlock()
 			if err != nil || !admission.Confirmed {
 				if admission.Created && a.Lease.ID != "" {
-					return WebControlReadiness{}, uncertain(ctx, p, a, errors.Join(err, ErrWebControlUnqualified))
+					return WebControlReadiness{}, uncertain(ctx, p, a, errors.Join(err, fmt.Errorf("%w: provider.admission", ErrWebControlUnqualified)))
 				}
 				// A failed requalification does not own or revoke another prepared step.
-				return WebControlReadiness{}, errors.Join(err, ErrWebControlUnqualified)
+				return WebControlReadiness{}, errors.Join(err, fmt.Errorf("%w: provider.admission", ErrWebControlUnqualified))
 			}
 			if known && existing.uncertain {
 				return WebControlReadiness{}, ErrWebControlCleanupUnknown
 			}
 			if known && existing.published {
 				if convert(existing.authority) != convert(a) || existing.authority.ClientID != a.ClientID || existing.authority.MutationFingerprintVersion != a.MutationFingerprintVersion {
-					return WebControlReadiness{}, ErrWebControlUnqualified
+					return WebControlReadiness{}, fmt.Errorf("%w: provider.publishedAuthority", ErrWebControlUnqualified)
 				}
 				// Reuse the original immutable pin. A requalification must not replace it
 				// or retire an already published authority if a later read-pin probe fails.
@@ -122,8 +141,11 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, recordUn
 			entries[a.Lease.ID] = providerAuthority{authority: a, owned: true}
 			mu.Unlock()
 			pin, pinErr := gateway.PinControlRead(ctx, p, a)
+			if pinErr != nil {
+				pinErr = errors.Join(pinErr, fmt.Errorf("%w: provider.readPin", ErrWebControlUnqualified))
+			}
 			if len(bound) != 0 && (a.MutationFingerprintVersion != 2 || a.Document.MutationFingerprintVersion != 2) {
-				pinErr = ErrWebControlUnqualified
+				pinErr = fmt.Errorf("%w: provider.fingerprintNegotiation", ErrWebControlUnqualified)
 			}
 			if pinErr != nil {
 				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
@@ -151,7 +173,9 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, recordUn
 			mu.Lock()
 			entries[a.Lease.ID] = providerAuthority{authority: a, owned: true, published: true, reader: reader}
 			mu.Unlock()
-			return readiness(a, reader), nil
+			result := readiness(a, reader)
+			result.NewlyAcquired = true
+			return result, nil
 		},
 		VerifyChannel: func(ctx context.Context, p auth.Principal, a WebControlAuthority) error {
 			stored, err := lookup(a)
@@ -187,7 +211,21 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, recordUn
 			return WebControlCleanup{AuthorityRetired: retired && err == nil, RetiredAuthorityQuiesced: retired && err == nil, UnknownExecutors: !retired || err != nil}, err
 		},
 		RecordCleanupUnknown: func(ctx context.Context, p auth.Principal, a WebControlAuthority) error { return recordUnknown(ctx, p) },
-		Close:                func(context.Context) error { return gateway.Close() },
+		Close: func(ctx context.Context) error {
+			select {
+			case admissionLane <- struct{}{}:
+				defer func() { <-admissionLane }()
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			mu.Lock()
+			retained := len(entries) != 0
+			mu.Unlock()
+			if retained {
+				return ErrWebControlCleanupUnknown
+			}
+			return gateway.Close()
+		},
 	}
 }
 

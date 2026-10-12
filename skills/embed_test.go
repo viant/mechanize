@@ -35,8 +35,8 @@ func TestDatlySkillFoldersPublishExactEmbeddedInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries := registry.ListRegisteredSkills()
-	if len(entries) != 6 {
-		t.Fatalf("expected six skills, got %d", len(entries))
+	if len(entries) != 8 {
+		t.Fatalf("expected eight skills, got %d", len(entries))
 	}
 	for _, entry := range entries {
 		for _, file := range entry.Resources.Files {

@@ -17,7 +17,7 @@ public enum FocusProof {
         for _ in 0..<40 {
             do {try validate(); return} catch let failure as NativeFailure {
                 last = failure
-                guard ["focusNotObserved","focusedIdentityMismatch","focusedIdentityUnavailable","foregroundChanged","foregroundUnavailable"].contains(failure.code) else {throw failure}
+                guard ["focusNotObserved","focusedIdentityMismatch","focusedIdentityUnavailable","foregroundChanged","foregroundUnavailable","foregroundRefreshUnavailable"].contains(failure.code) else {throw failure}
             } catch {throw error}
             if clock() &- start >= maximumNanoseconds {throw last}
             refresh();pause()

@@ -21,6 +21,8 @@ type providerGatewayFixture struct {
 	fingerprintVersion            int
 	pinErr, acquireErr, retireErr error
 	pinCalls, retireCalls         int
+	acquireCalls                  int
+	acquireNotInstalled           bool
 	retired                       chan struct{}
 	acquireAmbiguous              bool
 	waitRetire                    bool
@@ -29,6 +31,12 @@ type providerGatewayFixture struct {
 func (f *providerGatewayFixture) AdmitControlWithStatus(_ context.Context, p auth.Principal, s model.Surface) (chrome.ControlAdmission, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.acquireCalls++
+	if f.acquireNotInstalled {
+		// Models the backend contract only after its authenticated no-install
+		// proof has rolled back the exact new host reservation.
+		return chrome.ControlAdmission{}, f.acquireErr
+	}
 	created := f.held == nil
 	if created {
 		f.next++
@@ -207,5 +215,76 @@ func TestProductionBoundProviderRequiresV2AndNeverUsesLegacyDispatch(t *testing.
 				t.Fatalf("bound path not called: %v calls=%d", err, called)
 			}
 		})
+	}
+}
+
+// The provider consumes the backend's ownership result, not renderer error text.
+// Authenticated no-install proof and exact rollback are tested by Chrome itself.
+func TestProductionProviderKnownNoInstallAdmissionDoesNotBecomeDispatchUncertainty(t *testing.T) {
+	ctx, p, s := providerActor(t)
+	rejected := &model.MechanizeError{Code: "staleGeneration", Message: "Renderer generation changed", DispatchState: "notDispatched"}
+	f := &providerGatewayFixture{acquireNotInstalled: true, acquireErr: rejected}
+	records := 0
+	provider := newProductionWebControlProvider(f, func(context.Context, auth.Principal) error {
+		records++
+		return errors.New("verified bound active dispatch required")
+	})
+	ready, err := provider.Qualify(ctx, p, s)
+	if !errors.Is(err, rejected) || !errors.Is(err, ErrWebControlUnqualified) || errors.Is(err, ErrWebControlCleanupUnknown) || ready.Authority.ID != "" {
+		t.Fatalf("known rejected acquisition became dispatch uncertainty/readiness: %+v %v", ready, err)
+	}
+	if records != 0 || f.pinCalls != 0 || f.retireCalls != 0 || f.acquireCalls != 1 || f.held != nil || f.next != 0 {
+		t.Fatal("known no-install admission recorded uncertainty, pinned, retired, or replayed")
+	}
+	// A subsequent explicit qualification may install a fresh authority; the
+	// previous failed call must not leave a provider-side uncertain entry.
+	f.acquireNotInstalled = false
+	f.acquireErr = nil
+	ready, err = provider.Qualify(ctx, p, s)
+	if err != nil || ready.Authority.ID == "" || f.held == nil || f.acquireCalls != 2 || f.next != 1 || f.pinCalls != 1 || f.retireCalls != 0 || records != 0 {
+		t.Fatalf("fresh qualification blocked by no-install rejection: %+v %v", ready, err)
+	}
+	if err = provider.VerifyChannel(ctx, p, ready.Authority); err != nil {
+		t.Fatal("fresh authority was not published", err)
+	}
+}
+
+func TestProductionProviderMarksOnlyFirstPublicationNewlyAcquired(t *testing.T) {
+	ctx, p, s := providerActor(t)
+	f := &providerGatewayFixture{}
+	provider := newProductionWebControlProvider(f, func(context.Context, auth.Principal) error { return nil })
+	first, e := provider.Qualify(ctx, p, s)
+	if e != nil || !first.NewlyAcquired {
+		t.Fatal("fresh ownership missing", e)
+	}
+	next, e := provider.Qualify(ctx, p, s)
+	if e != nil || next.NewlyAcquired || next.Authority != first.Authority || f.retireCalls != 0 {
+		t.Fatal("published pin falsely transferred", e)
+	}
+	if _, e = provider.Retire(ctx, p, first.Authority); e != nil {
+		t.Fatal(e)
+	}
+	fresh, e := provider.Qualify(ctx, p, s)
+	if e != nil || !fresh.NewlyAcquired || fresh.Authority.Generation <= first.Authority.Generation {
+		t.Fatal("fresh ownership not restored", e)
+	}
+}
+
+func TestProductionProviderCloseRefusesRetainedAuthority(t *testing.T) {
+	ctx, p, s := providerActor(t)
+	f := &providerGatewayFixture{}
+	provider := newProductionWebControlProvider(f, func(context.Context, auth.Principal) error { return nil })
+	ready, e := provider.Qualify(ctx, p, s)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = provider.Close(ctx); !errors.Is(e, ErrWebControlCleanupUnknown) || f.held == nil {
+		t.Fatal("provider closed a retained pin", e)
+	}
+	if _, e = provider.Retire(ctx, p, ready.Authority); e != nil {
+		t.Fatal(e)
+	}
+	if e = provider.Close(ctx); e != nil {
+		t.Fatal(e)
 	}
 }

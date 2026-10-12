@@ -27,7 +27,7 @@ type Value struct {
 	Object   map[string]Value `json:"object,omitempty"`
 }
 type Surface struct {
-	Kind              string `json:"kind"`
+	Kind              string `json:"kind" choice:"web" choice:"native"`
 	ProcessID         int    `json:"processId,omitempty"`
 	ProcessStartToken string `json:"processStartToken,omitempty"`
 	BundleID          string `json:"bundleId,omitempty"`
@@ -37,6 +37,7 @@ type Surface struct {
 }
 type Scope struct {
 	NativeRoot string           `json:"nativeRoot,omitempty"`
+	NativeMenu string           `json:"nativeMenu,omitempty"`
 	Window     map[string]Value `json:"window,omitempty"`
 	Frame      map[string]Value `json:"frame,omitempty"`
 }
@@ -157,6 +158,7 @@ type Observation struct {
 	WindowScope     map[string]string `json:"windowScope,omitempty"`
 	WindowRootsOnly bool              `json:"windowRootsOnly,omitempty"`
 	NativeRoot      string            `json:"nativeRoot,omitempty"`
+	NativeMenu      string            `json:"nativeMenu,omitempty"`
 	ID              string            `json:"id"`
 	Sequence        uint64            `json:"sequence"`
 	Epoch           string            `json:"epoch"`

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/viant/mechanize/auth"
+	"github.com/viant/mechanize/vault"
 )
 
 const MaxFrameBytes = 256 * 1024
@@ -31,6 +32,15 @@ type Options struct {
 	// not sufficient. Tests may supply explicit isolated fixture verification.
 	VerifyPeer func(*net.UnixConn) error
 	Handle     Handler
+	// VaultInput is installed only with operator-qualified key custody and entry
+	// protection. Credential bodies bypass generic JSON handling entirely.
+	VaultInput *vault.NativeInputService
+	// VaultRecords is optional native-only MVLT v2 administration. Record bytes
+	// bypass generic JSON handling and share the existing entry exposure gate.
+	VaultRecords   *vault.NativeRecordInputService
+	VaultEntry     *vault.NativeEntryController
+	VaultKeySetup  *vault.NativeKeySetup
+	AuthorizeVault func(context.Context, auth.Principal) error
 }
 type Server struct {
 	options     Options
@@ -58,6 +68,21 @@ type rpcError struct {
 }
 
 func New(ctx context.Context, o Options) (*Server, error) {
+	if (o.VaultInput != nil || o.VaultRecords != nil) && o.AuthorizeVault == nil {
+		return nil, errors.New("native Vault requires host enrollment admission")
+	}
+	if o.VaultKeySetup != nil && !o.VaultKeySetup.MatchesInput(o.VaultInput) {
+		return nil, errors.New("native Vault setup and input must share ciphertext custody")
+	}
+	if o.VaultEntry != nil && (o.VaultInput == nil || o.VaultInput.ExposureGate() == nil || o.VaultEntry.ExposureGate() != o.VaultInput.ExposureGate()) {
+		return nil, errors.New("native Vault lifecycle and input must share the exposure gate")
+	}
+	if o.VaultRecords != nil && (o.VaultEntry == nil || o.VaultRecords.ExposureGate() == nil || o.VaultRecords.ExposureGate() != o.VaultEntry.ExposureGate()) {
+		return nil, errors.New("native Vault record input must share the enrolled lifecycle exposure gate")
+	}
+	if o.VaultRecords != nil && o.VaultKeySetup != nil && !o.VaultKeySetup.MatchesRecordInput(o.VaultRecords) {
+		return nil, errors.New("native Vault key setup must guard record ciphertext custody")
+	}
 	if len([]byte(o.SocketPath)) > 95 {
 		return nil, errors.New("native consent socket path exceeds portable Unix limit")
 	}
@@ -143,6 +168,14 @@ func (s *Server) serve(c *net.UnixConn) {
 		return
 	}
 	ctx := auth.WithPrincipal(context.Background(), p)
+	var ownedEntryID string
+	defer func() {
+		if ownedEntryID != "" && s.options.VaultEntry != nil {
+			if human, e := auth.WithNativeHuman(ctx); e == nil {
+				_ = s.options.VaultEntry.Retire(human, ownedEntryID)
+			}
+		}
+	}()
 	seen := map[string]bool{r.ID: true}
 	for count := 0; count < 4096; count++ {
 		_ = c.SetDeadline(time.Now().Add(5 * time.Minute))
@@ -164,11 +197,88 @@ func (s *Server) serve(c *net.UnixConn) {
 		if err = json.Unmarshal(r.Params, &authority); err != nil || authority.SessionID != session {
 			return
 		}
+		if r.Method == "vault.record.status" || r.Method == "vault.record.inventory" {
+			if s.options.VerifyPeer(c) != nil {
+				return
+			}
+			if write(c, s.vaultRecordInformation(ctx, r)) != nil {
+				return
+			}
+			continue
+		}
+		if r.Method == "vault.status" || r.Method == "vault.setup" || r.Method == "vault.inventory" {
+			if s.options.VerifyPeer(c) != nil {
+				return
+			}
+			if write(c, s.vaultSetup(ctx, r)) != nil {
+				return
+			}
+			continue
+		}
+		if r.Method == "vault.entry.begin" || r.Method == "vault.entry.confirm" || r.Method == "vault.entry.bind" || r.Method == "vault.entry.close" || r.Method == "vault.entry.recover" {
+			if s.options.VerifyPeer(c) != nil {
+				return
+			}
+			reply, entryID, closed := s.vaultEntry(ctx, r)
+			if entryID != "" {
+				ownedEntryID = entryID
+			}
+			if closed {
+				ownedEntryID = ""
+			}
+			if write(c, reply) != nil {
+				return
+			}
+			continue
+		}
+
+		if r.Method == "vault.record.importCredential" || r.Method == "vault.record.inspectImport" {
+			reply := s.vaultImport(ctx, r, func() error {
+				if e := s.options.VerifyPeer(c); e != nil {
+					return e
+				}
+				current, e := s.options.Verifier.Verify(ctx, credential)
+				if e != nil || current.Namespace != p.Namespace || current.ClientID != p.ClientID || !current.HasScope("consent:admin") {
+					return auth.ErrUnauthorized
+				}
+				return ctx.Err()
+			})
+			_ = write(c, reply)
+			return
+		}
+		if r.Method == "vault.create" || r.Method == "vault.update" || r.Method == "vault.delete" || r.Method == "vault.record.create" || r.Method == "vault.record.update" || r.Method == "vault.record.delete" {
+			// One dedicated secret transaction terminates this connection. No
+			// request tracing, generic handler or subsequent JSON frame sees it.
+			serveVault := s.serveVault
+			if r.Method == "vault.record.create" || r.Method == "vault.record.update" || r.Method == "vault.record.delete" {
+				serveVault = s.serveVaultRecord
+			}
+			serveVault(c, ctx, r, func() error {
+				if err := s.options.VerifyPeer(c); err != nil {
+					return err
+				}
+				actor, err := s.options.Verifier.Verify(context.Background(), credential)
+				if err != nil || actor.Namespace != p.Namespace || actor.ClientID != p.ClientID || !actor.HasScope("consent:admin") {
+					return auth.ErrUnauthorized
+				}
+				nativeActor, nativeErr := auth.WithNativeHuman(auth.WithPrincipal(context.Background(), actor))
+				if nativeErr != nil || s.options.AuthorizeVault == nil || s.options.AuthorizeVault(nativeActor, actor) != nil {
+					return auth.ErrUnauthorized
+				}
+				return nil
+			})
+			return
+		}
 		switch r.Method {
-		case "snapshot", "decide", "revoke", "inventory", "helperPermissionDoctor", "applicationAccess.get", "applicationAccess.set":
+		case "migration.managementProof", "credential.pending", "credential.bind", "credential.cancel", "snapshot", "decide", "revoke", "inventory", "helperPermissionDoctor", "applicationAccess.get", "applicationAccess.set", "browserStatus", "browserSetupMetadata", "browserControllers", "settings.get", "settings.port.set":
 		default:
 			_ = write(c, response{JSONRPC: "2.0", ID: r.ID, Error: &rpcError{Code: -32601, Message: "unsupported native consent method"}})
 			continue
+		}
+		// A retained connection is not proof that the console's current image is
+		// still enrolled. Recheck the actual signed peer before each UI operation.
+		if s.options.VerifyPeer(c) != nil {
+			return
 		}
 		bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
 		value, err := s.options.Handle(bounded, r.Method, r.Params)
@@ -177,6 +287,9 @@ func (s *Server) serve(c *net.UnixConn) {
 		if err != nil {
 			reply.Result = nil
 			reply.Error = &rpcError{Code: -32000, Message: "consent operation rejected"}
+		}
+		if r.Method == "migration.managementProof" && s.options.VerifyPeer(c) != nil {
+			return
 		}
 		if err = write(c, reply); err != nil {
 			return
@@ -233,6 +346,9 @@ func (s *Server) Close() error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
+		// Another Close may still be joining active native transactions. Every
+		// caller must observe quiescence before releasing ciphertext stores.
+		s.wg.Wait()
 		return nil
 	}
 	s.closed = true

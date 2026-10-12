@@ -12,7 +12,7 @@ public struct VerifiedClient: Codable, Equatable {
     public init(id: String, displayName: String, verification: ClientVerification) { self.id = id; self.displayName = displayName; self.verification = verification }
 }
 public struct ConsentScope: Codable, Equatable {
-    public enum Kind: String, Codable { case desktop, application, window, origin }
+    public enum Kind: String, Codable { case desktop, application, window, origin, browser }
     public let kind: Kind
     public let bundleID: String?
     public let windowID: String?
@@ -31,6 +31,7 @@ public struct ConsentScope: Codable, Equatable {
     public var exactDescription: String {
         switch kind {
         case .desktop: return "All applications and connected browsers"
+        case .browser: return "Chrome: all websites"
         case .application: return "Application: \(displayName) [\(bundleID ?? "missing identifier")]"
         case .window: return "Window: \(displayName) [\(bundleID ?? "missing application"), window \(windowID ?? "missing identifier")]"
         case .origin: return "Origin: \(origin ?? "missing origin") · \(displayName)"
@@ -43,6 +44,7 @@ public struct ConsentScope: Codable, Equatable {
               !(windowID ?? "").contains("*"), !(windowID ?? "").contains("?"), !(origin ?? "").contains("*") else { return false }
         switch kind {
         case .desktop: return (bundleID ?? "").isEmpty && (windowID ?? "").isEmpty && (origin ?? "").isEmpty
+        case .browser: return bundleID == "com.google.Chrome" && (windowID ?? "").isEmpty && (origin ?? "").isEmpty
         case .application: return !(bundleID ?? "").isEmpty && (windowID ?? "").isEmpty && (origin ?? "").isEmpty
         case .window: return !(bundleID ?? "").isEmpty && !(windowID ?? "").isEmpty && (origin ?? "").isEmpty
         case .origin:

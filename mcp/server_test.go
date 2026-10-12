@@ -12,6 +12,7 @@ import (
 	automation "github.com/viant/mechanize/integration/endly"
 	"github.com/viant/mechanize/model"
 	"github.com/viant/mechanize/script"
+	bundled "github.com/viant/mechanize/skills"
 )
 
 func TestViantMCPDiscoveryAndEndlyGateway(t *testing.T) {
@@ -80,7 +81,11 @@ func TestViantMCPDiscoveryAndEndlyGateway(t *testing.T) {
 	}
 	skillsRaw, _ := json.Marshal(skillList.StructuredContent)
 	var catalog SkillCatalog
-	if err = json.Unmarshal(skillsRaw, &catalog); err != nil || len(catalog.Skills) != 6 {
+	folders, folderErr := bundled.Folders()
+	if folderErr != nil {
+		t.Fatal(folderErr)
+	}
+	if err = json.Unmarshal(skillsRaw, &catalog); err != nil || len(catalog.Skills) != len(folders) {
 		t.Fatalf("expected desktop, recording, scenario, app-discovery, OpenOffice and Finder bundles: %s", skillsRaw)
 	}
 	for _, skill := range catalog.Skills {

@@ -1,0 +1,207 @@
+{
+  "schemaVersion": 1,
+  "reviewDate": "2026-10-06",
+  "objectiveComplete": false,
+  "scope": "Complete handoff plus user-expanded Office suite and secure Vault requirements",
+  "authority": "Evidence references identify case scope only; source tests never substitute for GUI proof",
+  "requirements": [
+    {
+      "requirement": "capture-bound hybrid click",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "word-public-mouse-down-frame-click",
+        "excel-blank-sheet-frame-and-save"
+      ],
+      "remainingOrLimit": "One Word body-focus and Excel sheet case; general pointer coverage unqualified"
+    },
+    {
+      "requirement": "Word create/open/read",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "word-sales-report-docx"
+      ],
+      "remainingOrLimit": "Saved report/reopen case; earlier create uncertainty remains"
+    },
+    {
+      "requirement": "Word selected paragraph edit with neighbor preservation",
+      "status": "case-evidence",
+      "evidenceCaseIds": [
+        "word-final-paragraph-edit"
+      ],
+      "remainingOrLimit": "Independent saved-copy preservation proved for one final paragraph"
+    },
+    {
+      "requirement": "Word headings/font/paragraph styling",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "word-sales-report-docx"
+      ],
+      "remainingOrLimit": "Heading 1 case; broader font and paragraph styles pending"
+    },
+    {
+      "requirement": "Word table insertion",
+      "status": "pending",
+      "evidenceCaseIds": [],
+      "remainingOrLimit": "Saved table copy has zero tables; readonly verifier rejects it"
+    },
+    {
+      "requirement": "Word page layout",
+      "status": "pending",
+      "evidenceCaseIds": [],
+      "remainingOrLimit": "Section-preservation check available; GUI layout editing not qualified"
+    },
+    {
+      "requirement": "Word DOCX/PDF save-export and reopen",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "word-sales-report-docx",
+        "word-edited-reopen-root-boundary"
+      ],
+      "remainingOrLimit": "Original report case proved; edited-copy reopen remains unknown"
+    },
+    {
+      "requirement": "Excel open/create and sheet/range navigation",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "excel-create-workbook",
+        "excel-goto-cell",
+        "excel-two-sheet-close-reopen"
+      ],
+      "remainingOrLimit": "Several bounded cases; not general navigation reliability"
+    },
+    {
+      "requirement": "Excel typed values/formulas and calculated results",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "excel-book2-text-entry",
+        "excel-literal-formula-reconciled",
+        "analysis-totals-file"
+      ],
+      "remainingOrLimit": "Saved formulas/totals proved for fixtures; general complex analysis pending"
+    },
+    {
+      "requirement": "Excel dates/percentages",
+      "status": "case-evidence",
+      "evidenceCaseIds": [
+        "excel-margin-percentage-formatting",
+        "excel-date-formula-iso-format"
+      ],
+      "remainingOrLimit": "GUI/capture and saved-package checks cover these exact cells"
+    },
+    {
+      "requirement": "Excel add/rename sheets",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "excel-blank-sheet-frame-and-save"
+      ],
+      "remainingOrLimit": "Blank insertion verified; rename pending"
+    },
+    {
+      "requirement": "Excel sort/filter",
+      "status": "pending",
+      "evidenceCaseIds": [
+        "excel-save-as-copy-and-sort-preparation"
+      ],
+      "remainingOrLimit": "Disposable sort workbook and Sort dialog remain open. Capture-bound popup opening exposed Region/Revenue/Cost/Profit/Margin, but duplicate Region paths prevent the original unique-name predicate from verifying. Host.Policy omitted indexedQuery although the gateway implements it; source now advertises it only with fresh Accessibility and exact-window support. Installed broker still rejects it before dispatch. Sort/filter and saved row order remain unqualified."
+    },
+    {
+      "requirement": "Excel chart",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "analysis-chart-file",
+        "analysis-chart-reopen"
+      ],
+      "remainingOrLimit": "Saved regional chart case; broader chart editing pending"
+    },
+    {
+      "requirement": "Excel print area/scaling",
+      "status": "pending",
+      "evidenceCaseIds": [],
+      "remainingOrLimit": "GUI print layout settings pending"
+    },
+    {
+      "requirement": "Excel XLSX/PDF save-export-reopen",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "excel-save-xlsx",
+        "excel-local-pdf-export",
+        "excel-date-close-reopen-and-render"
+      ],
+      "remainingOrLimit": "Small saved cases; full analyzed workbook print/export acceptance pending"
+    },
+    {
+      "requirement": "PowerPoint creation/layout/chart/save-export-reopen",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "powerpoint-sales-brief-revision",
+        "powerpoint-generated-dimensions-and-save-recovery"
+      ],
+      "remainingOrLimit": "Four-slide case; external relationship prevents independent editable attachment"
+    },
+    {
+      "requirement": "Outlook read/search/draft/attachments/send/recovery",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "outlook-incoming-mortgage-request",
+        "outlook-access-after-runtime-upgrade"
+      ],
+      "remainingOrLimit": "Authorized Sent-folder observation; broad unattended workflow/reliability pending"
+    },
+    {
+      "requirement": "OneNote create/edit/reopen/export",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "onenote-first-use-and-notebook"
+      ],
+      "remainingOrLimit": "Notebook creation only; page editing/export pending"
+    },
+    {
+      "requirement": "Cross-application verified artifact handoff",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "analysis-chart-file",
+        "word-sales-report-docx",
+        "powerpoint-sales-brief-revision"
+      ],
+      "remainingOrLimit": "Case artifacts exist; portable outputs and end-to-end acceptance pending"
+    },
+    {
+      "requirement": "Interruption/modal/stale reference/cancel/restart/unknown recovery",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "analysis-owner-pause-restart-resume",
+        "analysis-terminal-cancel"
+      ],
+      "remainingOrLimit": "Some recovery cases proved; Excel Sort Tab effect reconciled confirmed without applying sort; three Word effects remain unknown and must never be replayed"
+    },
+    {
+      "requirement": "Efficiency verified completion/latency/LLM tokens/screenshots/fallbacks",
+      "status": "pending",
+      "evidenceCaseIds": [],
+      "remainingOrLimit": "No complete comparable measurement set"
+    },
+    {
+      "requirement": "Versioned skills and reusable parameterized workflows",
+      "status": "partial",
+      "evidenceCaseIds": [
+        "excel-cell-plan-input-boundaries",
+        "powerpoint-generated-dimensions-and-save-recovery"
+      ],
+      "remainingOrLimit": "Source Office guide 0.14.1 and bounded emitters; not all procedures qualified"
+    },
+    {
+      "requirement": "Source build/test and signed-runtime provisioning",
+      "status": "partial",
+      "evidenceCaseIds": [],
+      "remainingOrLimit": "Current build/full Go suite/30 artifact tests pass; installed broker preserved"
+    },
+    {
+      "requirement": "Vault generic secrets and protected administration",
+      "status": "partial",
+      "evidenceCaseIds": [],
+      "remainingOrLimit": "Source foundation/tests; installed CRUD and migration approval remain unqualified"
+    }
+  ],
+  "nextLiveGate": "Deploy the corrected broker capability policy through the credential-preserving native upgrade. Fresh Excel Sort observation has two Region paths; indexed selection requires qualification before applying sort. Preserve original unknown effects.",
+  "deploymentGate": "Qualified exact Keychain custodian transition with local human approval; no key replacement or ACL bypass"
+}

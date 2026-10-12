@@ -46,7 +46,7 @@ func TestObserveNativeRootExplicitRoutingAndConsent(t *testing.T) {
 					return model.Observation{NativeRoot: "focusedElement"}, nil
 				}
 				return model.Observation{}, nil
-			}, ObserveNativeRoot: func(c context.Context, a auth.Principal, s model.Surface, r string) (model.Observation, error) {
+			}, ObserveNativeRoot: func(c context.Context, a auth.Principal, s model.Surface, r string, menus ...string) (model.Observation, error) {
 				scoped++
 				binding, ok := auth.ConsentBindingFromContext(c)
 				if !ok || binding != (auth.ConsentBinding{SessionID: "session", GrantID: "grant", Purpose: "inspect"}) || a.Namespace != p.Namespace || r != root || s.BundleID != "fixture.app" {
@@ -98,5 +98,64 @@ func TestObserveNativeRootExplicitRoutingAndConsent(t *testing.T) {
 				t.Fatalf("scoped calls=%d want%d", scoped, expected)
 			}
 		})
+	}
+}
+
+func TestObserveNamedMenuExactRoutingAndEcho(t *testing.T) {
+	p, _ := auth.NewPrincipal("fixture", "", "named-menu", []string{"desktop:observe"})
+	ctx := auth.WithPrincipal(context.Background(), p)
+	calls := 0
+	wrongEcho := false
+	handler := protocol.WithDefaultHandler(ctx, func(base *protocol.DefaultHandler) error {
+		return registerObserve(base, Dependencies{Policy: func(context.Context, auth.Principal) (script.Policy, error) {
+			return script.Policy{AllowAllNative: true}, nil
+		}, ObserveNativeRoot: func(c context.Context, a auth.Principal, s model.Surface, root string, names ...string) (model.Observation, error) {
+			calls++
+			if root != "menuBar" || len(names) != 1 || names[0] != "Git" || s.ProcessID != 42 {
+				t.Fatal("named routing lost")
+			}
+			name := names[0]
+			if wrongEcho {
+				name = "Window"
+			}
+			return model.Observation{Surface: s, NativeRoot: root, NativeMenu: name, Nodes: []model.Node{}}, nil
+		}})
+	})
+	server, e := server.New(server.WithNewHandler(handler))
+	if e != nil {
+		t.Fatal(e)
+	}
+	client := server.AsClient(ctx)
+	if _, e = client.Initialize(ctx); e != nil {
+		t.Fatal(e)
+	}
+	args := map[string]any{"sessionId": "session", "purpose": "inspect menu", "nativeRoot": "menuBar", "nativeMenu": "Git", "surface": model.Surface{Kind: "native", BundleID: "fixture.app", ProcessID: 42, ProcessStartToken: "100:1"}}
+	call := func() *schema.CallToolResult {
+		out, e := client.CallTool(ctx, &schema.CallToolRequestParams{Name: "mechanize_observe", Arguments: args})
+		if e != nil {
+			t.Fatal(e)
+		}
+		return out
+	}
+	if out := call(); out.IsError != nil && *out.IsError {
+		t.Fatal("named scope rejected")
+	}
+	wrongEcho = true
+	if out := call(); out.IsError == nil || !*out.IsError {
+		t.Fatal("foreign menu echo accepted")
+	}
+	wrongEcho = false
+	before := calls
+	args["nativeRoot"] = "focusedElement"
+	if out := call(); out.IsError == nil || !*out.IsError {
+		t.Fatal("menu on focus scope accepted")
+	}
+	args["nativeRoot"] = "menuBar"
+	args["surface"] = model.Surface{Kind: "native", BundleID: "fixture.app"}
+	if out := call(); out.IsError == nil || !*out.IsError {
+		t.Fatal("unbound process accepted")
+	}
+	if calls != before {
+		t.Fatal("invalid scope reached helper")
 	}
 }

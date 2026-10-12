@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"unicode/utf8"
 
+	"github.com/viant/mechanize/internal/chromeframe"
 	"github.com/viant/mechanize/model"
 )
 
@@ -39,12 +40,17 @@ func (d Document) QualifiedTabID() string {
 }
 
 type Locator struct {
+	Index    *int    `json:"index,omitempty"`
+	Order    string  `json:"order,omitempty"`
 	Strategy string  `json:"strategy"`
 	Value    string  `json:"value"`
 	Name     *string `json:"name,omitempty"`
 	Exact    bool    `json:"exact"`
 }
 type Command struct {
+	// PublicRead is set only by a current server-owned read permit, never by
+	// public tool arguments. Version2 peers use it solely to select the read lane.
+	PublicRead         bool           `json:"publicRead,omitempty"`
 	FingerprintVersion int            `json:"fingerprintVersion,omitempty"`
 	FingerprintSHA256  string         `json:"fingerprintSHA256,omitempty"`
 	ControlLease       *Lease         `json:"controlLease,omitempty"`
@@ -60,6 +66,11 @@ type Command struct {
 	Args               map[string]any `json:"args,omitempty"`
 }
 type Reply struct {
+	// ValueReadVersion is renderer-authenticated completeness metadata for the
+	// explicit value attribute only. Legacy replies omit both fields.
+	ValueReadVersion            int  `json:"valueReadVersion,omitempty"`
+	ValueReadBytes              *int `json:"valueReadBytes,omitempty"`
+	acquireNotInstalled         bool
 	FingerprintVersion          int                   `json:"fingerprintVersion,omitempty"`
 	FingerprintSHA256           string                `json:"fingerprintSHA256,omitempty"`
 	ControlLease                *Lease                `json:"controlLease,omitempty"`
@@ -119,14 +130,14 @@ func ReadFrame(reader io.Reader) (json.RawMessage, error) {
 		return nil, err
 	}
 	length := binary.NativeEndian.Uint32(header[:])
-	if length == 0 || length > MaxFrameBytes {
+	if length == 0 || length > chromeframe.PrivateLimit {
 		return nil, errors.New("invalid Chrome frame length")
 	}
 	result := make([]byte, length)
 	if _, err := io.ReadFull(reader, result); err != nil {
 		return nil, err
 	}
-	if !utf8.Valid(result) || !json.Valid(result) {
+	if !utf8.Valid(result) || !json.Valid(result) || len(result) > MaxFrameBytes && !chromeframe.OversizeAllowed(result) {
 		return nil, errors.New("invalid Chrome UTF-8 JSON")
 	}
 	return result, nil
@@ -136,7 +147,7 @@ func WriteFrame(writer io.Writer, payload any) error {
 	if err != nil {
 		return err
 	}
-	if len(data) == 0 || len(data) > MaxFrameBytes {
+	if len(data) == 0 || len(data) > chromeframe.PrivateLimit || len(data) > MaxFrameBytes && !chromeframe.OversizeAllowed(data) {
 		return errors.New("Chrome frame exceeds cap")
 	}
 	var header [4]byte

@@ -78,6 +78,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	effectiveListen, err := host.LoadRuntimeListen(cfg.StorageRoot, *listen)
+	if err != nil {
+		return err
+	}
+	cfg.RuntimeListenAddress = effectiveListen
 	h, err := host.New(ctx, cfg)
 	if err != nil {
 		return err
@@ -87,7 +92,7 @@ func run() error {
 		defer done()
 		_ = h.Close(shutdown)
 	}()
-	if *listen == "" {
+	if effectiveListen == "" {
 		secured, err := h.StdioContext(ctx, cfg.StdioCredential)
 		if err != nil {
 			return err
@@ -98,7 +103,7 @@ func run() error {
 		defer func() { os.Stdout = original }()
 		return stdio.ListenAndServe()
 	}
-	address, _, err := net.SplitHostPort(*listen)
+	address, _, err := net.SplitHostPort(effectiveListen)
 	if err != nil {
 		return err
 	}
@@ -106,7 +111,7 @@ func run() error {
 	if ip == nil || !ip.IsLoopback() {
 		return fmt.Errorf("this development host requires an explicit loopback IP")
 	}
-	server := h.Server.HTTP(ctx, *listen)
+	server := h.Server.HTTP(ctx, effectiveListen)
 	server.Handler = h.Verifier.Middleware(server.Handler)
 	server.ReadHeaderTimeout = 10 * time.Second
 	go func() {

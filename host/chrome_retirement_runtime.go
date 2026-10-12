@@ -9,7 +9,7 @@ import (
 )
 
 func (h *Host) configureChromeRetirement(c Config) error {
-	if c.ChromeRetirement == nil {
+	if c.ChromeRetirement == nil || h.chromeStartupUnqualified {
 		return nil
 	}
 	if c.Chrome == nil || c.Chrome.ProcessTrust == nil || h.chrome == nil {

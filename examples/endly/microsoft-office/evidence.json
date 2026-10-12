@@ -1,0 +1,1122 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-04",
+  "platform": {
+    "os": "macOS 27.0 (26A428)",
+    "architecture": "arm64",
+    "wordVersion": "16.113.3",
+    "excelVersion": "16.113.3"
+  },
+  "overallStatus": "qualification-in-progress",
+  "businessStatus": "unverified",
+  "cases": [
+    {
+      "id": "word-launch",
+      "status": "execution-verified",
+      "runId": "fbc0e4b77fde2084993c49e21ab5621eb88d1f8a9c5f4b654d13c3be09d39f17",
+      "verification": "Fresh native observation found one Word process and its start window."
+    },
+    {
+      "id": "word-window-frame",
+      "status": "blocked-before-dispatch",
+      "errors": [
+        "windowKeyboardUnqualified",
+        "windowClickOccluded"
+      ],
+      "verification": "No click permit returned and no pointer input dispatched. A read-only CoreGraphics diagnostic reported a screen-covering Dock window."
+    },
+    {
+      "id": "word-create-document",
+      "status": "unresolved-effect",
+      "runId": "06a5bd6dea969ff66533ce261f71000e5fef493a87eeda2ca5aab4791c7f3851",
+      "effectId": "c5c8387e2ee2a5550d00c414fc0d2b504f4add471d31790a731dc07bce262a28",
+      "verification": "AXPress returned -25204. Fresh native observation found Document1. The run was stopped and paused; its original expected result crossed the original window boundary, so reconciliation rejected it. No replay or ledger rewrite."
+    },
+    {
+      "id": "excel-first-launch",
+      "status": "execution-and-postcondition-verified",
+      "runId": "babe4fd570997e16582f42e8e5c2c13390b6ff978b7f72fe02f5aa35a2c6f8cb",
+      "verification": "Observed Skip sign in, invoked it through Mechanize/Endly, and independently read the enabled Create control on the local template screen."
+    },
+    {
+      "id": "excel-create-workbook",
+      "status": "effect-reconciled",
+      "runId": "e60176c04d3bb33fb19e7ffeac7a0b59882799153e7a98a55c5adcba0c1d3225",
+      "effectId": "5c3543367c83c90cdbe45b875d3988b62f686c79d9f8ca5364693a97c5371a87",
+      "verification": "AXPress returned -25204 after Book1 appeared. Stop boundary committed; the original immutable result predicate read Book1 in the same exact process, and plan.effect.reconcile committed confirmed. Create was sent once."
+    },
+    {
+      "id": "excel-enter-edit-mode",
+      "status": "execution-and-postcondition-verified",
+      "runId": "b8cafacc9a49ef08f3e2b8c8a8de57e22871dcb28a78898fbbf576530d119ea2",
+      "verification": "Scoped Control+U changed the independently observed status text from Ready to Edit."
+    },
+    {
+      "id": "excel-text-entry",
+      "status": "blocked-before-text-input",
+      "verification": "Read-only empty-editor check returned unknown. No text keys were sent. Direct value read reported valueReadDenied; native helper subrole compatibility fix is undergoing live verification."
+    },
+    {
+      "id": "excel-one-key-check",
+      "status": "unresolved-effect",
+      "runId": "f5c415fa8ed2acbbd45aa0711961591f46e6ea990a911904d02f222ce27ba8c2",
+      "verification": "One T key was submitted through the qualified exact-window keyboard route. Its immutable expected editor value was not verified. Fresh capture showed drit, not the expected t. No further input or correction was attempted; the run was paused preserving uncertainty. A fresh visual precondition should have preceded input after the earlier blank-value checks were unavailable. Uninterrupted input ownership must be re-established before further live tests."
+    },
+    {
+      "id": "excel-reader-subrole",
+      "status": "compatibility-fix-tested",
+      "verification": "Native value reads now accept an explicitly absent optional AXSubrole while continuing to reject secure fields, unknown subrole metadata, unenrolled IDs and non-text roles. All 62 Swift tests passed. Installed live read advanced from valueReadDenied to attributeUnavailable; formula value retrieval remains unqualified."
+    },
+    {
+      "id": "excel-complete-text-range",
+      "status": "live-read-verified",
+      "runId": "7a1364e8d96fd3a7ff983da5828918eacf342b00bf077d36214c61decd1b5f2e",
+      "verification": "Complete bounded AXStringForRange read returned the existing editor text without changing the cell."
+    },
+    {
+      "id": "excel-book2-text-entry",
+      "status": "execution-and-postconditions-verified",
+      "runId": "bcf19c0b6677206a91496215d88fb11de870db5aa41bbe23f67a410f6b868b3b",
+      "verification": "Fresh empty editor baseline followed by four scoped keys; every prefix through test independently read back."
+    },
+    {
+      "id": "excel-save-xlsx",
+      "status": "artifact-verified",
+      "runId": "869059771ff4a9bcc72972271305d00f44a228b1c5816e7e33028f3a30b04a24",
+      "verification": "New XLSX created through Excel Save dialog; independent OOXML inspection confirms Sheet1!A1=test."
+    },
+    {
+      "id": "excel-local-pdf-export",
+      "status": "artifact-verified-effect-reconciled",
+      "runId": "2d63aa392e39af516decaad3d54e425b733bd9c4fd3607374498833428644d39",
+      "effectId": "c83f4403ab0cc0350bea2e2dd07a6627c8e377cb978301ccd1bfc1d921222a6c",
+      "verification": "Fresh capture verified local printing mode, filename and directory. Save sent once; original effect reconciled after UI settlement. Independent PDF inspection and PNG rendering show one Letter page with test and no clipping; XLSX hash unchanged."
+    },
+    {
+      "id": "excel-close-reopen",
+      "status": "execution-and-readback-verified",
+      "runId": "11b07750820996b83e873eb9a11f961dcae4245e93e6c8c314e8b6f8bd2345ee",
+      "verification": "Closed saved workbook and verified removal from complete window inventory. Reopened through observed recent-file menu; exact editor read returned test."
+    },
+    {
+      "id": "pointer-ownership-diagnostic",
+      "status": "blocked-before-dispatch",
+      "verification": "After the user handed input back, frame qualification still reported windowClickOccluded. Diagnostic-only AX hit testing matched the target app owner but did not identify an exact window, including a bounded same-owner parent walk. Guard remains unchanged and no click was sent."
+    },
+    {
+      "id": "candidate-permissions-capture",
+      "status": "observation-verified",
+      "verification": "All four launchd doctor permission checks passed. Exact Excel window capture succeeded through Mechanize MCP and Endly after activating the new candidate."
+    },
+    {
+      "id": "candidate-frame-click",
+      "status": "blocked-before-dispatch",
+      "errors": [
+        "windowClickOccluded"
+      ],
+      "verification": "Capture-window-frame again returned hitMatchesTargetOwner=true; hitWindow=unavailable. No permit and no pointer dispatch."
+    },
+    {
+      "id": "candidate-create-menubar",
+      "status": "blocked-before-dispatch",
+      "runIds": [
+        "d9ee2aef289e0d4ed447e1c5cd1b44282e885b080988f7d138345386687d69b8",
+        "89441667442e71327047cfb8c857cf1ab03521c059d02371ae2de0538a81de9e"
+      ],
+      "verification": "App scope and fresh menu-bar scope both contain an element without a role. Strict role lookup rejected incompleteObservation. Both state_get results had no unresolved effects."
+    },
+    {
+      "id": "candidate-create-keyboard",
+      "status": "unresolved-effect",
+      "runId": "5274359d1a1aff8ddcbb73ba06c86a127c6c54231bf87d8c8361773ebe7b219f",
+      "verification": "Cmd+N dispatched once. Original predicate expected Book2; fresh window discovery instead found Book3 (4039). No retry or predicate rewrite. Later focused observation described Sheet1 as a blank sheet."
+    },
+    {
+      "id": "candidate-formula-text",
+      "status": "blocked-before-dispatch",
+      "runId": "1f6181cf93012cf87aef6673d1fe183007dad548209dbf7f6098dda374943977",
+      "errors": [
+        "windowTextUnqualified"
+      ],
+      "verification": "The plan declared a blank-editor precondition, but subsequent source review found preconditions were not evaluated. Do not count that baseline as verified. The gateway rejected =SUM(17,23) before input with windowTextUnqualified despite host advertisement. Source now gates durable execution on preconditions and adds readiness diagnostics; these changes are not in the installed candidate.",
+      "rootCause": "The native doctor response assigned nativeWindowActions twice; its second list omitted typeText. Source now advertises it once and tests the actual Helper.handle doctor response. Host capability advertisement also now requires fresh helper method evidence."
+    },
+    {
+      "id": "text-precondition-fixes-upgrade",
+      "status": "code-validated-live-permissions-pending",
+      "sourceDigest": "11b46ce1fa40cf51415ea4827a0ce67d810eafad1e9fd13b361ff9110b311b54",
+      "verification": "Full go test -p 2 ./..., go vet ./..., and native Swift suites passed. Actual Helper.handle doctor regression confirms typeText survives the final response. False/unknown/stale/missing/offline preconditions block new durable attempts before input intent, and false read-only preconditions block dispatch. Installed in place with rollback backup; console authentication succeeded. Fresh launchd doctor reports all four OS permissions false after new signing identity. No Office input after upgrade."
+    },
+    {
+      "id": "excel-literal-formula-reconciled",
+      "status": "effect-confirmed",
+      "runId": "c8f07aeb83828c7383d739765f38a1acd937084faac5460865f191af4174a760",
+      "effectId": "258f2b8204949f50875765f808349db1de4c5aa137cf02c7a2594ce8dbeb67cf",
+      "verification": "Installed precondition gate checked blank XLFormulaEditor in Book3 before text dispatch. Literal =SUM(17,23) arrived, then AX focus changed and the helper stopped unknown. Original exact-text predicate reconciled confirmed after stop boundary, without replay."
+    },
+    {
+      "id": "excel-formula-commit",
+      "status": "execution-verified",
+      "runId": "1d28f5d03b607d5c02267e77604f785b23fe19e6d0f81014d102aa79d272b2fb",
+      "verification": "Activated Excel, Return committed formula; ArrowUp restored A1. Exact editor readback retained formula; native screenshot displayed 40. Earlier nonforeground attempt stopped before dispatch with no unresolved effect."
+    },
+    {
+      "id": "excel-formula-bold",
+      "status": "effect-confirmed",
+      "runId": "aa5e550d36e00e8dfec7d0d14759fecf37e2a198c58d7a7cd0fdbccbd051d010",
+      "effectId": "4d82e426261fde9d72ad777703dcd827c39823ad427ed575a5b86853f9d00f76",
+      "verification": "Checked=false precondition passed; AXPress returned -25204. Original checked=true predicate reconciled confirmed after stop boundary without a second click."
+    },
+    {
+      "id": "excel-formula-save",
+      "status": "artifact-verified",
+      "runId": "29ead47c6e2428cee58bd7d03fe6a602c19f1fc60df5a8d28e71aaaad3801c69",
+      "artifact": {
+        "path": "/Users/adrianwitas/Documents/Mechanize Qualification/Mechanize Formula Qualification.xlsx",
+        "sha256": "d2d7b313842177cf1f6865794a212a882cc846d34dbb61d86fb97b12bafa1861",
+        "formula": "SUM(17,23)",
+        "cachedValue": "40",
+        "bold": true
+      },
+      "verification": "Saved through native Save As and Go to Folder dialogs via MCP/Endly. Independent OOXML inspection confirmed formula SUM(17,23), cached value 40 and bold font. Reopen of this particular workbook remains pending."
+    },
+    {
+      "id": "excel-stable-editor-text",
+      "status": "execution-verified",
+      "runId": "eaa8ab4f84836118f5b3f2390cde28d89844d17ceda78644db9ebf0c256419e4",
+      "verification": "Control+U first entered XLIncellEditor. Literal Regional sales analysis crossed a chunk boundary and passed exact editor readback without a focus-change error. Commit/readback succeeded in run 64eaabbc0c0b8751d44ba4e8694f28adce757d12bdf8456945c8158622113d88."
+    },
+    {
+      "id": "excel-namebox-submit",
+      "status": "unresolved-effect",
+      "runId": "533d625bed08933722b2c9a0ce10297cc89831f5a0c5c5c957a4038908669e85",
+      "effectId": "124a6a3871a652a12c9c391dc33b3e2f25888f63338726d4d19e1bf71f495a64",
+      "verification": "NameBox fill B2 read back correctly, but AXConfirm reverted address to A1. Stopped boundary and original B2 predicate did not confirm; no replay or rewrite. Do not use this route as a qualified navigation method."
+    },
+    {
+      "id": "excel-goto-cell",
+      "status": "execution-verified",
+      "runId": "5b60370d0fac595820678b894519ad0a718fb07757105ae12c7f8bfdaf787bd7",
+      "verification": "Observed Go To dialog; filled its exact reference field with C3, accepted Return, and verified NameBox=C3. This separate navigation case did not repeat the unknown B2 request."
+    },
+    {
+      "id": "excel-sales-source-population",
+      "status": "execution-verified",
+      "runId": "483416b89c6bdd4a7bb50eab9166f6b4cbb7e86a0a0404cda5a16d2afc026cc2",
+      "verification": "73-step Endly/MCP plan populated C3:E7 with headers and four region records. Each cell checked address and blank editor, entered edit mode, typed literal data, verified content and committed with next-address readback. No human intervention or recovery was needed during this plan."
+    },
+    {
+      "id": "excel-sales-source-save",
+      "status": "artifact-verified",
+      "runId": "8b8289965fe0d872418c9bf4c52edd6485c150f65f0831eb33b8f548cdab87c2",
+      "artifact": {
+        "path": "/Users/adrianwitas/Documents/Mechanize Qualification/Mechanize Sales Source.xlsx",
+        "sha256": "9190462ac86cde70d4f0bf60b0abcfd01d8327bfef82354c05fd2d60010bd508"
+      },
+      "verification": "GUI Save As via MCP/Endly. Independent OOXML verifier checked all 16 expected cells including title. Full analysis output, chart and interruption/resume acceptance remain pending."
+    },
+    {
+      "id": "analysis-original-resume-guard-failure",
+      "status": "paused-preserved",
+      "runId": "36f0388beb2f2ffc07cf965312f9c0eef1c38659625bbcabbab2a9d4c11c3fa5",
+      "verification": "Nine mutations verified through text-F5; commit-F5 stopped staleLease with no unresolved effect. Resume reran an old unbound read-only address guard while F5 was in edit mode, and stopped targetNotFound. Original run and plan preserved. Generator now binds address checks as edit preconditions instead of independent read steps."
+    },
+    {
+      "id": "analysis-verified-tail",
+      "status": "execution-verified",
+      "runId": "e65c253512f5e6197d3b516df0469928ac87799f576e6d8264138e639bd29a83",
+      "verification": "Mapped nine confirmed attempt IDs to original plan; native capture and editor read verified F5 held =D5-E5. A separate 29-step tail plan committed F5 and completed only remaining cells. This is a new continuation plan, not a successful resume of the original run."
+    },
+    {
+      "id": "analysis-terminal-cancel",
+      "status": "cancelled-terminal",
+      "runId": "45f82901c45ce723ccff7684ab493bf2fd70bddbd11455e74e32c8c87496d3fb",
+      "verification": "Totals test cancelled after four verified steps. Endly and durable state both cancelled, with no unresolved effects. C8 Total was committed. Terminal cancellation is preserved, not converted into pause or resumed."
+    },
+    {
+      "id": "analysis-derived-file-checkpoint",
+      "status": "artifact-verified",
+      "runId": "f595c9942634e3d2de2a4fd1fee477f14d3c8a7b62f58ae5f399b3ab1322e56f",
+      "artifact": {
+        "path": "/Users/adrianwitas/Documents/Mechanize Qualification/Mechanize Sales Analysis.xlsx",
+        "sha256": "5b07ea9ddb8124beefd3249bd140d6f066aa083ea00efab8dc3b8d9741116617",
+        "sourceUnchanged": true,
+        "verifiedDerivedCells": {
+          "F4": {
+            "formula": "D4-E4",
+            "value": 400.0
+          },
+          "G4": {
+            "formula": "F4/D4",
+            "value": 0.3333333333333333
+          },
+          "F5": {
+            "formula": "D5-E5",
+            "value": 800.0
+          },
+          "G5": {
+            "formula": "F5/D5",
+            "value": 0.4444444444444444
+          },
+          "F6": {
+            "formula": "D6-E6",
+            "value": 300.0
+          },
+          "G6": {
+            "formula": "F6/D6",
+            "value": 0.3333333333333333
+          },
+          "F7": {
+            "formula": "D7-E7",
+            "value": 400.0
+          },
+          "G7": {
+            "formula": "F7/D7",
+            "value": 0.26666666666666666
+          }
+        }
+      },
+      "verification": "GUI Cmd+S saved the checkpoint. All eight per-region profit/margin formulas and numeric caches match independent calculations. Source SHA256 unchanged. Totals, chart and reopened-output verification remain pending."
+    },
+    {
+      "id": "resumable-pause-source-fix",
+      "status": "code-validated-installed-permissions-pending",
+      "sourceDigest": "1f45979a0568764e1e3804f6bfc2227d422f8ec993a643251cd85f0861114113",
+      "verification": "Owner pause now carries explicit pause intent to completion and waits for durable completion; explicit cancellation remains terminal. Read-only committed root metadata allows revision validation without blocking behind the running executor. Final correlation/state is checked under normal lock. Integration test verifies stale pause does not stop input, paused revision advances safely, original prefix is not replayed on resume, and cancelled runs cannot be paused. Full Go suite/vet and targeted race test passed; console suite 58 passed. Installed at existing path with rollback backup; all four OS grants require re-enablement."
+    },
+    {
+      "id": "analysis-owner-pause-restart-resume",
+      "status": "execution-verified-with-operator-recovery",
+      "runId": "8ee1b5db6fe254df1cca30966461307825ba8c859fc602b6fd1e0ec20e744952",
+      "resumeOperationId": "faf113c5-9781-468a-be41-1b56e2d72e7b",
+      "verification": "Owner pause stopped at four verified steps and persisted paused revision 7 without unresolved effects. Native helper generation 279 teardown timed out, inhibiting control. Read-only generated Datly evidence proved zero dispatch attempts for generation 279; stopped helper identity was independently checked. After graceful broker stop, Supervisor.ReconcileNeverDispatched released only that generation with fresh proof. Broker restart and original-run resume completed all 19 steps. Original four attempt IDs remain; no resumed-prefix attempt IDs appear. This required an operator reconciliation utility and is not fully automatic recovery."
+    },
+    {
+      "id": "analysis-totals-file",
+      "status": "artifact-verified",
+      "runId": "50a2fc4d3d3e7868b6a9ceee3113438fbfa6b3f2e5df0c51be5f513e7fae0dc2",
+      "artifact": {
+        "path": "/Users/adrianwitas/Documents/Mechanize Qualification/Mechanize Sales Analysis.xlsx",
+        "sha256": "6e4d102c813952a458d0351278512b3ed192ad30333fb847c40f8eeb9eff6ef2",
+        "revenue": 5400,
+        "cost": 3500,
+        "profit": 1900,
+        "margin": 0.35185185185185186,
+        "sourceUnchanged": true
+      },
+      "verification": "GUI save and independent OOXML checks verified all four total formulas and caches; source unchanged. Chart and reopen checks remain pending."
+    },
+    {
+      "id": "analysis-chart-range",
+      "status": "observation-verified",
+      "runId": "f78fe25956495a02e99ff052ecd74d46a4ba504c7e001e8bc41853fb70217780",
+      "verification": "Go To selected C3:D7. Name Box confirmed C3 anchor; native capture independently showed the complete five-row two-column selection."
+    },
+    {
+      "id": "analysis-chart-menu",
+      "status": "unresolved-effect",
+      "runId": "7e86845244a720fce35e2a094d1b6341ac79c55225df5f564083bc8b57808a5f",
+      "verification": "Column popup opened but the original expected Clustered Column name was unavailable: gallery options have identifiers but no AX names. Stopped boundary retained the original unknown; no second open click. Full-app observation truncated at 1000 nodes; focused-element subtree gave complete 23-node gallery."
+    },
+    {
+      "id": "analysis-chart-create",
+      "status": "effect-confirmed-followup-check-failed",
+      "runId": "1757a35c0ec476425f77296438b2d342c644f65a74f7b04ebb0791dc36086754",
+      "effectId": "40ad5f6af01d3a8c2b94eb22c4f6c185e6f5cd04c1054d4ed4af96970638e926",
+      "verification": "Native capture identified first 2-D column preset and fresh focused-root observation identified Control_0_0. AXPress returned -25204; original return-to-Content-Area predicate reconciled confirmed without a second chart insertion. Subsequent expected NameBox=Chart 1 was false; chart was created without selecting it, leaving C3 active. That failed read check was not rewritten."
+    },
+    {
+      "id": "analysis-chart-file",
+      "status": "artifact-verified",
+      "runId": "883e748f306038b6c3fddaebf486f2fd249631bc793cd9cb6116a042ae6cea74",
+      "artifact": {
+        "chartCount": 1,
+        "categories": [
+          "North",
+          "South",
+          "East",
+          "West"
+        ],
+        "values": [
+          1200.0,
+          1800.0,
+          900.0,
+          1500.0
+        ],
+        "sourceRanges": [
+          "Sheet1!$D$3",
+          "Sheet1!$C$4:$C$7",
+          "Sheet1!$D$4:$D$7"
+        ],
+        "path": "/Users/adrianwitas/Documents/Mechanize Qualification/Mechanize Sales Analysis.xlsx",
+        "sha256": "4d30dfaaea48cb4b0ec3312bfe39569b689b8043dd78b04c3cbe54982ee465e7"
+      },
+      "verification": "GUI save produced one column chart. Independent chart XML confirmed categories North/South/East/West, values 1200/1800/900/1500 and exact Sheet1 source ranges."
+    },
+    {
+      "id": "analysis-chart-reopen",
+      "status": "execution-and-artifact-verified",
+      "runId": "8938eec886be4a724fac9b423e1cfa0454dc1444818ea794bd63d22185872dec",
+      "verification": "Closed analysis workbook and confirmed absence from complete window list; reopened its unique observed recent item. New CGWindow ID 4497, exact Region editor readback, chart visible in fresh native capture, and saved SHA256 unchanged. Layout still needs refinement: default chart overlaps part of the totals row and margin formatting is unpolished."
+    },
+    {
+      "id": "outlook-incoming-mortgage-request",
+      "status": "sent-folder-observed",
+      "inputSHA256": "197e290297405432b02feab9b00836fe352f0cff8b8aa759061ef1570067e2df",
+      "runs": {
+        "readMessage": "de4aed16b79e3dfc7fdffe511fec70b894307fe88c502f963e1dd39107a9a887",
+        "saveAttachment": "aab23b53ca5eb6356ab4810dffce2a3039124d5637ca595f035d741d92c2adb1",
+        "composeReply": "be671513a9f91df2255a804af8abb01ca6a6d4197eb2d3c9e8693db38f87eea9",
+        "verifyReply": "eeab4ae7fad16b6b577524dd29ec2f0f46480d478e45af58d81e628118a4cef6",
+        "sendConfirmation": "80c4c527516eb0de4039e15fc45f3e6140276e54f04a60483b837347fb5a28d8"
+      },
+      "verification": "User-designated request opened, attachment saved via Mechanize; independent read-only analysis reconciled 1800 monthly averages/counts to 7796 raw state-date rows. Exact complete reply body, subject and recipient verified before sending. Account Sent folder showed the replied thread with matching summary preview. Source hash unchanged. No recipient-inbox delivery proof or qualified business outcome adapter claimed.",
+      "retainedUnknownRuns": [
+        "20c46b3a24ff9b1a02a287eeec06fe531e988e62473d45c333fa6fc34e62a7af",
+        "949dac81ebe0b0ca3e6d91870bcab77799ca1b08a270f5127960d1a9a92acc9b",
+        "37a4813145d9f252ec693c75a0d78fd260ba86bf3e9b6d0229c4ce3f4f71fa41",
+        "b2be770c6e937b7770cdf983589ecc7a335f425557f884a8ef533429ab9473e5",
+        "e97288a86e4803bb17c62977fed7a29e91afd28884f7b8f19947bbd1f2d62459",
+        "448376067992ecb19424cfb28f5d099c79f0918a5868130ec7ad1e4a141770cb",
+        "2e4f75b5873dfd616fc92c9ddb216aff41beeddc7b330d6923ad7d45185233aa",
+        "063ea826854843e71756d135a8548c9fdde9df16bcb87e421e7b94005fa61fca",
+        "484feef7c6ac03a4d502630df2aea4dc8feac74fa0b9f43bc9adff5c7a250a4b",
+        "80c4c527516eb0de4039e15fc45f3e6140276e54f04a60483b837347fb5a28d8",
+        "6f5d902d6cf4163f793e564724c005c096fcb0fd116c10ce2cf72bf8fc984e97"
+      ]
+    },
+    {
+      "id": "word-sales-report-docx",
+      "status": "artifact-and-reopen-verified",
+      "runs": {
+        "create": "a7efa18318d72caccce8b6fa65e921572d5859317ac39ce4785a3d76fecf8767",
+        "title": "4813070e6069dceacc0fd081328cdda6505fc78a49dc52e52d0260951ccafd01",
+        "headingAndParagraph": "1b83b5e1fcf0cba501cbece881bfe9dc31f48bb2d9e0c5bc656e4f5bf7d84d3c",
+        "body": "ef5904b8be8b34444994664bdcebad8bc3edf95b2cb60ed6e18a079c51073c39",
+        "save": "ccd767c8f24bb58ddb5ce949622517c2fab9a8255153663e35dc50e685089b0a",
+        "pdfSave": "972991d92bbe5f17764ee84696297461bf8d444dbd4bbca2ec352c64ab1dae57",
+        "close": "07bb66c69f1e39460536527e524d7016566ee5febbed44b6126351b14a046a8a",
+        "reopen": "7779bdf8072c422387ac447dbe36d5b749ba2b2237e792539602b5c638148bfb",
+        "reopenReadback": "0f19aa547d32e12040f71d2a4a02eea142c9c687c6d7b66e32adbf225befbc09"
+      },
+      "artifact": "Mechanize Sales Report.docx",
+      "sha256": "abd2960b99eb417c0d2d6131d728bbc4ca4fd8af179556b0fd2975cb823c798f",
+      "verification": "Created, pasted and privately compared exact title/body; Heading1 checked in live UI. Saved DOCX inspected independently for exact two paragraphs, Heading1 title and normal body. Paused Return resumed without repeating heading formatting after clearing a tooltip by app focus change. After the system prompt was dismissed, resumed the staged PDF Save dialog without repeating Print. DOCX hash unchanged through export and close/reopen. Complete capture inventory proved absence before reopen; a new physical window and full private text comparison proved reopen. PDF-save and close UI predicates remain unknown at preserved stopped boundaries, separately from artifact evidence.",
+      "pdf": {
+        "filename": "Mechanize Sales Report.pdf",
+        "sha256": "f71e52d1f8371004f0c05b59ce7d3e920bfa2f83e794f4a133c5a5e51f0cfc93",
+        "pages": 1,
+        "verification": "Extracted text matches after NFKC ligature and whitespace normalization. Poppler render legible and unclipped."
+      }
+    },
+    {
+      "id": "powerpoint-sales-brief",
+      "status": "artifact-and-reopen-verified",
+      "artifact": "Mechanize Sales Brief.pptx",
+      "sha256": "56b6a57e151628544f586be45d39954aecabb9d26e2074951d3e0625521a86e3",
+      "slides": 2,
+      "runs": {
+        "titlePaste": "f3d48aa2572a4348ff1482b50c13e6f9257d2a20236f6c8f154e0d7d3d5bbf95",
+        "subtitle": "0902b2d1a7ffaebb9ae725af57efe3daf32ab5996fc5ffba48e8febc17e4e74a",
+        "newSlide": "ca0cb2b12b21a2be292aa015cdb3a51c8db1a13b8f69831eedaa530c9c5007c7",
+        "resumedTitle": "2f15011eda51aeaa2f23971661324db0a3da0ab3eba1d573c0174f7dafbbf69c",
+        "body": "79d25f881d473ecb61f588f775b329ed5427dc33b42fd0a3fd421400ec1c4827",
+        "save": "05a32071dbcd915edae05759903ca257b2f12ff083730db3af5d27359126ba13",
+        "close": "cd76a29b02cd779010aa9858bb1397fffb9d6d71a99e1867d8c2a4c1ed5b47d1",
+        "reopen": "eb01934259ee705fc4ed3990dbb894e32ec9b4407f8366b5561e37fe5f8aa58b",
+        "pdf": "7dd75c371e7c8da182c5b1c926175b7d930f484fd8f1316df2283b54c847195e"
+      },
+      "verification": "GUI-only slide authoring using Tab/Return, Find staging/copy, Escape and exact-window paste. Fresh captures inspected text placement. Independent read-only PPTX XML inspection found exactly two slides with all four expected text strings. Close produced an empty complete window inventory; Open Recent reopened a new physical window, screenshot showed both slides and file hash stayed unchanged. Window-survival postconditions do not verify content; operator visual and artifact checks are required. One first-run accessibility tip caused pre-dispatch pause; observed Got it dismissal allowed original run resume.",
+      "limits": [
+        "Slide canvas AXLayoutArea reports enabled false and exposes no text children; direct editable text not qualified.",
+        "First title literal predicate, filename raw value predicate, and unscoped save-name predicate remain unknown at preserved boundaries.",
+        "Complex slide layout/chart editing and unattended semantic text verification remain unqualified."
+      ],
+      "pdf": {
+        "filename": "Mechanize Sales Brief.pdf",
+        "sha256": "f38f3949b8995846080666640f286aeec5892c07ce522ea1d0db0ad6cf24e769",
+        "pages": 2,
+        "verification": "Local Best for printing radio checked state verified. Two pages independently extracted and rendered with Poppler; all slide text present, legible and unclipped."
+      },
+      "retainedArtifact": "Mechanize Sales Brief - original.pptx"
+    },
+    {
+      "id": "onenote-first-use-and-notebook",
+      "status": "notebook-created-page-editing-unqualified",
+      "notebook": "Mechanize Qualification 20261004",
+      "storage": "OneDrive Personal, as observed in new notebook dialog",
+      "runs": {
+        "open": "2ae18713fca09bb770b5d20be27e0c9bf28f100d569c1d9904f6bb61f0170442",
+        "getStarted": "f9fbae0979788203b5c6aca7e789223192a573a252ce2c3a6de354caa6c7b64b",
+        "startUsing": "a80e821b67282d7f96937cb380a9e0b1de9fc66f54c6d8669399347ebb225d4b",
+        "newNotebookDialog": "413bf36a44f99e88ffebe9b5d867efb28e98d3ba5b05cf40e608e2e89d344aed",
+        "create": "b900aba3952c038c0d9fcaccc9e4d7e07c297271b96c4e8cbf41fbb4c0aa9af9",
+        "search": "0e8d9c9a26c0039c3c06fb64cd95c257087cf1a7aefde1990398898d99462126",
+        "stageSearchText": "61af6fb9cd846e846f543111fe0f5ca826286fb49f4987818c4bcc7c398b576d",
+        "copyAttempt": "af928b7a791ecf9db88fb662cc1a469a74e022268b4c03729e71193066fa994c"
+      },
+      "verification": "Created a clearly named disposable notebook through live Mechanize/Endly. Original exact-window creation predicate reconciled after asynchronous creation; no repeat Create. Screenshot showed new notebook, New Section 1 and blank Untitled Page. Existing user notebook was not edited. Search text staging in enabled focused field was visibly verified; no page content inserted.",
+      "limits": [
+        "Cloud sync and reopen persistence not independently verified.",
+        "Current page is a disabled AXLayoutArea without editable text children.",
+        "Focused Search subtree contains two AXTextFields; broad role predicate is ambiguous. Original search effect remains unknown at preserved stopped boundary.",
+        "Search suggestion popup blocks exact-window keyboard input before dispatch; copy/paste/page editing not qualified."
+      ]
+    },
+    {
+      "id": "powerpoint-sales-brief-revision",
+      "status": "saved-pptx-and-pdf-verified",
+      "artifact": "Mechanize Sales Brief.pptx",
+      "sha256": "53d3bc01cabbbf8da963fa9df556f4a283cd20bcc7a8892cd8523958f2eef4dd",
+      "slides": 4,
+      "pdf": {
+        "path": "/Users/adrianwitas/Documents/Mechanize Qualification/Mechanize Sales Brief - revised.pdf",
+        "sha256": "0612b60e4c98abb983170e391432145b00c52313a6186e7d619b0b745fceb260",
+        "pages": 4,
+        "renders": [
+          "/tmp/mechanize-revised-deck-1.png",
+          "/tmp/mechanize-revised-deck-2.png",
+          "/tmp/mechanize-revised-deck-3.png",
+          "/tmp/mechanize-revised-deck-4.png"
+        ],
+        "verification": "All expected text matched after Unicode, whitespace and theme case normalization; four rendered pages visually checked, legible and unclipped."
+      },
+      "chart": {
+        "values": [
+          1200,
+          1800,
+          900,
+          1500
+        ],
+        "categories": [
+          "North",
+          "South",
+          "East",
+          "West"
+        ],
+        "sourceWorkbookHashUnchanged": true
+      },
+      "runs": {
+        "chartSelect": "c93bbbbe29a396d85dde97bdabb47246e04ac6aa3d83e657fd1b6e636569a960",
+        "chartCopyPaste": "79dac889244cf1ffa0d77bd1d260052ec896d33e48956d02638880e4031f1b37",
+        "width": "dfcbb59c1a548debf5ff81e4c73b02f6cf14cd8282bfcaf9ce35aa6ff0d9f5c9",
+        "height": "7d6d87d6e18b34434c81c0a489a66cf2ad7c5783f2a805ad482d4dd6b364f21f",
+        "align": "6f48c9afb8bab8c6402e3d3ae1e89db8524ad4c88953477dd3b735029eca9e3b",
+        "save": "97b5f2a46227bc8cee9531531fbf30262f39d17227392c141fe1dbf0f0fe2806",
+        "export": "8d06b287f66e601f2cb675f1a25759b6a1351bcda2bbbe121cc63a4db716c45e"
+      },
+      "verification": "Entire revision through Mechanize/Endly GUI. Ion theme, four slides, Excel chart copied after Go To Special Objects selected Chart 1. Numeric incrementors focused and edited using known GUI clipboard text; Align Center positioned chart. Independent PPTX inspection verified text and cached chart values. PDF text independently checked and all four pages rendered. Original PPTX/PDF preserved under original suffix.",
+      "limits": [
+        "Revised close/reopen not yet requalified.",
+        "Guided visual/artifact checks do not establish unattended content verification. Some original uncertainty barriers remain."
+      ],
+      "retainedArtifact": "Mechanize Sales Brief - linked backup.pptx"
+    },
+    {
+      "id": "powerpoint-generated-dimensions-and-save-recovery",
+      "status": "generated-plans-geometry-and-reopen-verified",
+      "artifact": "Mechanize Sales Brief.pptx",
+      "sha256": "7eab230145d8ba9b69b685e1354c927d84da7e229c430d18bd89c7a3b265c7fd",
+      "geometryInches": {
+        "x": 2.6666666666666665,
+        "y": 2.25,
+        "cx": 8.0,
+        "cy": 4.0
+      },
+      "runs": {
+        "generatedWidth": "4a8a07f589261f4ce8a0b3865c8da932ae24563c3068a1ecf2659a5b2f148fcf",
+        "generatedHeight": "4ae415d59823daa4eb070936d4e06c2870bb0a4e9c0ac44359806b8d7368fc2f",
+        "restoreAndSave": "c3661a8db9857863811d6445f2a9847de5713baba2e9e687ef84304a2731f1ac",
+        "removeBadObject": "706201b032248dc4541a1d346a6754959896c0fcedf0cfc650ac851e04996078",
+        "close": "038681e0919a98b2a48d57c74d33fde0cdc159853ab5e6ae0a79103f95fbc63a",
+        "reopen": "ede343ba9526d0de5d841f377166b9e8b4812f42f4b442b112ff87fdc12fa322",
+        "selectOwnedSource": "45e4c5f5872d9a546c278c8157a74626744dcdbe9613b82c7c74316e7ee964f3",
+        "reopenedChart": "95db20ce049f1581e8f20890ce6f3192f6d066a88c400ba0d8a31a9c2938970e"
+      },
+      "verification": "Generated ten-step dimension plans executed through live MCP/Endly, then saved geometry independently verified. Exact chart restored after unsupported OLE paste and delayed save error; recovery removed only the agent-created Object 4. Empty complete window inventory preceded reopen; new window and visible chart verified reopen. PowerPoint requested access only to the previously authorized disposable source workbook; exact path selected and file/deck hashes remained unchanged.",
+      "limits": [
+        "Native chart remains linked to the source workbook, not self-contained.",
+        "OLE embedding option produced an unsavable object and is unqualified.",
+        "Window-survival UI predicates alone did not prove paste or save outcomes.",
+        "Native showMenu source action built/tested but not installed or live-qualified."
+      ]
+    },
+    {
+      "id": "office-menu-runtime-upgrade",
+      "status": "installed-accessibility-review-required",
+      "sourceDigest": "bdaeec126f147817b50c116510629c8dbfdac7ab043176b1a98614e5f8eac966",
+      "sourceRoot": "/Users/adrianwitas/Library/Application Support/Mechanize/sources/office-text-state-20261005T052738Z",
+      "brokerSHA256": "ad1128590cb221e684830e42c8b3c1a6b057210c0ce111836e76346a9cfc9dd3",
+      "helperSHA256": "37b9fcddb4d8eb25c0e8a32b7e77f2f42abd63b971b900100c220f5fd4192c25",
+      "verification": "Frozen source package built, ad-hoc signatures/pins verified by packaging and installed at canonical paths with rollback copy. Owned MCP session opened; describe advertises showMenu. Read-only scoped observation rejected with Accessibility permission absent. Existing Mechanize grants/storage retained; macOS permission review requested.",
+      "limits": [
+        "Live showMenu and private comparison reconciliation not yet qualified.",
+        "Native input is withheld while Accessibility is absent."
+      ]
+    },
+    {
+      "id": "sales-brief-read-only-verifier",
+      "status": "positive-and-negative-case-verified",
+      "script": "verify-sales-brief.py",
+      "artifactSHA256": "7eab230145d8ba9b69b685e1354c927d84da7e229c430d18bd89c7a3b265c7fd",
+      "verification": "Current restored PPTX passed exact logical slide order/text, one saved native chart, exact category/value cache, dimensions and slide bounds. Missing-chart, changed-value and reversed-order temporary fixtures were rejected. Production artifacts untouched. require-embedded rejected the existing external workbook dependency.",
+      "limits": [
+        "This script is independent file evidence, not GUI execution or provenance proof.",
+        "Successful self-contained workbook embedding remains unqualified."
+      ]
+    },
+    {
+      "id": "semantic-menu-mcp-policy-integration",
+      "status": "source-tested-runtime-pending",
+      "date": "2026-10-05",
+      "verification": "Accessibility observation succeeded after employee consent. MCP policy omitted semanticMenu despite installed helper and compiler support. Source now requires fresh AXShowMenu doctor advertisement, Accessibility read readiness and qualified native semantic control admission. Focused policy tests pass for qualified, absent/unknown advertisement, missing Accessibility, launch-only, observe-only and revoked advertisement.",
+      "limits": [
+        "Source fix is not installed; live showMenu remains unqualified.",
+        "PowerPoint activation run ccebd84fb73cc06919397579fa2a80c061aeaf6f0bcc1aa9ab3dc6eb81b02aa6 succeeded, but fresh AX and capture discovery found no document window.",
+        "Saved-file open run 08e48ad3ad3995bee4ec88bdb9a28d68691227362963c65276fa1eccde25d65d stopped at confirmed boundary revision 4; original reconciliation rejected root-scope transition. Unknown effect retained; no replay."
+      ]
+    },
+    {
+      "id": "semantic-menu-policy-package-install",
+      "status": "installed-awaiting-system-permission",
+      "date": "2026-10-05",
+      "sourceRoot": "/Users/adrianwitas/Library/Application Support/Mechanize/sources/office-text-state-20261005T093736Z",
+      "sourceDigest": "52621a4c13748c23e79fb7db526424c32127ce487a969513dbf0dd844cf22c8d",
+      "brokerSHA256": "aa46a7c6e94eba0f3e25198bf7c69235ddedce2cfcfeac33ab8ef8507a486e85",
+      "helperSHA256": "2bb0cb48e83c9b4c128b00264b829122b03dab38d1dffaef9a27e80cf14768a7",
+      "verification": "Frozen package built successfully; model/MCP, host/Darwin/script and eleven window-frame/upgrade tests passed. Installed at canonical path with rollback backup, preserving state and credential references. New session opened successfully. Exact-process Excel observation reports Accessibility permission absent; menu remains live-unqualified.",
+      "limits": [
+        "Ad-hoc rebuild changes code identity; employee macOS permission review pending.",
+        "Existing-certificate packaging option is source-tested (17 signing/installation/upgrade tests), not used: this host has zero valid code-signing identities. No keys, certificates or trust settings were created."
+      ]
+    },
+    {
+      "id": "excel-cell-plan-input-boundaries",
+      "status": "source-and-parser-verified",
+      "date": "2026-10-05",
+      "script": "plan-cells.py",
+      "verification": "Exact positive bounded process/window IDs and start row; bounded birth/window/case strings; exact parameter set; 1...100 rectangular cells, A...Z columns, sheet and final-Return row bounds, bounded single-line text. Tests reject coercion, malformed identity, ragged/oversized blocks, controls, invalid Unicode separators and overflow. Deterministic output preserves original cells and empty-editor preconditions. Installed MCP parser accepted normal, 100-cell and final-row-boundary plans without input.",
+      "limits": [
+        "Validation establishes syntax and parameter safety, not fresh identity, authorization or live Excel execution.",
+        "Latest exact-process Excel observation still reports Accessibility permission absent."
+      ]
+    },
+    {
+      "id": "excel-margin-percentage-formatting",
+      "status": "gui-file-and-original-recovery-verified",
+      "date": "2026-10-05",
+      "artifact": {
+        "file": "/Users/adrianwitas/Documents/Mechanize Qualification/Mechanize Sales Analysis.xlsx",
+        "sha256": "3dd9b54cd8d4e3b2cbee9e3a768ae9ab92d57f627da5d4760c03208d4a46ae4e",
+        "oldFormatIds": {
+          "G4": "0",
+          "G5": "0",
+          "G6": "0",
+          "G7": "0",
+          "G8": "0"
+        },
+        "newFormatIds": {
+          "G4": "9",
+          "G5": "9",
+          "G6": "9",
+          "G7": "9",
+          "G8": "9"
+        },
+        "format": "built-in 9 (0%)",
+        "allCellValuesAndFormulasUnchanged": true,
+        "chartPartsUnchanged": true,
+        "backupHashPreserved": true
+      },
+      "formatRunId": "de527927e60744dd869ef45773d9db43bb60bebf682a13e3c34759e18ac04acb",
+      "saveRunId": "5fbe9b19b8ff0ddaf89aa5fce3dd9d6a9e33f1019a0d2a6ff3a606f60c333260",
+      "verification": "Go To selected G4:G8, fresh capture verified all five cells, Percent Style pressed once and exact-window save completed. Independent XLSX inspection proved all five numFmtIds 9 (0%), unchanged values/formulas/chart parts and preserved original backup.",
+      "limits": [
+        "One decimal precision, reopen and machine-proved selected range remain unqualified.",
+        "Business status remains unverified: authoritative outcome adapter unavailable."
+      ],
+      "recovery": "Exact original private Percentage predicate reconciled to confirmed at revision 5 after helper-only update; same original run resumed successfully, skipping the formatting press. No replay or predicate replacement."
+    },
+    {
+      "id": "excel-explicit-format-popup",
+      "status": "gui-popup-verified-original-effect-unresolved",
+      "date": "2026-10-05",
+      "runId": "84b6e514bfafc7455b8ba917483fb5594d04a96e5e501ee02e2e5084a23ef6a8",
+      "verification": "Explicit AXShowMenu opened separate Format popup CG window 5509 with focused AXGroup and menu-button children. Fresh popup capture verified visible commands. Original AXMenu-in-workbook postcondition remains unknown at revision 4. Popup dismissed by verified app activation and fresh discovery showed it absent.",
+      "limits": [
+        "This is one observed button case, not complete menu coverage or editable chart embedding.",
+        "Workbook capture excludes separate popup windows; incorrect original predicate was not rewritten."
+      ]
+    },
+    {
+      "id": "word-frame-click-consent-resume",
+      "status": "rejected-before-pointer-input",
+      "date": "2026-10-05",
+      "runId": "902442ddb14a0515b66573257a7883c749031cdfc7ced058811be3b2257e86af",
+      "verification": "Exact report capture returned 2240x1440 PNG, 364714 bytes; current same-grant/session/purpose click was blocked by Dock overlay window 4737, owner 73326, layer 20, alpha 1, full-screen bounds. AX hit owner and bounds matched Word but window number unavailable.",
+      "limits": [
+        "No pointer delivery claimed. Ownership/occlusion guard unchanged."
+      ]
+    },
+    {
+      "id": "combo-private-comparison-helper-update",
+      "status": "installed-and-live-recovery-verified",
+      "date": "2026-10-05",
+      "source": {
+        "sourceRoot": "/Users/adrianwitas/Library/Application Support/Mechanize/sources/helper-compat-20261005T140249Z",
+        "sourceDigest": "57dd4758648178b804ea8fcb2a65a21e106d58ad72f73afb9e99ecb655f5fc57",
+        "brokerSHA256": "aa46a7c6e94eba0f3e25198bf7c69235ddedce2cfcfeac33ab8ef8507a486e85"
+      },
+      "helperSHA256": "289e8f7695a9eea30bf826e949df17a68c71936c55dc79daa23d33bac59a4072",
+      "verification": "Full Native/Core Swift suites and skills tests passed. Helper-only update retained broker bytes, credentials/state and rollback backup; Accessibility remained available. Original unknown formatting predicate confirmed using fresh private Number Format combo comparison, with no AXValue export. Same run resumed successfully without another formatting input.",
+      "limits": [
+        "Read-only combo comparison does not permit combo replacement. Secure labels, unknown/nonempty combo subroles remain denied.",
+        "No general unattended Office or pointer success claim."
+      ]
+    },
+    {
+      "id": "word-public-mouse-down-frame-click",
+      "status": "one-live-click-and-focus-verified",
+      "date": "2026-10-05",
+      "runId": "c806ac2bacb131c4842cd2afe1e035725ea5023def870a8f29b58f52f0168655",
+      "source": {
+        "sourceRoot": "/Users/adrianwitas/Library/Application Support/Mechanize/sources/helper-compat-20261005T141452Z",
+        "sourceDigest": "942e7c1f5c7452a1cc05c5085fd4059efdfc1c89a27ddbb0089313d11531528f",
+        "brokerSHA256": "aa46a7c6e94eba0f3e25198bf7c69235ddedce2cfcfeac33ab8ef8507a486e85"
+      },
+      "helperSHA256": "7e288fa7a84057c84533d2a54c2be5ae009a7e3628eadf51fd73194d56469fe5",
+      "verification": "Fresh 2240x1440 report capture inspected; same owned session/grant/purpose click at original pixels 1080,720 dispatched successfully. Original native focused AXTextArea predicate verified, and independent fresh focus observation returned AXTextArea focused=true. No unresolved effects. Original DOCX hash abd2960b99eb417c0d2d6131d728bbc4ca4fd8af179556b0fd2975cb823c798f unchanged. Public AppKit mouse-down recipient replaced geometric stacking inference, with no Dock whitelist. Helper-only signed rollout retained broker and Accessibility. Native 99/Core 73 tests passed, including unavailable/conflicting/changing recipient, retained identity/opacity/inventory guards and adjacent-display transform.",
+      "limits": [
+        "One body-focus primitive is qualified, not general Office pointer coverage or unattended task reliability.",
+        "Business status remains unverified without an authoritative outcome adapter.",
+        "Parameterized plan-word-frame-focus.py is parser-validated only; it was not separately live-executed.",
+        "Larger automation-cursor visualization remains unimplemented."
+      ],
+      "installedGuideVersion": "0.10.0",
+      "consoleSkillsSourceRoot": "/Users/adrianwitas/Library/Application Support/Mechanize/sources/office-guides-1791210396"
+    },
+    {
+      "id": "word-final-paragraph-edit",
+      "date": "2026-10-05",
+      "status": "execution-and-artifact-verified",
+      "runId": "8bd75141cf8e090605b39a983acccf3aae855ac6e18676abecdb669bca87aad6",
+      "executionStatus": "succeeded",
+      "businessStatus": "unverified",
+      "durableState": {
+        "status": "paused",
+        "revision": 13,
+        "verifiedMutationRecords": 10,
+        "unresolvedEffects": 0
+      },
+      "originalSHA256": "abd2960b99eb417c0d2d6131d728bbc4ca4fd8af179556b0fd2975cb823c798f",
+      "editedSHA256": "811ad9a2b7594c791fc92d97f48f49379eede73db17280e0f4a78aa10cdfbcc5",
+      "verification": "Fresh independent inspection confirmed exact paragraph 2 replacement, two paragraphs, preserved neighboring paragraph text/formatting XML, and unchanged original hash. Saved copy is Mechanize Sales Report - editing qualification.docx. Earlier fresh Word capture showed legible single-page heading/body. MCP parser validates the new parameterized emitter; no live rerun of it is claimed.",
+      "sourceGuideVersion": "0.11.1",
+      "installedGuideVersion": "0.10.0",
+      "limits": [
+        "Only a disposable two-paragraph single-page document; arbitrary ranges, tables, and long documents remain unqualified.",
+        "Selection and clipboard intermediates do not independently prove exact selection extent or clipboard content.",
+        "PDF export and reopen of this edited copy are pending.",
+        "Earlier uncertain Save As folder-picker receipts remain unchanged.",
+        "Saved-file structural preservation does not prove rendered layout or font preservation; edited-copy PDF and reopen remain pending."
+      ],
+      "independentPreservation": {
+        "documentStructureAndSectionSettingsPreserved": true,
+        "protectedPackagePartsPreserved": true,
+        "unchangedParts": [
+          "[Content_Types].xml",
+          "_rels/.rels",
+          "word/_rels/document.xml.rels",
+          "word/fontTable.xml",
+          "word/styles.xml",
+          "word/theme/theme1.xml",
+          "word/webSettings.xml"
+        ],
+        "allowedVolatileParts": [
+          "docProps/app.xml",
+          "docProps/core.xml",
+          "word/settings.xml"
+        ]
+      }
+    },
+    {
+      "id": "word-edited-reopen-root-boundary",
+      "date": "2026-10-05",
+      "status": "unresolved-effect",
+      "runId": "d1da8df309f2a1dd568ea1a48b0dec6280aa93d4badbfc1c12acdff264ddf306",
+      "effectId": "ece8b8850de2cbe47de757846bc6820ff7293d631bdcb1aa44774aec4a9e76f6",
+      "verification": "Open Recent filename AXPress dispatched, but exact edited-copy window remained absent from a complete physical window inventory. Original text postcondition exceeded the menuBar action root; reconciliation rejected the scope transition. Stop boundary confirmed revision 5. No Open Recent replay or alternate route.",
+      "limits": [
+        "Reopen of the edited copy is not qualified.",
+        "Original unknown receipt retained; independent file preservation does not clear it.",
+        "New source admission guard rejects explicitly scoped native root substitutions; guard is not installed."
+      ]
+    },
+    {
+      "id": "bounded-native-child-traversal",
+      "date": "2026-10-05",
+      "status": "installed-observation-verified",
+      "helperSourceRoot": "/Users/adrianwitas/Library/Application Support/Mechanize/sources/helper-compat-20261005T183525Z",
+      "sourceDigest": "265cff57e1c10b100c0f9912ca617cc48a0daca8dda4fe8641426e41e51f9c28",
+      "helperSHA256": "ff14b80086a720d3cadc1b747fb6fe2b1978fc41101b282384cd113f16e9c821",
+      "brokerSHA256": "aa46a7c6e94eba0f3e25198bf7c69235ddedce2cfcfeac33ab8ef8507a486e85",
+      "checks": [
+        {
+          "bundle": "com.microsoft.Word",
+          "error": false,
+          "nodeCount": 100,
+          "truncated": false,
+          "failure": null
+        },
+        {
+          "bundle": "com.microsoft.Excel",
+          "error": false,
+          "nodeCount": 129,
+          "truncated": false,
+          "failure": null
+        }
+      ],
+      "verification": "Helper-only rollout preserved broker identity and current Chrome configuration. Fresh Mechanize MCP observations returned complete owned Word table-copy (100 nodes) and Excel sales-analysis (129 nodes) window trees without new OS permission requests. Native/Core 103/73 tests passed before rollout. No document input or unknown-effect reconciliation was performed.",
+      "limits": [
+        "Two Office window observations do not qualify arbitrary large hierarchies or linearizable snapshots.",
+        "Changed counts, short reads, malformed results and failed array APIs remain incomplete; no unbounded fallback.",
+        "Typed AX interface and observer lifecycle remain incomplete."
+      ]
+    },
+    {
+      "id": "excel-sheet-frame-click-rejected-patch",
+      "date": "2026-10-05",
+      "status": "blocked-before-dispatch",
+      "runId": "1b60303891c7f72b80545886143e11aeb5ff9dafd0959f778e7aa3c9f123e228",
+      "operationId": "a0cb51a7-9282-4104-917f-ea9709fc0c9d",
+      "error": "staleCapture: Captured point pixels changed; recapture",
+      "stateRevision": 4,
+      "unresolvedEffectCount": 0,
+      "verification": "Fresh exact-window observation still found only Sheet1. Workbook and independent before-insertion backup SHA256 both remain 3dd9b54cd8d4e3b2cbee9e3a768ae9ab92d57f627da5d4760c03208d4a46ae4e. Captured original frame was inspected, a new frame matched its full image hash and geometry, and the helper rejected the bounded current point patch before pointer dispatch. No Save or alternate insertion action was sent.",
+      "limits": [
+        "Blank-sheet insertion and pointer coverage of the sheet-tab control remain unqualified.",
+        "Investigate full-frame versus subregion capture consistency without weakening equality, ownership or opacity checks."
+      ]
+    },
+    {
+      "id": "excel-blank-sheet-frame-and-save",
+      "date": "2026-10-05",
+      "status": "execution-and-artifact-verified",
+      "businessStatus": "unverified",
+      "helperSourceRoot": "/Users/adrianwitas/Library/Application Support/Mechanize/sources/helper-compat-20261005T191655Z",
+      "sourceDigest": "e75d4407c89e096052dfc518639198e420c868bcd773169ea963edef66a02892",
+      "helperSHA256": "3a1aa23ff4ed57b64b8e5292dbf9cfff7902731ca56cadaf1a5b96c0d41ab9d4",
+      "brokerSHA256": "aa46a7c6e94eba0f3e25198bf7c69235ddedce2cfcfeac33ab8ef8507a486e85",
+      "runs": [
+        {
+          "runId": "1ff2b7303438db736c5f8e5c88792deae2d424a18382a356ad9badf09c230b7e",
+          "status": "paused",
+          "revision": 4,
+          "unresolvedEffectCount": 0
+        },
+        {
+          "runId": "096b84c97cf30aaa392f7b2af8f10e76e44b895ac5f47dfa4f1095a372f01dfa",
+          "status": "paused",
+          "revision": 4,
+          "unresolvedEffectCount": 0
+        }
+      ],
+      "artifacts": {
+        "beforeSHA256": "3dd9b54cd8d4e3b2cbee9e3a768ae9ab92d57f627da5d4760c03208d4a46ae4e",
+        "afterSHA256": "31b22c4fea9dfc1f7cefb94754e38c725ec0adf6e9129865e193b63dde9a734c",
+        "originalSheets": [
+          "Sheet1"
+        ],
+        "newSheet": "Sheet2",
+        "blankSheetVerified": true,
+        "originalSheetContentPreserved": true,
+        "protectedStyleChartMediaPreserved": true
+      },
+      "verification": "One fresh inspected capture-bound left click inserted Sheet2 in the disposable sales workbook. Exact original Sheet2 identifier predicate passed; independent fresh observation reported selected blank Sheet2. The observed Save control was pressed once. Read-only bounded XLSX verification confirmed exactly one new blank sheet and unchanged original worksheet content/formatting and protected chart/style/media bytes. Before-insertion backup preserved. Word unknown reopen effect remains paused revision 5 with one unresolved effect.",
+      "limits": [
+        "Rename and reopen of the two-sheet workbook are not qualified.",
+        "Parameterized plan-excel-blank-sheet.py is parser validated only, not separately live-executed.",
+        "Full current image capture replaces separately rendered subregion; measure additional capture cost before broad performance claims.",
+        "Helper-only update retains the installed console binary; new Vault/Browsers UI and guide version 0.12.0 remain source-only."
+      ]
+    },
+    {
+      "id": "excel-two-sheet-close-reopen",
+      "date": "2026-10-05",
+      "status": "execution-and-artifact-verified",
+      "businessStatus": "unverified",
+      "runs": [
+        {
+          "runId": "902f7dd491205fa12f1e9a4ddd5b0cb969070b0a0dd48ebda29eebefe3eefe77",
+          "status": "paused",
+          "revision": 5,
+          "unresolvedEffectCount": 0
+        },
+        {
+          "runId": "0c6997a88a21b70bca9d370856c04941adadda08c6f37bfad607f169ec0f09d7",
+          "status": "paused",
+          "revision": 4,
+          "unresolvedEffectCount": 0
+        },
+        {
+          "runId": "33a9d0b501b70d8ace665b027fff8c31b329eee7e3a82740572d2be379603bf5",
+          "status": "paused",
+          "revision": 4,
+          "unresolvedEffectCount": 0
+        }
+      ],
+      "sha256": "31b22c4fea9dfc1f7cefb94754e38c725ec0adf6e9129865e193b63dde9a734c",
+      "verification": "Closed independently checked saved two-sheet workbook once using its exact physical window and qualified Cmd+W route. Fresh complete physical inventory proved absence. Role/name reopen lookup rejected before dispatch with incompleteObservation and zero unresolved effects. Fresh complete app observation proved one exact recent-file name; exact-name semantic press reopened once and the original scoped Sheet2 identifier outcome passed. Fresh complete reopened window observation showed Sheet1 used range A1:G8 and selected blank Sheet2. Saved XLSX hash unchanged after close/reopen.",
+      "limits": [
+        "Sheet rename remains unqualified.",
+        "This case requires a freshly unique exact-name recent-file entry; role lookup failure does not permit relaxing missing-role checks.",
+        "Original Word reopen unknown remains retained."
+      ]
+    },
+    {
+      "id": "digit-chord-runtime-installation-and-console-cleanup",
+      "date": "2026-10-05",
+      "status": "installed-parser-and-auth-verified",
+      "sourceRoot": "/Users/adrianwitas/Library/Application Support/Mechanize/sources/office-text-state-20261005T193606Z",
+      "brokerSHA256": "e1427e44588298380e5d34a414195a92795e1800c895b9af83e5e00f881de9db",
+      "helperSHA256": "b604ba3a8252c3bd13e1efb466493dcaa1e1c0148826d11ae6a1c481a43a0643",
+      "verification": "Frozen runtime built and preflight passed, then installed through the checked updater with the existing launchd service. Initial updater start verification failed; authoritative later checks verified installed artifact manifest, active owned broker, signed console authentication and MCP responses without repeating replacement or enrollment. Subsequent console-only copy cleanup retained broker/helper bytes and separately verified its signed connection. Installed MCP parser accepts Cmd+1. Current live Excel observation reports Accessibility permission absent, before any Office input. Original Word reopen state remains paused revision 5 with one unresolved effect.",
+      "tests": {
+        "native": 184,
+        "go": [
+          "model",
+          "script",
+          "backend/darwin",
+          "mcp"
+        ],
+        "updaterFixtures": 16
+      },
+      "limits": [
+        "Digit chord dispatch and Excel date formatting remain unqualified until macOS Accessibility is re-enabled for the new broker identity.",
+        "Vault create/modify/delete remain unavailable; native secret channel, key provisioning and whole-window capture suppression are not qualified.",
+        "Observer support remains opt-in and not enrolled in runtime configuration."
+      ]
+    },
+    {
+      "id": "excel-date-formula-iso-format",
+      "date": "2026-10-05",
+      "status": "execution-visual-and-artifact-verified",
+      "businessStatus": "unverified",
+      "runs": [
+        {
+          "runId": "ac3f63c38cf3307bac831348e5c8ec46d4907da9cb7c5f196565dbe15ba673b5",
+          "status": "paused",
+          "revision": 7,
+          "unresolvedEffectCount": 0
+        },
+        {
+          "runId": "918fea3fa7d05be23e4f1d11d5541fc396e6ed758199725dbbf51263b63f2b1e",
+          "status": "paused",
+          "revision": 8,
+          "unresolvedEffectCount": 0
+        },
+        {
+          "runId": "81283df55d740e2fc876dfcb7f03f68ccd344527dd6f817c54ec5a1c4fb0b66b",
+          "status": "paused",
+          "revision": 4,
+          "unresolvedEffectCount": 0
+        },
+        {
+          "runId": "e26cc0044cac219255c34429ceeabef25f95e46760d256de83b351a5b202687d",
+          "status": "paused",
+          "revision": 6,
+          "unresolvedEffectCount": 0
+        }
+      ],
+      "artifacts": {
+        "beforeSHA256": "31b22c4fea9dfc1f7cefb94754e38c725ec0adf6e9129865e193b63dde9a734c",
+        "afterSHA256": "fc3c29fb5572194e644b2c3d9de1438fa35c88e7d4b13f8fcfabd4c54110aa98",
+        "cell": "Sheet2!A1",
+        "date": "2026-10-05",
+        "formula": "DATE(2026,10,5)",
+        "serial": "46300",
+        "formatCode": "yyyy\\-mm\\-dd;@",
+        "otherSheetsPreserved": true,
+        "originalStylesPreserved": true,
+        "chartMediaPreserved": true
+      },
+      "verification": "Live parameterized plan-cells.py emitted and executed DATE formula on freshly observed blank Sheet2. Original date-dialog run safely resumed after foreground rejection without repeating formula entry. Cmd+1 opened Format Cells. One inspected frame click established Type-table focus; a separate capture proved ISO row selected and sample 2026-10-05. Exact-dialog Return accepted and observed Save saved once. Fresh capture showed A1 2026-10-05, while bounded independent saved-package verification proved formula, serial, ISO format and preserved original worksheet/style/chart/media bytes.",
+      "limits": [
+        "Focus predicate alone does not prove exact type-row selection; captured sample and saved XML provide separate independent evidence.",
+        "This date case has not closed/reopened yet.",
+        "Guide version 0.13.0 is source-only; installed console resource remains 0.12.1."
+      ]
+    },
+    {
+      "id": "outlook-access-after-runtime-upgrade",
+      "date": "2026-10-05",
+      "status": "observation-verified",
+      "verification": "Fresh Mechanize MCP Outlook observation returned 430 nodes, truncated=false, owned process PID 42056 / birth 1791143311:725036 with ownership match. No new email composed or sent.",
+      "limits": [
+        "Read-only access check does not establish unattended email delivery."
+      ]
+    },
+    {
+      "id": "excel-date-close-reopen-and-render",
+      "date": "2026-10-05",
+      "status": "execution-visual-and-artifact-verified",
+      "businessStatus": "unverified",
+      "runs": [
+        {
+          "runId": "d286cc36a5c3eada477001d0580a7619a24d3fe66412305281d95764304bcb4f",
+          "status": "paused",
+          "revision": 5,
+          "unresolvedEffectCount": 0
+        },
+        {
+          "runId": "7e941ac58830e62fa59c23787136c57d157ef23f88d2a3e11a48f2df949b2068",
+          "status": "paused",
+          "revision": 4,
+          "unresolvedEffectCount": 0
+        },
+        {
+          "runId": "483199a5300028aaa45e8d79c47ee1bfbcbad0ab376146b85f17dfa99c809302",
+          "status": "paused",
+          "revision": 3,
+          "unresolvedEffectCount": 0
+        }
+      ],
+      "sha256": "fc3c29fb5572194e644b2c3d9de1438fa35c88e7d4b13f8fcfabd4c54110aa98",
+      "verification": "Exact physical-window Cmd+W closed the independently checked saved date workbook. Complete fresh physical inventory proved absence. Fresh complete app observation proved one exact recent-file name. Parameterized plan-excel-reopen.py generated the actually executed reopen workflow, which completed with original Sheet2 result predicate. A separate read-only workflow privately compared XLFormulaEditor to =DATE(2026,10,5). Fresh reopened-window capture showed A1 2026-10-05 without overflow hashes, and saved file SHA256 was unchanged. All three runs retain zero unresolved effects.",
+      "limits": [
+        "This is one ISO date fixture, not broad locale/calendar/date-range recovery.",
+        "Server business verification remains unverified."
+      ]
+    },
+    {
+      "id": "excel-save-as-copy-and-sort-preparation",
+      "date": "2026-10-05",
+      "status": "copy-and-dialog-verified-sort-not-applied",
+      "businessStatus": "unverified",
+      "runs": [
+        {
+          "runId": "e6570222e87e8f021318e1e4ff0313d3f2eb30851bea00bc6291d9192acad1c8",
+          "status": "paused",
+          "revision": 5,
+          "unresolvedEffectCount": 0
+        },
+        {
+          "runId": "ca4629445fb8cd8b7209c08a5c51214d6d3813952221fbf018d6bb6261f0205f",
+          "status": "paused",
+          "revision": 4,
+          "unresolvedEffectCount": 0
+        },
+        {
+          "runId": "4ea971016f41bba737156e8a44a9fbed2cffd83536bec9da5d2120bec7b6f2d0",
+          "status": "paused",
+          "revision": 4,
+          "unresolvedEffectCount": 0
+        },
+        {
+          "runId": "04a2f18091d4d755c6a5f1b674d9395714889edaf9e8b64a73cba64f37653095",
+          "status": "paused",
+          "revision": 4,
+          "unresolvedEffectCount": 0
+        },
+        {
+          "runId": "4c6b313b4b9c8c64920a6462338a8524c4633d0a9d20fbc87034271889bbe159",
+          "status": "paused",
+          "revision": 5,
+          "unresolvedEffectCount": 0
+        }
+      ],
+      "artifacts": {
+        "beforeSHA256": "fc3c29fb5572194e644b2c3d9de1438fa35c88e7d4b13f8fcfabd4c54110aa98",
+        "afterSHA256": "675bd6e53006be8cdb358d983b681ebe6b1e22510c471cb251e5f109d2446263",
+        "sheetNames": [
+          "Sheet1",
+          "Sheet2"
+        ],
+        "worksheetContentPreserved": true,
+        "styleSemanticsPreserved": true,
+        "chartMediaStringsPreserved": true,
+        "normalization": "Only custom numFmtId references resolved to exact formatCode; original sheet views omitted"
+      },
+      "verification": "Save As created a new sorting-qualification XLSX through the GUI with inspected local destination and format. Original date workbook SHA256 unchanged. Independent worksheet content, exact format-code-resolved style, chart/media/string preservation checks passed. Excel changed custom numFmtId 165 to 164 and updated its style references without changing its format code. One capture-bound click selected Sheet1. Guarded Go To selected C3:G7; capture showed header and four data rows selected, total row 8 excluded, Count 25. Unique observed Sort... semantic control opened owned Sort dialog. Fresh capture showed headers enabled, Values/A to Z and an unselected Sort by placeholder. No sorting action applied.",
+      "limits": [
+        "Sorting remains unqualified; the anonymous column popup needs a scoped selection path and outcome proof.",
+        "Resolved-style normalization changes only custom number-format IDs; other style attributes and structure remain compared.",
+        "This Save As verification does not compare all workbook metadata or macros."
+      ]
+    }
+  ],
+  "notQualified": [
+    "general capture-bound pointer coverage and updated frame-focus emitter live execution",
+    "Word arbitrary-range editing, tables, font/paragraph formatting and page-layout matrix",
+    "edited Word copy PDF export and reopen",
+    "Excel dates, sheet rename, sort/filter, print-area and scaling matrix",
+    "authoritative business outcome adapter",
+    "process-death recovery",
+    "production reliability"
+  ],
+  "evidenceStorage": "Private installation office-evidence directory retains original MCP requests/results and captured images. No credentials are included here.",
+  "retainedUncertainties": [
+    {
+      "runId": "ad77d6e231ddda1d5a9df79b526b83245a40947c9a824944f1a1cdf303c710e8",
+      "reason": "Initial scoped Save As result encountered a mixed-ownership file-panel tree."
+    },
+    {
+      "runId": "b357c6bad37fc261a54287d421dd0c7831434ba0861fb2cba058e16edf876376",
+      "reason": "Expected PDF menu text without its observed trailing space."
+    },
+    {
+      "runId": "76e1e909ee50fa673b40b539e5ab3de82d0cb8fab81d0c22d7b4ddd125e2c3eb",
+      "reason": "Expected final button label Export; actual label is Save."
+    },
+    {
+      "runId": "72ce06f9c245b8dd2c83a95d07b2840b26b57c78a497bdb9559c3582dbdff18e",
+      "reason": "Local printing selection visually confirmed but focus-based predicate did not prove selection."
+    },
+    {
+      "runId": "f3d48aa2572a4348ff1482b50c13e6f9257d2a20236f6c8f154e0d7d3d5bbf95",
+      "reason": "Title visibly pasted, but AXCell literal comparison unavailable; reconciliation does not accept literalValueMatches."
+    },
+    {
+      "runId": "47b6ef856a758511b3d718323a7fc2942a91300197415f27bfb7a0f9b067164a",
+      "reason": "Filename visibly filled; raw value predicate unverified. Later private literal precondition verified exact filename without repeating fill."
+    },
+    {
+      "runId": "05a32071dbcd915edae05759903ca257b2f12ff083730db3af5d27359126ba13",
+      "reason": "PPTX saved; unscoped document-name locator ambiguous with menu items. Independent file proof and scoped reopen succeeded without another save."
+    },
+    {
+      "runId": "0e8d9c9a26c0039c3c06fb64cd95c257087cf1a7aefde1990398898d99462126",
+      "reason": "Find dispatched after foreground activation and original resume; focused AXTextField predicate ambiguous because focused search subtree contains another AXTextField. Search UI observed; no input replay."
+    },
+    {
+      "runId": "c3eb1f290370879ade7f48686fa3e0a04e3ee872bd58df835eb789a5cacfb181",
+      "reason": "Undo rejected before dispatch because delayed save-error dialog was top window. It was not resumed after the app removed the bad object; an old undo intent could restore unwanted content."
+    }
+  ],
+  "artifacts": {
+    "workbook": {
+      "path": "/Users/adrianwitas/Documents/Mechanize Qualification/Mechanize Excel Qualification.xlsx",
+      "sha256": "6b22d33a52abfd00f4908dbd3d9d1755ebaf2f305b92722f064a7e7fba78eebf",
+      "sizeBytes": 8746,
+      "sheets": {
+        "Sheet1": {
+          "A1": {
+            "value": "test",
+            "formula": null
+          }
+        }
+      }
+    },
+    "pdf": {
+      "path": "/Users/adrianwitas/Documents/Mechanize Qualification/Mechanize Excel Qualification.pdf",
+      "pages": 1,
+      "text": "test",
+      "sha256": "27e0506eab5c25f73690d878b5aaa9f40ae25ca4691c1081ba2ab769274b0593",
+      "pageSizes": [
+        [
+          612.0,
+          792.0
+        ]
+      ]
+    }
+  }
+}

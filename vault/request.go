@@ -40,11 +40,12 @@ type Hooks struct {
 	Resume  func(context.Context, Binding, Reference) error
 }
 type Manager struct {
-	store   *Store
-	legacy  *LegacyResolver
-	hooks   Hooks
-	mu      sync.Mutex
-	pending map[string]pending
+	privateConsume func(context.Context, Binding, Reference, string, func(Credentials) error) error
+	store          *Store
+	legacy         *LegacyResolver
+	hooks          Hooks
+	mu             sync.Mutex
+	pending        map[string]pending
 }
 
 // NewManagerWithLegacy explicitly opts a trusted legacy enrollment map into
@@ -65,6 +66,9 @@ func NewManager(store *Store, hooks Hooks) (*Manager, error) {
 	return &Manager{store: store, hooks: hooks, pending: map[string]pending{}}, nil
 }
 func (m *Manager) fresh(ctx context.Context, b Binding) error {
+	if m == nil || m.hooks.Fresh == nil {
+		return ErrUnavailable
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -79,6 +83,9 @@ func (m *Manager) fresh(ctx context.Context, b Binding) error {
 // a resource URL. A miss presents native UI automatically and returns ErrPending;
 // the local request ID is never needed in the DSL or an MCP result.
 func (m *Manager) Ensure(ctx context.Context, b Binding) (Reference, error) {
+	if m == nil || m.store == nil {
+		return Reference{}, ErrUnavailable
+	}
 	p, err := auth.FromContext(ctx)
 	if err != nil {
 		return Reference{}, err
@@ -161,7 +168,7 @@ func (m *Manager) Submit(ctx context.Context, id string, username, password []by
 	if err := m.fresh(ctx, item.binding); err != nil {
 		return err
 	}
-	ref, err := m.store.put(ctx, item.binding.Target, username, password)
+	ref, err := m.store.Create(ctx, item.binding.Target, username, password)
 	if err != nil {
 		return err
 	}
@@ -192,6 +199,9 @@ func (m *Manager) Cancel(ctx context.Context, id string) error {
 // adapters must verify frame/form origin and suppress recording/capture before
 // synchronously applying bytes; this contract alone does not prove that adapter.
 func (m *Manager) Consume(ctx context.Context, b Binding, ref Reference, consume func(Credentials) error) error {
+	if m == nil || m.store == nil {
+		return ErrUnavailable
+	}
 	if !b.valid() {
 		return ErrScope
 	}

@@ -1,0 +1,1 @@
+SELECT * FROM (SELECT a.* FROM credential_delivery_audit a) audit

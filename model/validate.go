@@ -112,6 +112,9 @@ func (s Selector) validate(depth int) error {
 	if depth > 64 {
 		return fmt.Errorf("selector nesting exceeds 64")
 	}
+	if s.Scope.NativeMenu != "" && (s.Scope.NativeRoot != "menuBar" || !ValidNativeMenuName(s.Scope.NativeMenu) || s.Surface.ProcessID <= 0 || s.Surface.ProcessStartToken == "") {
+		return fmt.Errorf("named native menu requires menuBar and exact process identity")
+	}
 	if s.Scope.NativeRoot != "" {
 		if (s.Scope.NativeRoot != "menuBar" && s.Scope.NativeRoot != "focusedElement") || s.Surface.Kind != "native" || len(s.Scope.Window) != 0 || len(s.Scope.Frame) != 0 {
 			return fmt.Errorf("native root must be menuBar or focusedElement without window/frame scopes")
@@ -203,7 +206,7 @@ func (s Selector) validate(depth int) error {
 		if s.Ancestor.Surface != s.Surface {
 			return fmt.Errorf("ancestor crosses surfaces")
 		}
-		if s.Ancestor.Scope.NativeRoot != s.Scope.NativeRoot {
+		if s.Ancestor.Scope.NativeRoot != s.Scope.NativeRoot || s.Ancestor.Scope.NativeMenu != s.Scope.NativeMenu {
 			return fmt.Errorf("ancestor crosses native root scope")
 		}
 		return s.Ancestor.validate(depth + 1)
@@ -237,13 +240,13 @@ func (s Step) Validate() error {
 	if s.Effect.Class != effect {
 		return fmt.Errorf("action %s requires conservative effect %s", s.Action, effect)
 	}
-	if s.Action == "app.activate" && len(s.Effect.BusinessKey) == 0 {
-		return fmt.Errorf("app.activate requires a business key")
+	if (s.Action == "app.activate" || s.Action == "app.quit") && len(s.Effect.BusinessKey) == 0 {
+		return fmt.Errorf("application lifecycle action requires a business key")
 	}
 	if s.Action == "app.open" && s.Target.Surface.ProcessID != 0 {
 		return fmt.Errorf("app.open cannot target an existing process")
 	}
-	if s.Action == "app.open" || s.Action == "app.activate" {
+	if s.Action == "app.open" || s.Action == "app.activate" || s.Action == "app.quit" {
 		if s.Target.Surface.Kind != "native" || len(s.Target.Surface.BundleID) > 255 || !nativeBundleIdentifier.MatchString(s.Target.Surface.BundleID) || s.Target.Locator != nil || s.Target.Ancestor != nil || s.Target.Scope.NativeRoot != "" || len(s.Target.Scope.Window) != 0 || len(s.Target.Scope.Frame) != 0 || s.Target.Cardinality != "one" || s.Target.Order != "" {
 			return fmt.Errorf("app.open requires one exact native bundle without element or window selectors")
 		}
@@ -251,10 +254,30 @@ func (s Step) Validate() error {
 			return fmt.Errorf("app.open cannot bind a business result")
 		}
 	}
+	if s.Action == "browser.activateTab" {
+		if s.Target.Surface.Kind != "web" || !ExactHTTPOrigin(s.Target.Surface.Origin) || !OpaqueTabHandle(s.Target.Surface.TabID) || s.Target.Surface.Title != "" || s.Target.Surface.BundleID != "" || s.Target.Surface.ProcessID != 0 || s.Target.Surface.ProcessStartToken != "" || s.Target.Locator != nil || s.Target.Ancestor != nil || s.Target.Scope.NativeRoot != "" || len(s.Target.Scope.Frame) != 0 || len(s.Target.Scope.Window) != 0 || s.Target.Cardinality != "one" || s.Target.Order != "" || len(s.Effect.BusinessKey) == 0 || s.ResultType != "" || s.Bind != "" || s.Precondition != nil || s.Postcondition != nil || s.Assertion != nil {
+			return fmt.Errorf("activateTab requires one exact HTTP(S) origin and opaque tab handle without a document selector or result, and a business key")
+		}
+	}
+	if s.Action == "browser.openOrigin" {
+		if s.Target.Surface.Kind != "web" || !ExactHTTPOrigin(s.Target.Surface.Origin) || s.Target.Surface.TabID != "" || s.Target.Surface.Title != "" || s.Target.Surface.BundleID != "" || s.Target.Surface.ProcessID != 0 || s.Target.Surface.ProcessStartToken != "" || s.Target.Locator != nil || s.Target.Ancestor != nil || s.Target.Scope.NativeRoot != "" || len(s.Target.Scope.Frame) != 0 || len(s.Target.Scope.Window) != 0 || s.Target.Cardinality != "one" || s.Target.Order != "" || len(s.Effect.BusinessKey) == 0 || s.ResultType != "" && s.ResultType != StringValue {
+			return fmt.Errorf("openOrigin requires an exact HTTP(S) origin without a source tab or document selector, and a business key")
+		}
+	}
+	if s.Action == "browser.navigate" || s.Action == "browser.activate" {
+		if s.Target.Surface.Kind != "web" || s.Target.Surface.Origin == "" || s.Target.Locator != nil || s.Target.Ancestor != nil || len(s.Target.Scope.Frame) != 0 || len(s.Target.Scope.Window) != 0 || s.Target.Cardinality != "one" || s.Target.Order != "" || s.Bind != "" || s.ResultType != "" {
+			return fmt.Errorf("browser action requires one root page")
+		}
+		if value, ok := s.Arguments["url"]; ok && value.Kind == StringValue {
+			if _, err := NavigationOrigin(value.String); err != nil {
+				return err
+			}
+		}
+	}
 	if s.Target.Scope.NativeRoot != "" && s.Target.Locator == nil {
 		return fmt.Errorf("native root actions require an explicit locator")
 	}
-	if s.Action != "expect" && s.Action != "app.open" && s.Action != "app.activate" && s.Action != "window.pressSessionKey" && s.Action != "window.clickFrame" && s.Target.Locator == nil {
+	if s.Action != "browser.activateTab" && s.Action != "browser.openOrigin" && s.Action != "browser.navigate" && s.Action != "browser.activate" && s.Action != "expect" && s.Action != "app.open" && s.Action != "app.activate" && s.Action != "app.quit" && s.Action != "window.pressSessionKey" && s.Action != "window.typeText" && s.Action != "window.clickFrame" && s.Target.Locator == nil {
 		return fmt.Errorf("element action needs locator")
 	}
 	if s.Target.Cardinality == "all" && s.Action != "element.read" {
@@ -290,6 +313,16 @@ func (s Step) Validate() error {
 		}
 		if value := s.Arguments["value"]; value.Kind == StringValue {
 			if err := ValidateLiteralText(value.String); err != nil {
+				return err
+			}
+		}
+	}
+	if s.Action == "window.typeText" {
+		if s.Target.Surface.Kind != "native" || s.Target.Surface.ProcessID <= 0 || s.Target.Surface.ProcessStartToken == "" || s.Target.Locator != nil || s.Target.Ancestor != nil || s.Target.Cardinality != "one" || s.Target.Order != "" || s.Target.Scope.NativeRoot != "" || len(s.Target.Scope.Window) != 0 || len(s.Target.Scope.Frame) != 0 || s.Bind != "" || s.ResultType != "" {
+			return fmt.Errorf("window text requires one exact native process without selectors or result binding")
+		}
+		if value := s.Arguments["windowText"]; value.Kind != ReferenceValue {
+			if err := ValidateWindowText(value); err != nil {
 				return err
 			}
 		}
@@ -352,6 +385,9 @@ func (s Step) Validate() error {
 				return err
 			}
 		}
+	}
+	if err := ValidateNativeScopedOutcome(s, nil); err != nil {
+		return err
 	}
 	for _, v := range s.Effect.BusinessKey {
 		if err := v.Validate(); err != nil {

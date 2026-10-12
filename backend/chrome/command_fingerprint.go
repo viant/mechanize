@@ -6,14 +6,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/viant/mechanize/model"
 	"regexp"
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
 )
 
-// MutationFingerprint is an unwired versioned logical identity, not dispatch
-// authority. Existing renderer v1 fingerprints and receipts remain unchanged.
+// MutationFingerprint binds the negotiated logical mutation to its committed
+// attempt. A digest alone confers no dispatch authority.
 type MutationFingerprint struct {
 	Version int    `json:"version"`
 	SHA256  string `json:"sha256"`
@@ -30,7 +31,8 @@ func fingerprintV2Text(value string, maximum int, empty bool) bool {
 
 func logicalMutationEnvelopeV2(command Command) ([]byte, error) {
 	failure := func() ([]byte, error) { return nil, errors.New("invalid qualified logical mutation envelope") }
-	if command.Action != "element.press" && command.Action != "element.fill" {
+	browserAction := command.Action == "browser.navigate" || command.Action == "browser.activate"
+	if command.Action != "element.press" && command.Action != "element.fill" && !browserAction {
 		return failure()
 	}
 	i := command.Identity
@@ -42,24 +44,42 @@ func logicalMutationEnvelopeV2(command Command) ([]byte, error) {
 	if !fingerprintV2Hash.MatchString(command.ScopeHash) || i.TabID < 1 || i.TabID > 2147483647 || i.FrameID != 0 || i.Generation < 1 || i.Generation > fingerprintV2MaxInteger || command.ControlLease == nil || !fingerprintV2ID.MatchString(command.ControlLease.ID) || command.ControlLease.Generation < 1 || command.ControlLease.Generation > fingerprintV2MaxInteger {
 		return failure()
 	}
+	var logicalLocator any
 	l := command.Locator
-	if l == nil || !l.Exact || !fingerprintV2Text(l.Value, 1024, false) {
-		return failure()
-	}
-	switch l.Strategy {
-	case "id", "testId", "role", "label":
-	default:
-		return failure()
-	}
-	var name any
-	if l.Name != nil {
-		if l.Strategy != "role" || !fingerprintV2Text(*l.Name, 1024, false) {
+	if browserAction {
+		if l != nil {
 			return failure()
 		}
-		name = *l.Name
+	} else {
+		if l == nil || !l.Exact || !fingerprintV2Text(l.Value, 1024, false) {
+			return failure()
+		}
+		switch l.Strategy {
+		case "id", "testId", "role", "label":
+		default:
+			return failure()
+		}
+		var name any
+		if l.Name != nil {
+			if l.Strategy != "role" || !fingerprintV2Text(*l.Name, 1024, false) {
+				return failure()
+			}
+			name = *l.Name
+		}
+		locatorFields := map[string]any{"strategy": l.Strategy, "value": l.Value, "name": name, "exact": true}
+		if l.Index != nil {
+			if *l.Index < 0 || *l.Index > 999 || l.Order != "document" {
+				return failure()
+			}
+			locatorFields["index"] = *l.Index
+			locatorFields["order"] = l.Order
+		} else if l.Order != "" {
+			return failure()
+		}
+		logicalLocator = locatorFields
 	}
 	args := map[string]any{}
-	if command.Action == "element.press" {
+	if command.Action == "element.press" || command.Action == "browser.activate" {
 		if len(command.Args) != 0 {
 			return failure()
 		}
@@ -67,13 +87,22 @@ func logicalMutationEnvelopeV2(command Command) ([]byte, error) {
 		if len(command.Args) != 1 {
 			return failure()
 		}
-		value, ok := command.Args["value"].(string)
+		key := "value"
+		if command.Action == "browser.navigate" {
+			key = "url"
+		}
+		value, ok := command.Args[key].(string)
 		if !ok || !fingerprintV2Text(value, 16384, true) {
 			return failure()
 		}
-		args["value"] = value
+		if command.Action == "browser.navigate" {
+			if _, err := model.NavigationOrigin(value); err != nil {
+				return failure()
+			}
+		}
+		args[key] = value
 	}
-	envelope := map[string]any{"version": 2, "action": command.Action, "identity": map[string]any{"profileChannel": i.ProfileChannel, "browserInstance": i.BrowserInstance, "tabId": i.TabID, "frameId": i.FrameID, "documentId": i.DocumentID, "documentGeneration": i.Generation}, "brokerEpoch": command.BrokerEpoch, "channelEpoch": command.ChannelEpoch, "scopeHash": command.ScopeHash, "controlLease": map[string]any{"id": command.ControlLease.ID, "generation": command.ControlLease.Generation}, "attemptId": command.AttemptID, "locator": map[string]any{"strategy": l.Strategy, "value": l.Value, "name": name, "exact": true}, "args": args}
+	envelope := map[string]any{"version": 2, "action": command.Action, "identity": map[string]any{"profileChannel": i.ProfileChannel, "browserInstance": i.BrowserInstance, "tabId": i.TabID, "frameId": i.FrameID, "documentId": i.DocumentID, "documentGeneration": i.Generation}, "brokerEpoch": command.BrokerEpoch, "channelEpoch": command.ChannelEpoch, "scopeHash": command.ScopeHash, "controlLease": map[string]any{"id": command.ControlLease.ID, "generation": command.ControlLease.Generation}, "attemptId": command.AttemptID, "locator": logicalLocator, "args": args}
 	var out bytes.Buffer
 	encoder := json.NewEncoder(&out)
 	encoder.SetEscapeHTML(false)
@@ -83,8 +112,8 @@ func logicalMutationEnvelopeV2(command Command) ([]byte, error) {
 	return []byte(strings.TrimSuffix(out.String(), "\n")), nil
 }
 
-// FingerprintMutationV2 returns only version and SHA256. It must not be wired to
-// dispatch or historical comparison until negotiated versioned bindings exist.
+// FingerprintMutationV2 returns the negotiated logical identity used by the
+// committed dispatch gate and historical receipt comparison.
 func FingerprintMutationV2(command Command) (MutationFingerprint, error) {
 	raw, err := logicalMutationEnvelopeV2(command)
 	if err != nil {

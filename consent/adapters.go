@@ -16,25 +16,27 @@ import (
 )
 
 type record struct {
-	Namespace        string `json:"namespace"`
-	ID               string `json:"id"`
-	ClientID         string `json:"clientId"`
-	ClientName       string `json:"clientName"`
-	SessionID        string `json:"sessionId"`
-	ScopeJSON        string `json:"scopeJson"`
-	ModesJSON        string `json:"modesJson"`
-	Purpose          string `json:"purpose"`
-	DurationSeconds  int    `json:"durationSeconds"`
-	CreatedAt        int    `json:"createdAt"`
-	RequestExpiresAt int    `json:"requestExpiresAt"`
-	RequestState     string `json:"requestState"`
-	Decision         string `json:"decision"`
-	GrantID          string `json:"grantId"`
-	GrantCreatedAt   int    `json:"grantCreatedAt"`
-	GrantExpiresAt   int    `json:"grantExpiresAt"`
-	GrantState       string `json:"grantState"`
-	RevocationState  string `json:"revocationState"`
-	Revision         int    `json:"revision"`
+	cleanupMachineOnly bool
+	policyManaged      bool
+	Namespace          string `json:"namespace"`
+	ID                 string `json:"id"`
+	ClientID           string `json:"clientId"`
+	ClientName         string `json:"clientName"`
+	SessionID          string `json:"sessionId"`
+	ScopeJSON          string `json:"scopeJson"`
+	ModesJSON          string `json:"modesJson"`
+	Purpose            string `json:"purpose"`
+	DurationSeconds    int    `json:"durationSeconds"`
+	CreatedAt          int    `json:"createdAt"`
+	RequestExpiresAt   int    `json:"requestExpiresAt"`
+	RequestState       string `json:"requestState"`
+	Decision           string `json:"decision"`
+	GrantID            string `json:"grantId"`
+	GrantCreatedAt     int    `json:"grantCreatedAt"`
+	GrantExpiresAt     int    `json:"grantExpiresAt"`
+	GrantState         string `json:"grantState"`
+	RevocationState    string `json:"revocationState"`
+	Revision           int    `json:"revision"`
 }
 
 func (r record) details() (Scope, []Mode, error) {
@@ -110,6 +112,13 @@ func (s *Service) read(ctx context.Context, pkg, id, actor string) ([]record, er
 			if err = json.Unmarshal(raw, &r); err != nil {
 				return nil, err
 			}
+			// CREATE provenance survives process restart. Request fields, names and
+			// client prefixes alone never classify an internal policy request.
+			for _, audit := range row.Audit {
+				if audit != nil && audit.Namespace != nil && *audit.Namespace == r.Namespace && audit.RequestId != nil && *audit.RequestId == r.ID && audit.Id != nil && *audit.Id != "" && audit.Kind != nil && *audit.Kind == "create" && audit.ActorId != nil && *audit.ActorId == policyActor(r.ClientID) && audit.CreatedAt != nil && *audit.CreatedAt == r.CreatedAt {
+					r.policyManaged = true
+				}
+			}
 			rows = append(rows, r)
 		}
 	case *consentgrants.ListGrantsOutput:
@@ -137,6 +146,7 @@ func (s *Service) read(ctx context.Context, pkg, id, actor string) ([]record, er
 			if err = json.Unmarshal(raw, &r); err != nil {
 				return nil, err
 			}
+			r.cleanupMachineOnly = row.CleanupMachineOnly != nil && *row.CleanupMachineOnly == 1
 			rows = append(rows, r)
 		}
 	default:
@@ -144,7 +154,7 @@ func (s *Service) read(ctx context.Context, pkg, id, actor string) ([]record, er
 	}
 	return rows, nil
 }
-func (s *Service) write(ctx context.Context, operation, actor string, r record, previous *record) error {
+func (s *Service) write(ctx context.Context, operation, actor string, r record, previous *record, cleanupVerified ...bool) error {
 	auditID, err := randomID()
 	if err != nil {
 		return err
@@ -159,6 +169,7 @@ func (s *Service) write(ctx context.Context, operation, actor string, r record, 
 	}
 	payload := string(raw)
 	authority := data.ConsentAuthority{Operation: operation, ActorID: actor, AuditID: auditID, Payload: payload, Now: int(s.options.Now().UnixMilli()), Expected: expected}
+	authority.CleanupVerified = operation == "cleanupRecovery" && len(cleanupVerified) == 1 && cleanupVerified[0]
 	if operation == "create" {
 		authority.Now = r.CreatedAt
 	}
@@ -341,7 +352,7 @@ func (s *Service) write(ctx context.Context, operation, actor string, r record, 
 		in.SetNamespace(r.Namespace)
 		in.SetConsentconsume([]*consentconsume.Record{row})
 		input = in
-	case "revoke":
+	case "revoke", "cleanupRecovery":
 		pkg = "consentrevoke"
 		row := &consentrevoke.Record{}
 		row.SetNamespace(&r.Namespace)

@@ -17,6 +17,19 @@ func ConsentBindingFromContext(ctx context.Context) (ConsentBinding, bool) {
 	return auth.ConsentBindingFromContext(ctx)
 }
 
+// operationConsentScope uses trusted enrollment, never a request flag, to map
+// ordinary web operations onto a distinct browser-wide human consent grant.
+func (h *Host) operationConsentScope(p auth.Principal, surface model.Surface) (consent.Scope, error) {
+	scope, err := ConsentScope(surface)
+	if err != nil {
+		return scope, err
+	}
+	if scope.Kind == "origin" && h.chromeAllWebsites[p.Namespace] && h.users[p.Namespace].DesktopAccess {
+		return consent.Scope{Kind: "browser", BundleID: "com.google.Chrome"}, nil
+	}
+	return scope, nil
+}
+
 // ConsentScope resolves only exact surface facts. Window selectors require
 // backend resolution to a stable window ID; aliases/titles never confer scope.
 func ConsentScope(surface model.Surface) (consent.Scope, error) {

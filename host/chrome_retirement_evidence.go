@@ -76,7 +76,7 @@ func newChromeRetirementEvidenceProvider(brokerRequirement string, primitives ch
 			return fail()
 		}
 		extension := retirementEvidenceExtension.FindStringSubmatch(s.ExtensionOrigin)
-		if len(extension) != 2 || len(s.Origins) == 0 {
+		if len(extension) != 2 || (!s.AllWebsites && len(s.Origins) == 0) || (s.AllWebsites && len(s.Origins) != 0) {
 			return fail()
 		}
 		origins := append([]string(nil), s.Origins...)
@@ -86,7 +86,11 @@ func newChromeRetirementEvidenceProvider(brokerRequirement string, primitives ch
 				return fail()
 			}
 		}
-		policy := data.ChromeRetirementPolicyEvidence{Version: 1, ExtensionID: extension[1], TrustScope: s.TrustScope, OriginScopeDigest: data.ChromeRetirementDigest(origins), NativeHostRequirementDigest: retirementStringSHA256(trust.NativeHostRequirement), ChromeRequirementDigest: retirementStringSHA256(trust.ChromeRequirement), BrokerRequirementDigest: retirementStringSHA256(brokerRequirement), ProfileQualified: s.ProfileQualified}
+		originDigest := data.ChromeRetirementDigest(origins)
+		if s.AllWebsites {
+			originDigest = data.ChromeRetirementDigest([]string{"allWebsites:http+https:v1"})
+		}
+		policy := data.ChromeRetirementPolicyEvidence{Version: 1, ExtensionID: extension[1], TrustScope: s.TrustScope, OriginScopeDigest: originDigest, NativeHostRequirementDigest: retirementStringSHA256(trust.NativeHostRequirement), ChromeRequirementDigest: retirementStringSHA256(trust.ChromeRequirement), BrokerRequirementDigest: retirementStringSHA256(brokerRequirement), ProfileQualified: s.ProfileQualified}
 		if s.TrustScope == chrome.TrustScopeProfile {
 			if !s.ProfileQualified || !retirementExecutablePath(s.ProfileDirectory) {
 				return fail()

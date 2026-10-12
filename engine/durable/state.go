@@ -95,6 +95,23 @@ func (b *Builder) StateGet(ctx context.Context, p auth.Principal, runID string) 
 	return stateRead(ctx, user.server, p, runID)
 }
 
+// PauseReference reads only committed root identity from the generated state
+// projection, without waiting for the executor's per-user lock. Pause must be
+// able to cancel an action currently holding that lock. Child effects and
+// observations are deliberately excluded: this is admission metadata, not a
+// quiescence or reconciliation proof. Final state is read under the normal lock.
+func (b *Builder) PauseReference(ctx context.Context, p auth.Principal, runID string) (State, error) {
+	ctx, user, err := b.bound(ctx, p, 0)
+	if err != nil {
+		return State{}, err
+	}
+	state, err := stateRead(ctx, user.server, p, runID)
+	if err != nil {
+		return State{}, err
+	}
+	return State{RunID: state.RunID, PlanID: state.PlanID, ObjectiveID: state.ObjectiveID, SessionID: state.SessionID, OperationID: state.OperationID, Revision: state.Revision, Status: state.Status}, nil
+}
+
 // StatePatch changes typed user variables only. Its host guard must inhibit
 // admission until the committed values are refreshed into the paused context.
 // Nil guard fails closed; no state API can clear effects or alter history.

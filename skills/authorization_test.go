@@ -70,7 +70,7 @@ func TestDatlyEmbeddedSkillsAuthorization(t *testing.T) {
 			listed, rpc := skills.ListSkills(test.ctx, nil)
 			want := 0
 			if test.allowed {
-				want = 6
+				want = 8
 			}
 			if rpc != nil || len(listed.Skills) != want {
 				t.Fatalf("catalog: %+v %v", listed, rpc)

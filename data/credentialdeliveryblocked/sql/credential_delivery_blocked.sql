@@ -1,0 +1,2 @@
+SELECT status.* FROM  (SELECT CAST(COUNT(*) AS INTEGER) AS blocked FROM (SELECT namespace FROM credential_delivery_attempts WHERE namespace=:Namespace AND (protection_state='held' OR (dispatch_state='unknown' AND protection_state<>'retired')) UNION SELECT namespace FROM credential_delivery_preparations WHERE namespace=:Namespace AND protection_state='held') protected
+)  status

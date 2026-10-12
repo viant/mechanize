@@ -1,0 +1,19 @@
+#package('github.com/viant/mechanize/data/chromeattemptbindingpage')
+#setting($_ = $input_type('PageChromeAttemptBindingsInput'))
+#setting($_ = $output_type('PageChromeAttemptBindingsOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/chromeattemptbindingpage', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $ProfileChannel<string>(query/profileChannel).Required())
+#define($_ = $BrowserInstance<string>(query/browserInstance).Required())
+#define($_ = $ScopeHash<string>(query/scopeHash).Required())
+#define($_ = $AfterID<string>(query/afterId))
+#define($_ = $Data<[]*Binding>(output/view))
+SELECT bindings.*,attempt.*,effect.*,outcomes.*,plan.*,set_limit(bindings,128),type(bindings,'Binding'),type(attempt,'Attempt'),type(effect,'Effect'),type(outcomes,'Outcome'),type(plan,'Plan')
+FROM (${embed:sql/root.sql}) bindings
+JOIN (${embed:sql/attempt.sql}) attempt ON attempt.namespace=bindings.namespace AND attempt.id=bindings.durable_attempt_id AND 1=1
+JOIN (${embed:sql/effect.sql}) effect ON effect.namespace=bindings.namespace AND effect.id=bindings.effect_id AND 1=1
+JOIN (${embed:sql/outcomes.sql}) outcomes ON outcomes.namespace=bindings.namespace AND outcomes.attempt_id=bindings.durable_attempt_id
+
+JOIN (${embed:sql/plan.sql}) plan ON plan.namespace=bindings.namespace AND plan.id=bindings.plan_id AND 1=1

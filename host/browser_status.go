@@ -16,7 +16,19 @@ func (h *Host) BrowserStatus(ctx context.Context, requested auth.Principal) (chr
 		return chrome.BrowserStatus{}, err
 	}
 	if h.chrome == nil {
-		return chrome.BrowserStatus{Available: false, Channels: []chrome.BrowserChannelStatus{}}, ctx.Err()
+		status := chrome.BrowserStatus{Available: false, Channels: []chrome.BrowserChannelStatus{}}
+		if h.chromeStartupUnqualified {
+			status.AttentionCode = "chromeProcessUnqualified"
+		}
+		setup := status.SetupStatus()
+		status.Setup = &setup
+		return status, ctx.Err()
 	}
-	return h.chrome.BrowserStatus(ctx, p)
+	status, err := h.chrome.BrowserStatus(ctx, p)
+	if err != nil {
+		return chrome.BrowserStatus{}, err
+	}
+	setup := status.SetupStatus()
+	status.Setup = &setup
+	return status, nil
 }

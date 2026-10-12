@@ -1,0 +1,12 @@
+{
+  "name": "@viant/mechanize-playwright",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "prepare-runtime": "node package-runtime.mjs",
+    "pretest": "node package-runtime.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": { "playwright-core": "1.64.0" }
+}

@@ -14,7 +14,19 @@ type ConsentAuthority struct {
 	Operation, ActorID, AuditID, Payload string
 	Now                                  int
 	Expected                             map[string]any
+	CleanupVerified                      bool
 }
+
+// ConsentCleanupOperation selects only server-issued recovery authority.
+// The context key is private; no HTTP/MCP field can create this proof.
+func ConsentCleanupOperation(ctx context.Context) string {
+	a, ok := ctx.Value(consentAuthorityKey{}).(ConsentAuthority)
+	if ok && a.Operation == "cleanupRecovery" && a.CleanupVerified {
+		return "cleanupRecovery"
+	}
+	return "revoke"
+}
+
 type consentAuthorityKey struct{}
 
 func WithConsentAuthority(ctx context.Context, authority ConsentAuthority) context.Context {
@@ -153,6 +165,15 @@ func ValidateConsentMutation(ctx context.Context, operation string, raw, previou
 		for _, key := range []string{"requestState", "decision", "grantId", "grantCreatedAt", "grantExpiresAt"} {
 			if !reflect.DeepEqual(old[key], a.Expected[key]) {
 				return fmt.Errorf("revoke cannot change %s", key)
+			}
+		}
+	case "cleanupRecovery":
+		if !a.CleanupVerified || old["revocationState"] != "cleanupUnknown" || old["grantState"] != "active" || old["decision"] != "allow_until_revoked" || a.Expected["revocationState"] != "" || a.ActorID != old["clientId"] {
+			return fmt.Errorf("verified recovery of existing own permanent approval required")
+		}
+		for _, key := range []string{"requestState", "decision", "grantId", "grantCreatedAt", "grantExpiresAt", "grantState"} {
+			if !reflect.DeepEqual(old[key], a.Expected[key]) {
+				return fmt.Errorf("cleanup recovery cannot change %s", key)
 			}
 		}
 	default:

@@ -18,6 +18,18 @@ struct ApplicationInventoryEntry {
 struct ApplicationControlRuntime {
     let list: (String?) -> [ApplicationInventoryEntry]
     let activate: (ApplicationInventoryEntry) -> Bool
+    // Read-only confirmation and wait seams; request JSON cannot provide either.
+    let foreground: (ApplicationInventoryEntry, Budget) throws -> Bool
+    let wait: (TimeInterval) -> Void
+    init(list: @escaping (String?) -> [ApplicationInventoryEntry],
+         activate: @escaping (ApplicationInventoryEntry) -> Bool,
+         foreground: @escaping (ApplicationInventoryEntry, Budget) throws -> Bool = { identity, budget in
+             _ = try qualifiedForeground(ForegroundIdentity(pid: identity.pid, uid: identity.owner,
+                 birth: identity.startToken, bundle: identity.bundleID, active: true), budget)
+             return true
+         }, wait: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) {
+        self.list = list; self.activate = activate; self.foreground = foreground; self.wait = wait
+    }
     static let system = ApplicationControlRuntime(list: { expected in
         let apps = expected.map { NSRunningApplication.runningApplications(withBundleIdentifier: $0) } ?? NSWorkspace.shared.runningApplications
         return apps.filter { $0.bundleIdentifier != nil }.map { app in
@@ -29,7 +41,19 @@ struct ApplicationControlRuntime {
               let app = NSRunningApplication(processIdentifier: identity.pid), app.bundleIdentifier == identity.bundleID,
               applicationLoginUID(identity.pid) == getuid(), let token = applicationProcessStartToken(identity.pid), token == expectedToken,
               applicationKernelLaunchIdentity(token) == expectedBirth, !app.isTerminated else { return false }
-        return app.activate(options: [.activateAllWindows])
+        // LaunchServices can bring an existing app forward from an automation
+        // helper. NSRunningApplication.activate alone may leave it in the
+        // background on current macOS. Never request another instance, accept
+        // caller paths/arguments, or treat this submission as foreground proof.
+        guard let url = app.bundleURL, url.isFileURL,
+              Bundle(url: url)?.bundleIdentifier == identity.bundleID else { return false }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.createsNewApplicationInstance = false
+        configuration.addsToRecentItems = false
+        configuration.promptsUserIfNeeded = false
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in }
+        return true
     })
 }
 func applicationInventory(_ params: [String: Any], runtime: ApplicationControlRuntime = .system, uid: uid_t = getuid()) throws -> [String: Any] {
@@ -57,5 +81,33 @@ func activateApplication(_ params: [String: Any], _ budget: Budget, runtime: App
           app.bundleID == bundle, app.pid == pid, app.birthIdentity == launch, app.startToken == token, !app.terminated else { throw NativeFailure("staleReference", "Exact existing application identity is absent or ambiguous") }
     try budget.check(); try willDispatch()
     guard runtime.activate(app) else { return ApplicationLaunchReply(dispatchState: "unknown", result: [:], failure: NativeFailure("activationOutcomeUnknown", "Activation returned without proof; reconcile before replay")) }
-    return ApplicationLaunchReply(dispatchState: "dispatched", result: ["bundleID": bundle, "pid": pid, "launchTime": launch, "startToken": token, "activationRequested": true, "businessSuccess": false], failure: nil)
+    let result: [String: Any] = ["bundleID": bundle, "pid": pid, "launchTime": launch,
+        "startToken": token, "activationRequested": true, "businessSuccess": false]
+    // Acceptance is not foreground proof. Observe for at most one second without
+    // resubmitting activation or sending keyboard/pointer input. Every failure
+    // after submission retains the uncertain effect, including deadline expiry.
+    do {
+        try budget.check()
+        let confirmationBudget = try Budget(milliseconds: max(1, min(1000, Int(budget.remainingSeconds * 1000))))
+        for _ in 0..<40 {
+            try budget.check(); try confirmationBudget.check()
+            do {
+                if try runtime.foreground(app, confirmationBudget) {
+                    try budget.check(); try confirmationBudget.check()
+                    var confirmed = result
+                    confirmed["foregroundConfirmed"] = true
+                    confirmed["active"] = true
+                    return ApplicationLaunchReply(dispatchState: "dispatched", result: confirmed, failure: nil)
+                }
+            } catch let failure as NativeFailure {
+                guard ["foregroundChanged", "foregroundNotActive", "foregroundUnavailable"].contains(failure.code) else { throw failure }
+            }
+            try budget.check(); try confirmationBudget.check()
+            runtime.wait(min(0.025, Double(min(budget.remainingSeconds, confirmationBudget.remainingSeconds))))
+        }
+    } catch {
+        // Deliberately withhold provider details and retain post-dispatch state.
+    }
+    return ApplicationLaunchReply(dispatchState: "unknown", result: result,
+        failure: NativeFailure("activationPostconditionUnknown", "Requested activation lacks exact foreground confirmation within its bounded observation interval; reconcile before replay"))
 }

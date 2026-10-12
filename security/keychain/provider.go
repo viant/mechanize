@@ -1,5 +1,5 @@
-// Package keychain supplies a read-only, explicitly enrolled Scy/AFS resource
-// provider for macOS generic-password items. It never changes Keychain access.
+// Package keychain supplies explicitly enrolled read-only Scy/AFS resources
+// and a separate native-human, create-only Vault master-key provisioner.
 package keychain
 
 import (
@@ -116,7 +116,7 @@ func (m *manager) OpenURL(ctx context.Context, raw string, options ...storage.Op
 	if !ok {
 		return nil, ErrReference
 	}
-	payload, err := m.lookup(ctx, item)
+	payload, err := masterReaders.lookup(ctx, item, m.lookup)
 	if err != nil {
 		return nil, err
 	}

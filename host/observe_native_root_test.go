@@ -9,7 +9,9 @@ import (
 	native "github.com/viant/mechanize/backend/darwin"
 	"github.com/viant/mechanize/consent"
 	"github.com/viant/mechanize/data/consentgrants"
+	"github.com/viant/mechanize/engine/durable"
 	"github.com/viant/mechanize/model"
+	"github.com/viant/mechanize/vault"
 	"strings"
 	"testing"
 	"time"
@@ -55,11 +57,11 @@ func TestHostObserveNativeRootRequiresSameConsentAndIdentity(t *testing.T) {
 // Only the private component's returned fixture rows are mocked; the real
 // consent service still checks exact client/session/scope/purpose/mode bindings.
 func TestHostObserveNativeRootWithBoundConsentAndValueWithholding(t *testing.T) {
-	p, _ := auth.NewPrincipal("fixture", "", "observer", []string{"desktop:observe"})
+	p, _ := auth.NewPrincipal("fixture", "", "observer", []string{"desktop:observe", "desktop:control"})
 	p.ClientID = "agent"
 	p.ClientName = "Fixture agent"
 	ctx := auth.WithConsentBinding(auth.WithPrincipal(context.Background(), p), auth.ConsentBinding{SessionID: "session", GrantID: "grant", Purpose: "inspect"})
-	for _, mode := range []string{"allowed", "wrongMode", "wrongBundle", "wrongPurpose", "wrongSession", "notEnrolled"} {
+	for _, mode := range []string{"allowed", "browserProtected", "wrongMode", "wrongBundle", "wrongPurpose", "wrongSession", "notEnrolled"} {
 		t.Run(mode, func(t *testing.T) {
 			caller := &observeRootCaller{}
 			gateway, e := native.NewGateway(caller, native.GatewayOptions{AllowedBundles: []string{"fixture.app"}})
@@ -71,6 +73,16 @@ func TestHostObserveNativeRootWithBoundConsentAndValueWithholding(t *testing.T) 
 				bundles = nil
 			}
 			h := &Host{users: map[string]User{p.Namespace: {NativeBundles: bundles}}, nativeByUser: map[string]*native.Gateway{p.Namespace: gateway}}
+			if mode == "browserProtected" {
+				h.durable = &durable.Builder{}
+				h.chromeStartupUnqualified = true
+				h.vaultExposure, _ = vault.NewGuardedExposureGate(func(context.Context) error { return nil })
+				delivery, e := h.vaultExposure.BeginDelivery(ctx, vault.Binding{SessionID: "session", DocumentID: "login-document", NavigationID: "navigation", Target: vault.Target{Origin: "https://fixture.invalid", Account: "opaque"}}, func(c context.Context) error { return c.Err() }, func(context.Context) error { return vault.ErrEntryCleanup })
+				if e != nil {
+					t.Fatal(e)
+				}
+				defer delivery.Retire()
+			}
 			scope := `{"kind":"application","bundleID":"fixture.app"}`
 			modes := `["observe"]`
 			purpose := "inspect"
@@ -102,7 +114,7 @@ func TestHostObserveNativeRootWithBoundConsentAndValueWithholding(t *testing.T) 
 				t.Fatal(e)
 			}
 			obs, e := h.ObserveNativeRoot(ctx, p, model.Surface{Kind: "native", BundleID: "fixture.app"}, "menuBar")
-			if mode != "allowed" {
+			if mode != "allowed" && mode != "browserProtected" {
 				if e == nil || caller.snapshots != 0 {
 					t.Fatalf("denied read dispatched: %+v %v", obs, e)
 				}

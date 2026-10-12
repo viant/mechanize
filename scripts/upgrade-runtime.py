@@ -8,6 +8,7 @@ No build, database provisioning, grant changes, socket deletion, or default UI p
 """
 import argparse
 import copy
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -19,10 +20,22 @@ import shutil
 import socket
 import stat
 import struct
+import subprocess
 import sys
 import tempfile
 import time
 import uuid
+
+NATIVE_RECONCILIATION_CONTRACTS = ['plan.effect.reconcile', 'plan.postcondition.reconcile',
+    'native.chrome.openExtensions.v1', 'native.focus.v1', 'native.app.quit.v1']
+
+
+def reconciliation_enrollment(existing, requested):
+    if not isinstance(existing, list) or not isinstance(requested, list) or any(
+            value not in NATIVE_RECONCILIATION_CONTRACTS for value in existing + requested):
+        raise ValueError('unknown effect reconciliation enrollment')
+    return list(dict.fromkeys(existing + requested))
+
 
 SCRIPTS = Path(__file__).absolute().parent
 extension_spec = importlib.util.spec_from_file_location('extension_package', SCRIPTS / 'extension_package.py')
@@ -121,8 +134,42 @@ def verify_manifest(source, manifest, artifacts):
     return plist
 
 
-def updated_config(config, root, source, manifest):
+def require_unprovisioned_vault(config):
+    vault = config.get('nativeVault') or {}
+    if vault.get('root') != str(Path.home() / '.secret/vault'):
+        raise ValueError('unexpected Vault custody root')
+    custody = Path(vault['root'])
+    if custody.exists():
+        if custody.is_symlink() or not custody.is_dir() or custody.resolve() != custody:
+            raise ValueError('unsafe Vault custody root')
+        info = custody.stat()
+        if info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise ValueError('Vault custody must remain private')
+        if any(item.name != '.vault-write.lock' for item in custody.iterdir()):
+            raise ValueError('Vault material exists; signing migration required')
+    keychain = config.get('keychain') or {}
+    names = [name for name in ('Items', 'items') if name in keychain]
+    if len(names) != 1:
+        raise ValueError('unambiguous Vault key enrollment required')
+    item = keychain[names[0]].get(vault.get('keyAlias')) or {}
+    service = item.get('Service', item.get('service'))
+    account = item.get('Account', item.get('account'))
+    if service != 'com.viant.mechanize.vault' or not isinstance(account, str) or not account:
+        raise ValueError('exact Vault master item required')
+    # Metadata-only query. No -w/-g, key bytes, attributes or stderr are exposed.
+    result = subprocess.run(['security', 'find-generic-password', '-s', service, '-a', account],
+                            capture_output=True, timeout=15)
+    if result.returncode != 44:  # errSecItemNotFound; every other result refuses.
+        raise ValueError('Vault master item is present or unavailable; signing migration required')
+
+
+def updated_config(config, root, source, manifest, unprovisioned_vault=False):
     result = copy.deepcopy(config)
+    if result.get('nativeVault') and result['nativeVault'].get('brokerRequirement') != manifest['brokerRequirement']:
+        if not unprovisioned_vault:
+            raise ValueError('Vault master-key signing migration must be qualified before replacing its broker; existing runtime preserved')
+        require_unprovisioned_vault(config)
+        result['nativeVault']['brokerRequirement'] = manifest['brokerRequirement']
     result['sourceRoot'] = str(source)
     result['nativeHelper'] = str(root / 'mechanize-native')
     if result.get('nativeLaunch') is not None:
@@ -130,6 +177,8 @@ def updated_config(config, root, source, manifest):
     if not result.get('nativeConsole'):
         raise ValueError('existing console enrollment required')
     result['nativeConsole']['designatedRequirement'] = manifest['consoleRequirement']
+    if result.get('chromeRetirement'):
+        result['chromeRetirement']['brokerRequirement'] = manifest['brokerRequirement']
     chrome = result.get('chrome')
     if chrome and chrome.get('processTrust'):
         trust = chrome['processTrust']
@@ -137,6 +186,26 @@ def updated_config(config, root, source, manifest):
             raise ValueError('external enrolled Chrome host requires separate operator upgrade')
         trust['nativeHostRequirement'] = manifest['nativeHostRequirement']
     return result
+
+
+def enable_native_vault(config, manifest):
+    if config.get('nativeVault'):
+        raise ValueError('existing Vault enrollment must be preserved, not replaced')
+    if config.get('nativeConsole', {}).get('expectedUID') != os.getuid():
+        raise ValueError('Vault requires current login console enrollment')
+    keychain = config.setdefault('keychain', {})
+    names = [name for name in ('Items', 'items') if name in keychain]
+    if len(names) > 1:
+        raise ValueError('ambiguous Keychain alias map')
+    items = keychain.setdefault(names[0] if names else 'Items', {})
+    alias = 'vault-master-v1'
+    if alias in items:
+        raise ValueError('Vault alias already exists; explicit reconciliation required')
+    items[alias] = {'Service': 'com.viant.mechanize.vault',
+                    'Account': 'mechanize-vault:' + str(os.getuid()) + ':v1'}
+    config['nativeVault'] = {'root': str(Path.home() / '.secret/vault'),
+                             'keyVersion': 'vault-v1', 'keyAlias': alias,
+                             'brokerRequirement': manifest['brokerRequirement']}
 
 
 def encode(value):
@@ -286,8 +355,14 @@ def require_chrome_stopped(config, root):
         raise ValueError('enrolled Chrome executable is required for extension replacement')
     for line in run('ps', '-ww', '-axo', 'pid=,uid=,comm=').stdout.decode().splitlines():
         fields = line.strip().split(None, 2)
-        if len(fields) == 3 and fields[1] == str(os.getuid()) and fields[2] in (executable, str(root / 'mechanize-native-host')):
-            raise ValueError('enrolled Chrome and native host must be stopped before extension replacement')
+        if len(fields) == 3 and fields[1] == str(os.getuid()):
+            # macOS can run the enrolled signed Chrome image from a temporary
+            # code-sign clone. Exact original-path absence is not exit evidence.
+            # Conservative name matching can only refuse an upgrade; it never
+            # authorizes a process or supplies signature/profile qualification.
+            image = Path(fields[2])
+            if fields[2] in (executable, str(root / 'mechanize-native-host')) or image.name in (Path(executable).name, 'mechanize-native-host'):
+                raise ValueError('enrolled Chrome and native host must be stopped before extension replacement')
 
 
 def preflight_extension(root, manifest, artifacts):
@@ -417,6 +492,11 @@ def enable_window_frame_click(config):
 
 
 def main():
+    with contextlib.ExitStack() as cleanup:
+        return perform(cleanup)
+
+
+def perform(cleanup):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source'); parser.add_argument('--manifest')
     parser.add_argument('--installation', required=True)
@@ -432,7 +512,9 @@ def main():
     parser.add_argument('--enable-targeted-keyboard', action='store_true', help='enroll focus-bound keyboard alongside semantic AX actions; never enables raw pointer/text')
     parser.add_argument('--enable-session-keyboard', action='store_true', help='explicitly enroll login-session keyboard delivery alongside semantic AX actions; never a targeted-keyboard fallback')
     parser.add_argument('--enable-window-frame-click', action='store_true', help='enable single-use capture-bound window clicks for the semantic native profile')
-    parser.add_argument('--native-effect-reconciliation', action='append', default=[], choices=['plan.effect.reconcile', 'plan.postcondition.reconcile', 'native.chrome.openExtensions.v1', 'native.focus.v1'], help='enroll a compiled read-only effect reconciliation contract')
+    parser.add_argument('--enable-native-vault', action='store_true', help='enroll native Vault routing only; never creates keys or credentials')
+    parser.add_argument('--unprovisioned-vault-upgrade', action='store_true', help='replace Vault broker only after metadata proves no key/ciphertext exists, checked again after shutdown')
+    parser.add_argument('--native-effect-reconciliation', action='append', default=[], choices=NATIVE_RECONCILIATION_CONTRACTS, help='enroll a compiled read-only effect reconciliation contract')
     parser.add_argument('--endly-runner', default=str(Path.home() / '.local/bin/endly-mcp-runner'))
     args = parser.parse_args()
     if sys.platform != 'darwin' or not re.fullmatch(r'127\.0\.0\.1:[0-9]{1,5}', args.listen) or not 0 < int(args.listen.split(':')[1]) < 65536:
@@ -445,6 +527,8 @@ def main():
         raise ValueError('rollback restores its recorded window input enrollment')
     os.umask(0o077)
     root = owned_directory(args.installation)
+    if args.apply or args.rollback:
+        cleanup.enter_context(shared.runtime_lock(root))
     config_path = root / 'config.json'
     original_bytes = private(config_path)
     config = json.loads(original_bytes)
@@ -517,7 +601,9 @@ def main():
     extension_snapshot = preflight_extension(root, manifest, artifacts)
     if plistlib.loads((app / 'Contents/Info.plist').read_bytes()).get('MechanizeEnrollmentAccount') == manifest['consoleEnrollmentAccount']:
         raise ValueError('new per-build console account required')
-    updated = updated_config(config, root, source, manifest)
+    updated = updated_config(config, root, source, manifest, args.unprovisioned_vault_upgrade)
+    if args.enable_native_vault:
+        enable_native_vault(updated, manifest)
     installed_plist = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     chrome_snapshot = preflight_chrome_native_host(config, root, installed_plist.get('MechanizeBrokerRequirement'), manifest)
     if args.chrome_trust_scope == 'desktop':
@@ -534,9 +620,7 @@ def main():
         enable_window_frame_click(updated)
     if args.native_effect_reconciliation:
         enrolled = updated.get('nativeEffectReconciliation', [])
-        if not isinstance(enrolled, list) or any(value not in ['plan.effect.reconcile', 'plan.postcondition.reconcile', 'native.chrome.openExtensions.v1', 'native.focus.v1'] for value in enrolled):
-            raise ValueError('unknown existing effect reconciliation enrollment')
-        updated['nativeEffectReconciliation'] = list(dict.fromkeys(enrolled + args.native_effect_reconciliation))
+        updated['nativeEffectReconciliation'] = reconciliation_enrollment(enrolled, args.native_effect_reconciliation)
     if args.static_text_bundle:
         users = [user for user in updated.get('users', []) if user.get('subject') == args.static_text_user]
         if len(users) != 1:
@@ -612,6 +696,14 @@ def main():
     require_chrome_stopped(config, root)
     shared.stop_consoles(app)
     shared.stop(args.broker_pid, root / 'mechanize')
+    if args.unprovisioned_vault_upgrade:
+        try:
+            require_unprovisioned_vault(config)
+        except Exception:
+            # No artifact/config has changed. Restore service without accepting
+            # a race that provisions a key between preflight and shutdown.
+            shared.start(root, args.listen)
+            raise ValueError('Vault changed during shutdown; original runtime retained') from None
     if private(config_path) != original_bytes:
         raise RuntimeError('configuration changed during shutdown; retained backup requires operator review')
     check_chrome_snapshot(chrome_snapshot)

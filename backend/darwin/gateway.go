@@ -47,17 +47,24 @@ type Gateway struct {
 	axTrusted                    bool
 	mutationEnabled              bool
 	semanticEnabled              bool
+	semanticMenuEnabled          bool
 	targetedKeyboardEnabled      bool
 	sessionKeyboardEnabled       bool
 	launchEnabled                bool
+	quitEnabled                  bool
+	processExitEnabled           bool
 	nativeRootScopes             map[string]bool
+	nativeMenuScopeEnabled       bool
 	windowTitleScopeEnabled      bool
 	windowPositionEnabled        bool
 	windowSessionKeyboardEnabled bool
+	sessionTextEnabled           bool
+	windowSessionTextEnabled     bool
 	windowFrameClickEnabled      bool
 	framePermit                  *WindowFramePermit
 	textReplaceEnabled           bool
 	valueMatchesEnabled          bool
+	checkedReadEnabled           bool
 }
 
 func NewGateway(caller Caller, options GatewayOptions) (*Gateway, error) {
@@ -99,11 +106,16 @@ func (g *Gateway) Close() error { return g.caller.Close() }
 func (g *Gateway) Capabilities() []model.Capability {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	caps := []model.Capability{{Name: "sessionKeyboard", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && g.sessionKeyboardEnabled, Reason: "Explicit login-session keyboard route; foreground and sheet qualification required"}, {Name: "element.focus", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && g.semanticEnabled, Reason: "Explicit settable AXFocused, exact foreground identity required"}, {Name: "targetedKeyboard", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && g.targetedKeyboardEnabled, Reason: "Explicit scoped focus-bound one-key chord; not pointer/text authority"}, {Name: "observe", Surface: "native", Supported: g.axTrusted, Reason: "Scoped AX; permission-granted fixture qualification pending"}, {Name: "element.read", Surface: "native", Supported: g.axTrusted, Reason: "Metadata and explicitly permitted nonsecure value reads"}, {Name: "element.press", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.mutationEnabled || g.semanticEnabled), Reason: "External fence, helper mutation opt-in and AX permission required; receipt is not success"}, {Name: "element.fill", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.mutationEnabled || g.semanticEnabled), Reason: "External fence, helper mutation opt-in and AX permission required; receipt is not success"}, {Name: "element.submit", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.mutationEnabled || g.semanticEnabled), Reason: "Only an advertised AXConfirm action; no keyboard reinterpretation"}, {Name: "app.activate", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.mutationEnabled || g.semanticEnabled), Reason: "Explicit scoped activation with independent active identity verification"}, {Name: "app.open", Surface: "native", Supported: g.options.Lease != nil && g.launchEnabled, Reason: "Exact enrolled bundle, external fence and signed lifecycle opt-in; receipt is not business completion"}, {Name: "windowScope", Surface: "native", Supported: g.axTrusted && g.windowTitleScopeEnabled, Reason: "Exact unique window title and optional window role; complete closed AX tree required"}, {Name: "ancestorScope", Surface: "native", Supported: g.axTrusted, Reason: "Exact unique same-surface ancestor and strict descendants in a complete closed AX graph"}, {Name: "frameScope", Surface: "native", Supported: false}}
+	caps := []model.Capability{{Name: "app.quit", Surface: "native", Supported: g.options.Lease != nil && g.quitEnabled, Reason: "Normal quit of exact existing process with independently observed exit"}, {Name: "sessionKeyboard", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && g.sessionKeyboardEnabled, Reason: "Explicit login-session keyboard route; foreground and sheet qualification required"}, {Name: "element.focus", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && g.semanticEnabled, Reason: "Explicit settable AXFocused, exact foreground identity required"}, {Name: "targetedKeyboard", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && g.targetedKeyboardEnabled, Reason: "Explicit scoped focus-bound one-key chord; not pointer/text authority"}, {Name: "observe", Surface: "native", Supported: g.axTrusted, Reason: "Scoped AX; permission-granted fixture qualification pending"}, {Name: "element.read", Surface: "native", Supported: g.axTrusted, Reason: "Metadata and explicitly permitted nonsecure value reads"}, {Name: "element.press", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.mutationEnabled || g.semanticEnabled), Reason: "External fence, helper mutation opt-in and AX permission required; receipt is not success"}, {Name: "element.fill", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.mutationEnabled || g.semanticEnabled), Reason: "External fence, helper mutation opt-in and AX permission required; receipt is not success"}, {Name: "element.submit", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.mutationEnabled || g.semanticEnabled), Reason: "Only an advertised AXConfirm action; no keyboard reinterpretation"}, {Name: "app.activate", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.mutationEnabled || g.semanticEnabled), Reason: "Explicit scoped activation with independent active identity verification"}, {Name: "app.open", Surface: "native", Supported: g.options.Lease != nil && g.launchEnabled, Reason: "Exact enrolled bundle, external fence and signed lifecycle opt-in; receipt is not business completion"}, {Name: "windowScope", Surface: "native", Supported: g.axTrusted && g.windowTitleScopeEnabled, Reason: "Exact unique window title and optional window role; complete closed AX tree required"}, {Name: "ancestorScope", Surface: "native", Supported: g.axTrusted, Reason: "Exact unique same-surface ancestor and strict descendants in a complete closed AX graph"}, {Name: "frameScope", Surface: "native", Supported: false}}
+	caps = append(caps, model.Capability{Name: "indexedQuery", Surface: "native", Supported: g.axTrusted && g.windowTitleScopeEnabled, Reason: "Exact-window role nth in complete AX tree order; no all queries or new value-read authority"})
 	caps = append(caps, model.Capability{Name: "windowPosition", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.mutationEnabled || g.semanticEnabled) && g.windowPositionEnabled, Reason: "Explicit AXWindow position setter, external fence and exact readback required"})
+	caps = append(caps, model.Capability{Name: "semanticMenu", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.mutationEnabled || g.semanticEnabled) && g.semanticMenuEnabled, Reason: "Explicit advertised AXShowMenu on a menu control; no AXPress or keyboard substitution"})
+	caps = append(caps, model.Capability{Name: "checkedObservation", Surface: "native", Supported: g.axTrusted && g.checkedReadEnabled, Reason: "Exact checkbox/radio booleans; mixed or unavailable states stay unknown"})
+	caps = append(caps, model.Capability{Name: "windowSessionText", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && g.semanticEnabled && g.sessionTextEnabled && g.windowSessionTextEnabled, Reason: "Explicit bounded literal text with exact window/focus identity; result requires verification"})
 	caps = append(caps, model.Capability{Name: "windowSessionKeyboard", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.semanticEnabled || g.mutationEnabled) && g.sessionKeyboardEnabled && g.windowSessionKeyboardEnabled, Reason: "Explicit captured CGWindow login-session chord; no AX lookup or automatic success"})
 	caps = append(caps, model.Capability{Name: "windowFrameClick", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && g.semanticEnabled && g.windowFrameClickEnabled, Reason: "One-use exact captured-window frame pixels under retained qualified control; receipt is not outcome proof"})
 	caps = append(caps, model.Capability{Name: "replaceText", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.mutationEnabled || g.semanticEnabled) && g.textReplaceEnabled, Reason: "Explicit selected-text replacement, full range and readback; no AXValue fallback"}, model.Capability{Name: "valueMatches", Surface: "native", Supported: g.axTrusted && g.valueMatchesEnabled, Reason: "Private bounded literal equality proof; no plaintext value export"})
+	caps = append(caps, model.Capability{Name: "menuScope", Surface: "native", Supported: g.axTrusted && g.nativeMenuScopeEnabled, Reason: "Exact named top-level menu subtree; complete owned root and fresh ancestry required"})
 	return append(caps, model.Capability{Name: "menuBarScope", Surface: "native", Supported: g.axTrusted && g.nativeRootScopes["menuBar"], Reason: "Complete exact app-owned menu bar subtree"}, model.Capability{Name: "focusedElementScope", Surface: "native", Supported: g.axTrusted && g.nativeRootScopes["focusedElement"], Reason: "Complete exact app-owned focused element subtree, rechecked before input"})
 }
 
@@ -145,7 +157,7 @@ func (g *Gateway) call(ctx context.Context, method string, params any, lease *Le
 	if err != nil {
 		return Reply{}, err
 	}
-	reply, err := g.caller.Call(ctx, Request{ProtocolVersion: 1, RequestID: requestID(), Method: method, HelperEpoch: g.epoch, DeadlineRemainingMS: 30000, Lease: lease, Params: data})
+	reply, err := g.caller.Call(ctx, Request{PresentationSession: presentationSession(ctx), ProtocolVersion: 1, RequestID: requestID(), Method: method, HelperEpoch: g.epoch, DeadlineRemainingMS: 30000, Lease: lease, Params: data})
 	if reply.HelperEpoch != "" {
 		if g.epoch != "" && g.epoch != reply.HelperEpoch {
 			return reply, nativeError("staleEpoch", "Helper restarted; reobserve and reconcile")
@@ -173,9 +185,14 @@ func (g *Gateway) ready(ctx context.Context) error {
 			g.axTrusted = false
 			g.mutationEnabled = false
 			g.semanticEnabled = false
+			g.semanticMenuEnabled = false
 			g.targetedKeyboardEnabled = false
 			g.sessionKeyboardEnabled = false
+			g.sessionTextEnabled = false
+			g.windowSessionTextEnabled = false
 			g.launchEnabled = false
+			g.quitEnabled = false
+			g.processExitEnabled = false
 			g.nativeRootScopes = nil
 			g.windowTitleScopeEnabled = false
 			g.windowPositionEnabled = false
@@ -184,6 +201,7 @@ func (g *Gateway) ready(ctx context.Context) error {
 			g.framePermit = nil
 			g.textReplaceEnabled = false
 			g.valueMatchesEnabled = false
+			g.checkedReadEnabled = false
 		}
 	}
 	if g.epoch != "" {
@@ -197,23 +215,45 @@ func (g *Gateway) ready(ctx context.Context) error {
 			SemanticEnabled         bool     `json:"semanticEnabled"`
 			TargetedKeyboardEnabled bool     `json:"targetedKeyboardEnabled"`
 			SessionKeyboardEnabled  bool     `json:"sessionKeyboardEnabled"`
+			SessionTextEnabled      bool     `json:"sessionTextEnabled"`
 			WindowFrameClickEnabled bool     `json:"windowFrameClickEnabled"`
 			CaptureGranted          bool     `json:"captureGranted"`
 			LaunchEnabled           bool     `json:"launchEnabled"`
+			QuitEnabled             bool     `json:"quitEnabled"`
+			SupportedMethods        []string `json:"supportedMethods"`
 			NativeRootScopes        []string `json:"nativeRootScopes"`
+			NativeMenuScopeVersion  int      `json:"nativeMenuScopeVersion"`
 			NativeWindowScopes      []string `json:"nativeWindowScopes"`
 			NativeWindowActions     []string `json:"nativeWindowActions"`
+			NativeBooleanReads      []string `json:"nativeBooleanReads"`
 			NativeTextActions       []string `json:"nativeTextActions"`
 			NativeTextReads         []string `json:"nativeTextReads"`
+			NativeSemanticMenus     []string `json:"nativeSemanticMenus"`
 		}
 		err = json.Unmarshal(reply.Result, &doctor)
 		g.axTrusted = doctor.AXTrusted
+		g.nativeMenuScopeEnabled = doctor.NativeMenuScopeVersion == 1
 		g.mutationEnabled = doctor.MutationEnabled
 		g.semanticEnabled = doctor.SemanticEnabled
+		g.semanticMenuEnabled = false
+		for _, action := range doctor.NativeSemanticMenus {
+			if action == "AXShowMenu" {
+				g.semanticMenuEnabled = true
+			}
+		}
 		g.targetedKeyboardEnabled = doctor.TargetedKeyboardEnabled
 		g.sessionKeyboardEnabled = doctor.SessionKeyboardEnabled
+		g.sessionTextEnabled = doctor.SessionTextEnabled
+		g.checkedReadEnabled = false
+		for _, name := range doctor.NativeBooleanReads {
+			if name == "checked" {
+				g.checkedReadEnabled = true
+			}
+		}
 		g.windowFrameClickEnabled = doctor.WindowFrameClickEnabled && doctor.CaptureGranted
 		g.launchEnabled = doctor.LaunchEnabled
+		g.processExitEnabled = containsMethod(doctor.SupportedMethods, "app.exitStatus")
+		g.quitEnabled = doctor.QuitEnabled && containsMethod(doctor.SupportedMethods, "app.quit") && containsMethod(doctor.SupportedMethods, "app.exitStatus")
 		g.windowTitleScopeEnabled = false
 		for _, scope := range doctor.NativeWindowScopes {
 			if scope == "exactTitle" {
@@ -222,7 +262,11 @@ func (g *Gateway) ready(ctx context.Context) error {
 		}
 		g.windowPositionEnabled = false
 		g.windowSessionKeyboardEnabled = false
+		g.windowSessionTextEnabled = false
 		for _, action := range doctor.NativeWindowActions {
+			if action == "typeText" {
+				g.windowSessionTextEnabled = true
+			}
 			if action == "pressSessionKey" {
 				g.windowSessionKeyboardEnabled = true
 			}
@@ -293,6 +337,7 @@ type snapshot struct {
 	WindowScope     map[string]string `json:"windowScope"`
 	WindowRootsOnly bool              `json:"windowRootsOnly"`
 	RootScope       string            `json:"rootScope"`
+	NativeMenu      string            `json:"nativeMenu"`
 	ID              string            `json:"observationId"`
 	Generation      uint64            `json:"generation"`
 	Started         time.Time         `json:"startedAt"`
@@ -306,18 +351,28 @@ func (g *Gateway) observe(ctx context.Context, surface model.Surface) (model.Obs
 	return g.observeScoped(ctx, surface, "")
 }
 
-func (g *Gateway) observeScoped(ctx context.Context, surface model.Surface, nativeRoot string) (model.Observation, error) {
-	return g.observeSnapshot(ctx, surface, nativeRoot, false)
+func (g *Gateway) observeScoped(ctx context.Context, surface model.Surface, nativeRoot string, nativeMenu ...string) (model.Observation, error) {
+	return g.observeWindowSnapshot(ctx, surface, nativeRoot, false, nil, nativeMenu...)
 }
 func (g *Gateway) observeSnapshot(ctx context.Context, surface model.Surface, nativeRoot string, windowOnly bool) (model.Observation, error) {
 	return g.observeWindowSnapshot(ctx, surface, nativeRoot, windowOnly, nil)
 }
-func (g *Gateway) observeWindowSnapshot(ctx context.Context, surface model.Surface, nativeRoot string, windowOnly bool, windowScope map[string]string) (model.Observation, error) {
+func (g *Gateway) observeWindowSnapshot(ctx context.Context, surface model.Surface, nativeRoot string, windowOnly bool, windowScope map[string]string, nativeMenus ...string) (model.Observation, error) {
+	menu := ""
+	if len(nativeMenus) > 1 {
+		return model.Observation{}, nativeError("invalidScope", "One exact menu required")
+	}
+	if len(nativeMenus) == 1 {
+		menu = nativeMenus[0]
+	}
 	if err := g.surface(surface); err != nil {
 		return model.Observation{}, err
 	}
 	if err := g.ready(ctx); err != nil {
 		return model.Observation{}, err
+	}
+	if menu != "" && (!g.nativeMenuScopeEnabled || nativeRoot != "menuBar" || !model.ValidNativeMenuName(menu) || surface.ProcessID <= 0 || surface.ProcessStartToken == "" || windowOnly || len(windowScope) > 0) {
+		return model.Observation{}, nativeError("unsupportedScope", "Exact named-menu helper scope and process required")
 	}
 	if len(windowScope) > 0 && (!g.windowTitleScopeEnabled || nativeRoot != "" || windowOnly) {
 		return model.Observation{}, nativeError("unsupportedScope", "Exact window-root helper scope required")
@@ -372,6 +427,9 @@ func (g *Gateway) observeWindowSnapshot(ctx context.Context, surface model.Surfa
 	}
 	if nativeRoot != "" {
 		params["rootScope"] = nativeRoot
+		if menu != "" {
+			params["nativeMenu"] = menu
+		}
 	}
 	if surface.ProcessID != 0 {
 		params["processStartToken"] = surface.ProcessStartToken
@@ -407,11 +465,11 @@ func (g *Gateway) observeWindowSnapshot(ctx context.Context, surface model.Surfa
 			seen[node.Ref] = true
 		}
 	}
-	if tree.RootScope != nativeRoot {
+	if tree.RootScope != nativeRoot || tree.NativeMenu != menu {
 		return model.Observation{}, nativeError("unsupportedScope", "Native snapshot did not confirm the exact requested root scope")
 	}
 	g.sequence++
-	observation := model.Observation{WindowScope: tree.WindowScope, WindowRootsOnly: windowOnly, NativeRoot: nativeRoot, ID: tree.ID, Epoch: g.epoch, Sequence: g.sequence, Started: tree.Started, Ended: tree.Ended, Surface: surface, Truncated: tree.Truncated || !tree.Complete}
+	observation := model.Observation{WindowScope: tree.WindowScope, WindowRootsOnly: windowOnly, NativeRoot: nativeRoot, NativeMenu: menu, ID: tree.ID, Epoch: g.epoch, Sequence: g.sequence, Started: tree.Started, Ended: tree.Ended, Surface: surface, Truncated: tree.Truncated || !tree.Complete}
 	for _, node := range tree.Nodes {
 		unavailable := append([]string(nil), node.Unavailable...)
 		for _, field := range node.Truncated {
@@ -446,7 +504,7 @@ func (g *Gateway) Observe(ctx context.Context, p auth.Principal, surface model.S
 
 // ObserveNativeRoot reads only the explicitly selected app-owned semantic subtree.
 // Unsupported helper capabilities and missing scope echoes fail without broadening.
-func (g *Gateway) ObserveNativeRoot(ctx context.Context, p auth.Principal, surface model.Surface, nativeRoot string) (model.Observation, error) {
+func (g *Gateway) ObserveNativeRoot(ctx context.Context, p auth.Principal, surface model.Surface, nativeRoot string, nativeMenu ...string) (model.Observation, error) {
 	if surface.Kind != "native" || (nativeRoot != "menuBar" && nativeRoot != "focusedElement") {
 		return model.Observation{}, fmt.Errorf("supported native observation root required")
 	}
@@ -455,7 +513,7 @@ func (g *Gateway) ObserveNativeRoot(ctx context.Context, p auth.Principal, surfa
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.observeScoped(ctx, surface, nativeRoot)
+	return g.observeScoped(ctx, surface, nativeRoot, nativeMenu...)
 }
 
 // ValidateNativeWindowRequest describes the exact process/window-only read
@@ -582,6 +640,9 @@ func role(native string) string {
 	return native
 }
 func resolve(observation model.Observation, target model.Selector, values map[string]model.Value) (model.Node, error) {
+	if observation.NativeMenu != target.Scope.NativeMenu {
+		return model.Node{}, nativeError("unsupportedScope", "Observation named-menu scope does not match target")
+	}
 	if observation.Truncated {
 		return model.Node{}, nativeError("incompleteObservation", "Complete lookup required to prove uniqueness")
 	}
@@ -606,8 +667,12 @@ func resolveScopedNodes(nodes []model.Node, target model.Selector, values map[st
 	if len(target.Scope.Frame) > 0 {
 		return model.Node{}, nativeError("unsupportedScope", "Frame scope is not qualified")
 	}
-	if target.Cardinality != "one" || target.Locator == nil || !target.Locator.Exact {
+	indexed := target.Cardinality == "nth"
+	if target.Cardinality != "one" && !indexed || target.Locator == nil || !target.Locator.Exact {
 		return model.Node{}, nativeError("unsupportedLocator", "Exact strict cardinality-one locator required")
+	}
+	if indexed && (target.Index == nil || *target.Index < 0 || *target.Index > 999 || target.Order != "tree" || target.Limit != 0 || target.Locator.Strategy != "role" || len(window) == 0 || target.Scope.NativeRoot != "" || target.Surface.ProcessID <= 0 || target.Surface.ProcessStartToken == "") {
+		return model.Node{}, nativeError("unsupportedLocator", "Indexed native role requires tree order and exact window/process scope")
 	}
 	value, err := model.ResolveValue(target.Locator.Value, values)
 	if err != nil || value.Kind != model.StringValue {
@@ -681,6 +746,12 @@ func resolveScopedNodes(nodes []model.Node, target model.Selector, values map[st
 			matches = append(matches, node)
 		}
 	}
+	if indexed {
+		if *target.Index >= len(matches) {
+			return model.Node{}, nativeError("targetNotFound", "Indexed role is outside the complete observed candidate set")
+		}
+		return matches[*target.Index], nil
+	}
 	if len(matches) != 1 {
 		code := "ambiguousTarget"
 		if len(matches) == 0 {
@@ -692,7 +763,7 @@ func resolveScopedNodes(nodes []model.Node, target model.Selector, values map[st
 }
 func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step, values map[string]model.Value) (integration.StepResult, error) {
 	result := integration.StepResult{DispatchState: "notDispatched", VerificationState: "unknown"}
-	mutation := step.Action == "window.pressSessionKey" || step.Action == "element.replaceText" || step.Action == "window.moveTo" || step.Action == "element.focus" || (step.Action == "element.pressKey" || step.Action == "element.pressSessionKey") || step.Action == "element.press" || step.Action == "element.fill" || step.Action == "element.submit" || step.Action == "app.open" || step.Action == "app.activate"
+	mutation := step.Action == "window.typeText" || step.Action == "window.pressSessionKey" || step.Action == "element.replaceText" || step.Action == "window.moveTo" || step.Action == "element.focus" || (step.Action == "element.pressKey" || step.Action == "element.pressSessionKey") || step.Action == "element.press" || step.Action == "element.showMenu" || step.Action == "element.fill" || step.Action == "element.submit" || step.Action == "app.open" || step.Action == "app.activate" || step.Action == "app.quit"
 	if err := authorized(ctx, p, mutation); err != nil {
 		return result, err
 	}
@@ -731,6 +802,9 @@ func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step
 	defer cancel()
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if step.Action == "window.typeText" {
+		return g.typeWindowText(ctx, p, step, values)
+	}
 	if step.Action == "window.pressSessionKey" {
 		return g.pressWindowKey(ctx, p, step, values)
 	}
@@ -740,6 +814,9 @@ func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step
 	if step.Action == "app.open" {
 		return g.openApp(ctx, p, step)
 	}
+	if step.Action == "app.quit" {
+		return g.quitApp(ctx, p, step)
+	}
 	if step.Action == "app.activate" {
 		return g.activateApp(ctx, p, step)
 	}
@@ -747,7 +824,7 @@ func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step
 	if err != nil {
 		return result, err
 	}
-	observation, err := g.observeWindowSnapshot(ctx, step.Target.Surface, step.Target.Scope.NativeRoot, step.Action == "window.moveTo", windowScope)
+	observation, err := g.observeWindowSnapshot(ctx, step.Target.Surface, step.Target.Scope.NativeRoot, step.Action == "window.moveTo", windowScope, step.Target.Scope.NativeMenu)
 	if err != nil {
 		return result, err
 	}
@@ -769,6 +846,15 @@ func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step
 		}
 		if step.Action != "window.moveTo" && (node.Enabled == nil || !*node.Enabled) {
 			return result, nativeError("targetNotActionable", "Enabled state must be positively known")
+		}
+		if step.Action == "element.showMenu" {
+			advertised := false
+			for _, action := range node.Actions {
+				advertised = advertised || action == "AXShowMenu"
+			}
+			if !g.semanticMenuEnabled || !advertised || (node.NativeRole != "AXMenuButton" && node.NativeRole != "AXPopUpButton") || step.Target.Surface.ProcessID <= 0 || step.Target.Surface.ValidateProcessIdentity() != nil {
+				return result, nativeError("menuUnqualified", "Advertised AXShowMenu, menu control, helper support and exact process identity required")
+			}
 		}
 		if g.options.Lease == nil {
 			return result, nativeError("leaseUnavailable", "External desktop fence required")
@@ -816,6 +902,9 @@ func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step
 		}
 		if step.Action == "element.submit" {
 			method = "elements.submit"
+		}
+		if step.Action == "element.showMenu" {
+			method = "elements.showMenu"
 		}
 		if step.Action == "element.fill" || step.Action == "element.replaceText" {
 			method = "elements.setValue"
@@ -930,6 +1019,8 @@ func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step
 		switch step.Assertion.Matcher {
 		case "toBeEnabled":
 			attribute = "enabled"
+		case "toBeChecked":
+			attribute = "checked"
 		case "toHaveText":
 			attribute = "name"
 		case "toHaveValue":
@@ -941,8 +1032,8 @@ func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step
 	if attribute == "text" {
 		attribute = "name"
 	}
-	if attribute == "checked" {
-		return result, nativeError("unsupportedAttribute", "Checked state codec not qualified")
+	if attribute == "checked" && (!g.checkedReadEnabled || (node.NativeRole != "AXCheckBox" && node.NativeRole != "AXRadioButton")) {
+		return result, nativeError("unsupportedAttribute", "Qualified checkbox or radio state required")
 	}
 	if attribute == "value" {
 		if !g.values[step.Target.Surface.BundleID][node.Identifier] {
@@ -974,9 +1065,16 @@ func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step
 		return result, nativeError("attributeUnavailable", "Requested attribute unavailable")
 	}
 	var value model.Value
-	if attribute == "enabled" || attribute == "focused" {
+	if attribute == "enabled" || attribute == "focused" || attribute == "checked" {
 		value.Kind = model.BoolValue
-		err = json.Unmarshal(raw, &value.Bool)
+		var boolean *bool
+		err = json.Unmarshal(raw, &boolean)
+		if err == nil && boolean == nil {
+			return result, nativeError("attributeUnavailable", "Boolean attribute unavailable")
+		}
+		if boolean != nil {
+			value.Bool = *boolean
+		}
 	} else {
 		value.Kind = model.StringValue
 		err = json.Unmarshal(raw, &value.String)

@@ -6,13 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/viant/mechanize/auth/nativepeer"
@@ -95,18 +95,18 @@ func loadConfig(path, origin string) (*Config, error) {
 func Bridge(chromeReader io.Reader, chromeWriter io.Writer, broker net.Conn, config *Config, credential string) error {
 	trustScope, err := configuredTrustScope(config)
 	if err != nil {
-		return err
+		return atStartup("configUnavailable", err)
 	}
 	if !config.FixtureEnrollment && (!config.processQualified || trustScope == "profile" && (!config.profileQualified || config.ProfileDirectory == "")) {
-		return errors.New("production process/channel proof required before bridge")
+		return atStartup("processTrustUnavailable", errors.New("production process/channel proof required before bridge"))
 	}
 	message, err := ReadFrame(chromeReader)
 	if err != nil {
-		return err
+		return atStartup("helloIdentityMismatch", err)
 	}
 	var hello map[string]json.RawMessage
 	if err = json.Unmarshal(message, &hello); err != nil {
-		return errors.New("invalid hello")
+		return atStartup("helloIdentityMismatch", errors.New("invalid hello"))
 	}
 	var kind, profile, instance string
 	var version int
@@ -115,7 +115,7 @@ func Bridge(chromeReader io.Reader, chromeWriter io.Writer, broker net.Conn, con
 	_ = json.Unmarshal(hello["browserInstance"], &instance)
 	_ = json.Unmarshal(hello["protocolVersion"], &version)
 	if kind != "hello" || version != 1 || profile != config.ProfileChannel || instance != config.BrowserInstance || credential == "" {
-		return errors.New("channel identity mismatch")
+		return atStartup("helloIdentityMismatch", errors.New("channel identity mismatch"))
 	}
 	// Host-owned fields override untrusted extension payload values.
 	hello["credential"], _ = json.Marshal(credential)
@@ -126,25 +126,27 @@ func Bridge(chromeReader io.Reader, chromeWriter io.Writer, broker net.Conn, con
 	hello["profileLaunchQualified"], _ = json.Marshal(!config.FixtureEnrollment && trustScope == "profile" && config.profileQualified)
 	message, err = json.Marshal(hello)
 	if err != nil {
-		return err
+		return atStartup("helloIdentityMismatch", err)
 	}
 	if err = WriteFrame(broker, message); err != nil {
-		return err
+		return atStartup("brokerUnavailable", err)
 	}
 	completed := make(chan error, 2)
-	copyFrames := func(reader io.Reader, writer io.Writer) {
-		count := 0
-		totalBytes := 0
+	brokerReaderDone := make(chan struct{})
+	var commandForwarded, bridgeClosing atomic.Bool
+	copyFrames := func(reader io.Reader, writer io.Writer, fromBroker bool) {
+		if fromBroker {
+			defer close(brokerReaderDone)
+		}
+		first := true
 		for {
 			frame, e := ReadFrame(reader)
 			if e != nil {
+				if fromBroker && first && !commandForwarded.Load() && !bridgeClosing.Load() {
+					_ = writeBrokerStartupDiagnostic(writer, "brokerHandshakeUnavailable")
+					e = &brokerStartupFailure{code: "brokerHandshakeUnavailable"}
+				}
 				completed <- e
-				return
-			}
-			count++
-			totalBytes += len(frame)
-			if count > 65536 || totalBytes > 64*1024*1024 {
-				completed <- errors.New("channel frame quota exhausted")
 				return
 			}
 			var payload map[string]json.RawMessage
@@ -152,10 +154,26 @@ func Bridge(chromeReader io.Reader, chromeWriter io.Writer, broker net.Conn, con
 				completed <- errors.New("object frame required")
 				return
 			}
+			var frameType string
+			_ = json.Unmarshal(payload["type"], &frameType)
+			if fromBroker && frameType == "nativeHostError" {
+				var failure error = errors.New("broker startup rejected")
+				if first && !commandForwarded.Load() {
+					code := decodeBrokerStartupDiagnostic(frame)
+					_ = writeBrokerStartupDiagnostic(writer, code)
+					failure = &brokerStartupFailure{code: code}
+				}
+				completed <- failure
+				return
+			}
+			first = false
 			// Enrollment credentials appear only in the one host-originated hello.
 			if _, exists := payload["credential"]; exists {
 				completed <- errors.New("credential field forbidden after enrollment")
 				return
+			}
+			if !fromBroker {
+				commandForwarded.Store(true)
 			}
 			if e = WriteFrame(writer, frame); e != nil {
 				completed <- e
@@ -163,27 +181,34 @@ func Bridge(chromeReader io.Reader, chromeWriter io.Writer, broker net.Conn, con
 			}
 		}
 	}
-	go copyFrames(chromeReader, broker)
-	go copyFrames(broker, chromeWriter)
+	go copyFrames(chromeReader, broker, false)
+	go copyFrames(broker, chromeWriter, true)
 	err = <-completed
+	bridgeClosing.Store(true)
 	_ = broker.Close()
-	return err
+	select {
+	case <-brokerReaderDone:
+	case <-time.After(250 * time.Millisecond):
+		// A blocked Chrome output pipe must not prevent host exit. Forwarding
+		// failures report only stderr, never a competing stdout frame.
+	}
+	return &nativeForwardingFailure{cause: err}
 }
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("Chrome extension origin argument required")
+		return atStartup("configUnavailable", errors.New("Chrome extension origin argument required"))
 	}
 	path, err := defaultConfigPath()
 	if err != nil {
-		return err
+		return atStartup("configUnavailable", err)
 	}
 	if fixturePath := os.Getenv("MECHANIZE_NATIVE_HOST_CONFIG"); fixturePath != "" {
 		path = fixturePath
 	}
 	config, err := loadConfig(path, os.Args[1])
 	if err != nil {
-		return err
+		return atStartup("configUnavailable", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -191,25 +216,25 @@ func run() error {
 	// loaded until the actual reverse Unix peer is independently authenticated.
 	evidence, err := verifyHostProcess(ctx, config)
 	if err != nil {
-		return err
+		return atStartup(processStartupCode(err), err)
 	}
 	if err := qualifyLaunchScope(config, evidence, os.Args); err != nil {
-		return err
+		return atStartup("launchScopeUnavailable", err)
 	}
 	if config.FixtureEnrollment {
 		info, err := os.Lstat(config.SocketPath)
 		if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm()&0077 != 0 {
-			return errors.New("fixture broker socket must be private")
+			return atStartup("socketUnavailable", errors.New("fixture broker socket must be private"))
 		}
 	} else if err = validateBrokerSocket(config.SocketPath, config.ProcessTrust.ExpectedUID); err != nil {
-		return err
+		return atStartup("socketUnavailable", err)
 	}
 	broker, err := net.DialTimeout("unix", config.SocketPath, 5*time.Second)
 	if err != nil {
-		return errors.New("broker unavailable")
+		return atStartup("brokerUnavailable", err)
 	}
 	defer broker.Close()
-	credential, err := authenticatedCredential(ctx, config, broker, verifyHostProcess, verifyBrokerPeer, func() (string, error) {
+	credential, err := startupAuthenticatedCredential(ctx, config, broker, verifyHostProcess, verifyBrokerPeer, func() (string, error) {
 		secret, err := scy.New().Load(ctx, &config.CredentialResource)
 		if err != nil {
 			return "", errors.New("Scy enrollment credential unavailable")
@@ -227,8 +252,7 @@ func run() error {
 }
 
 func main() {
-	if err := run(); err != nil && !errors.Is(err, io.EOF) {
-		fmt.Fprintln(os.Stderr, "Mechanize native transport:", err)
+	if reportNativeFailure(run(), os.Stdout, os.Stderr) {
 		os.Exit(1)
 	}
 }

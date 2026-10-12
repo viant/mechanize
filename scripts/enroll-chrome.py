@@ -4,6 +4,8 @@ No restart, browser input, credential output, or default/MAC key selection.
 """
 import argparse
 import copy
+import contextlib
+import importlib.util
 import hashlib
 import json
 import os
@@ -18,6 +20,9 @@ import traceback
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
+lock_spec = importlib.util.spec_from_file_location('chrome_enrollment_lock', ROOT / 'scripts/upgrade-console.py')
+update_lock = importlib.util.module_from_spec(lock_spec)
+lock_spec.loader.exec_module(update_lock)
 HOST_NAME = 'com.viant.mechanize'
 CHROME_VENDOR_REQUIREMENT = ('identifier "com.google.Chrome" and anchor apple generic '
                              'and certificate leaf[subject.OU] = "EQHXZ8M8AV"')
@@ -565,6 +570,11 @@ def self_test():
 
 
 def main():
+    with contextlib.ExitStack() as cleanup:
+        return perform(cleanup)
+
+
+def perform(cleanup):
     if sys.argv[1:] == ["--self-test"]:
         self_test()
         return
@@ -585,6 +595,8 @@ def main():
         raise ValueError('actual Chrome-reported extension ID required')
     os.umask(0o077)
     installation = owned(args.installation, directory=True, private=True)
+    if args.apply:
+        cleanup.enter_context(update_lock.runtime_lock(installation))
     config_path = installation / 'config.json'
     original = read(config_path)
     config = json.loads(original)

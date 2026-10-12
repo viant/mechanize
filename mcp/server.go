@@ -10,6 +10,9 @@ import (
 	"io"
 
 	"github.com/viant/jsonrpc"
+	"github.com/viant/jsonrpc/transport"
+	"github.com/viant/mcp-protocol/client"
+	"github.com/viant/mcp-protocol/logger"
 	"github.com/viant/mcp-protocol/schema"
 	protocol "github.com/viant/mcp-protocol/server"
 	server "github.com/viant/mcp/server"
@@ -27,7 +30,7 @@ import (
 )
 
 type ObserveNativeWindow func(context.Context, auth.Principal, model.Surface, string, string) (model.Observation, error)
-type ObserveNativeRoot func(context.Context, auth.Principal, model.Surface, string) (model.Observation, error)
+type ObserveNativeRoot func(context.Context, auth.Principal, model.Surface, string, ...string) (model.Observation, error)
 type Observe func(context.Context, auth.Principal, model.Surface) (model.Observation, error)
 type Policy func(context.Context, auth.Principal) (script.Policy, error)
 type StateGet func(context.Context, auth.Principal, string) (durable.State, error)
@@ -38,27 +41,39 @@ type CaptureWindow func(context.Context, auth.Principal, model.Surface, int32, u
 type CaptureWindows func(context.Context, auth.Principal, model.Surface, int) (native.CaptureWindowList, error)
 type CaptureWindowFrame func(context.Context, auth.Principal, model.Surface, int32, uint32) (data.ArtifactReference, data.ArtifactReference, native.WindowFrameCapture, error)
 type Dependencies struct {
-	BrowserStatus       BrowserStatus
-	StateStopBoundary   func(context.Context, auth.Principal, durable.StopBoundaryRequest) (durable.StopBoundaryResult, error)
-	EffectReconcile     func(context.Context, auth.Principal, durable.EffectReconcileRequest) (durable.EffectReconcileResult, error)
-	Recovery            *repairs.Service
-	Scenarios           *scenarios.Service
-	CaptureWindow       CaptureWindow
-	CaptureWindows      CaptureWindows
-	CaptureWindowFrame  CaptureWindowFrame
-	StateResume         StateResume
-	PermissionRequest   ConsentRequest
-	PermissionStatus    ConsentStatus
-	Recording           *recording.Service
-	StatePause          StatePause
-	StateGet            StateGet
-	StatePatch          StatePatch
-	Runtime             *automation.Runtime
-	ObserveNativeWindow ObserveNativeWindow
-	ObserveNativeRoot   ObserveNativeRoot
-	Observe             Observe
-	Policy              Policy
-	Version             string
+	BrowserActivateTab        BrowserActivateTab
+	BrowserTabLocationMatches BrowserTabLocationMatches
+	BrowserOpenOrigin         BrowserOpenOrigin
+	LocalSkills               LocalSkillSource
+	CredentialPrepare         CredentialPrepare
+	CredentialApply           CredentialOperation
+	CredentialSubmit          CredentialOperation
+	CredentialStatus          CredentialOperation
+	CredentialRecover         CredentialRecover
+	CredentialResumeManual    CredentialOperation
+	BrowserLocationMatches    BrowserLocationMatches
+	BrowserTabs               BrowserTabs
+	BrowserStatus             BrowserStatus
+	StateStopBoundary         func(context.Context, auth.Principal, durable.StopBoundaryRequest) (durable.StopBoundaryResult, error)
+	EffectReconcile           func(context.Context, auth.Principal, durable.EffectReconcileRequest) (durable.EffectReconcileResult, error)
+	Recovery                  *repairs.Service
+	Scenarios                 *scenarios.Service
+	CaptureWindow             CaptureWindow
+	CaptureWindows            CaptureWindows
+	CaptureWindowFrame        CaptureWindowFrame
+	StateResume               StateResume
+	PermissionRequest         ConsentRequest
+	PermissionStatus          ConsentStatus
+	Recording                 *recording.Service
+	StatePause                StatePause
+	StateGet                  StateGet
+	StatePatch                StatePatch
+	Runtime                   *automation.Runtime
+	ObserveNativeWindow       ObserveNativeWindow
+	ObserveNativeRoot         ObserveNativeRoot
+	Observe                   Observe
+	Policy                    Policy
+	Version                   string
 }
 type Empty struct{}
 type SessionInput struct {
@@ -105,6 +120,7 @@ func (s *ObserveWindowScope) UnmarshalJSON(raw []byte) error {
 }
 
 type ObserveInput struct {
+	NativeMenu  string              `json:"nativeMenu,omitempty" description:"Exact unique top-level menu name; requires nativeRoot menuBar and exact native process identity. Bounds observation to this menu subtree."`
 	WindowScope *ObserveWindowScope `json:"windowScope,omitempty" description:"Exact native window subtree; requires PID/birth identity and never falls back to whole-app state."`
 	NativeRoot  string              `json:"nativeRoot,omitempty" choice:"menuBar" choice:"focusedElement" description:"Explicit app-owned native subtree; requires helper support and never falls back to the whole app."`
 	SessionID   string              `json:"sessionId,omitempty"`
@@ -112,12 +128,35 @@ type ObserveInput struct {
 	Purpose     string              `json:"purpose,omitempty"`
 	Surface     model.Surface       `json:"surface"`
 }
+
+// Unknown fields must never silently broaden an intended observation scope.
+func (s *ObserveInput) UnmarshalJSON(raw []byte) error {
+	type plain ObserveInput
+	var parsed plain
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&parsed) != nil || decoder.Decode(new(any)) != io.EOF {
+		return errors.New("invalid observe arguments: use windowScope for an exact native window; nativeWindow is unsupported")
+	}
+	*s = ObserveInput(parsed)
+	return nil
+}
+
 type Validation struct {
 	Valid       bool        `json:"valid"`
 	Plan        *model.Plan `json:"plan"`
 	Explanation string      `json:"explanation"`
 }
+
+// ControllerContext identifies the authenticated page hosting this connection.
+// It is routing metadata, not a tool grant or an inferred task target.
+type ControllerContext struct {
+	Kind   string `json:"kind"`
+	Origin string `json:"origin"`
+}
+
 type Discovery struct {
+	ControllerContext   *ControllerContext  `json:"controllerContext,omitempty"`
 	SchemaVersion       int                 `json:"schemaVersion"`
 	Methods             []script.Definition `json:"methods"`
 	Capabilities        map[string]bool     `json:"capabilities"`
@@ -127,20 +166,25 @@ type Discovery struct {
 	WorkflowSchema      map[string]any      `json:"workflowSchema,omitempty"`
 }
 type Operation struct {
-	RunID              string            `json:"runId,omitempty"`
-	ID                 string            `json:"operationId"`
-	SessionID          string            `json:"sessionId"`
-	ExecutionStatus    string            `json:"executionStatus"`
-	BusinessStatus     string            `json:"businessStatus"`
-	VerificationState  string            `json:"verificationState"`
-	Objective          *objective.Result `json:"objective,omitempty"`
-	VerificationReason string            `json:"verificationReason,omitempty"`
-	Error              string            `json:"error,omitempty"`
+	ExecutionFailure   *automation.ExecutionFailure `json:"executionFailure,omitempty"`
+	RunID              string                       `json:"runId,omitempty"`
+	ID                 string                       `json:"operationId"`
+	SessionID          string                       `json:"sessionId"`
+	ExecutionStatus    string                       `json:"executionStatus"`
+	BusinessStatus     string                       `json:"businessStatus"`
+	VerificationState  string                       `json:"verificationState"`
+	Objective          *objective.Result            `json:"objective,omitempty"`
+	VerificationReason string                       `json:"verificationReason,omitempty"`
+	Error              string                       `json:"error,omitempty"`
 }
 
 // Execution completion and business completion have separate evidence. A
 // pending or unavailable durable verification must never inherit UI success.
 func operationResult(ctx context.Context, runtime *automation.Runtime, operation Operation) (*schema.CallToolResult, *jsonrpc.Error) {
+	if failure, err := runtime.ExecutionFailure(ctx, operation.SessionID, operation.ID); err == nil && failure != nil {
+		operation.ExecutionFailure = failure
+		operation.Error = "" // Never duplicate typed diagnostics as unbounded executor text.
+	}
 	verified, err := runtime.Result(ctx, operation.SessionID, operation.ID)
 	if err != nil {
 		operation.BusinessStatus = "unverified"
@@ -162,7 +206,17 @@ func New(deps Dependencies) (*server.Server, error) {
 	if deps.Version == "" {
 		deps.Version = "0.1.0-dev"
 	}
-	handler := protocol.WithDefaultHandler(context.Background(), func(base *protocol.DefaultHandler) error { return register(base, deps) })
+	handler := func(ctx context.Context, notifier transport.Notifier, log logger.Logger, c client.Operations) (protocol.Handler, error) {
+		base := protocol.NewDefaultHandler(notifier, log, c)
+		if err := register(base, deps); err != nil {
+			return nil, err
+		}
+		catalog, err := registerSkills(base, deps.LocalSkills)
+		if err != nil {
+			return nil, err
+		}
+		return &localSkillsHandler{DefaultHandler: base, catalog: catalog}, nil
+	}
 	return server.New(server.WithImplementation(schema.Implementation{Name: "mechanize", Version: deps.Version}), server.WithNewHandler(handler), server.WithStreamableURI("/mcp"), server.WithRequestContext(func(ctx context.Context) (context.Context, error) {
 		if _, err := auth.FromContext(ctx); err != nil {
 			return nil, err
@@ -196,6 +250,24 @@ func failure(err error) (*schema.CallToolResult, *jsonrpc.Error) {
 	return &schema.CallToolResult{IsError: &yes, Content: []schema.CallToolResultContentElem{schema.TextContent{Type: "text", Text: string(encoded)}}, StructuredContent: body}, nil
 }
 func register(base *protocol.DefaultHandler, d Dependencies) error {
+	if err := registerBrowserActivateTab(base, d); err != nil {
+		return err
+	}
+	if err := registerBrowserTabLocationMatches(base, d); err != nil {
+		return err
+	}
+	if err := registerBrowserOpenOrigin(base, d); err != nil {
+		return err
+	}
+	if err := registerBrowserLocationMatches(base, d); err != nil {
+		return err
+	}
+	if err := registerBrowserTabs(base, d); err != nil {
+		return err
+	}
+	if err := registerCredentials(base, d); err != nil {
+		return err
+	}
 	if err := registerBrowserStatus(base, d.BrowserStatus); err != nil {
 		return err
 	}
@@ -233,9 +305,6 @@ func register(base *protocol.DefaultHandler, d Dependencies) error {
 		return err
 	}
 	if err := registerResume(base, d); err != nil {
-		return err
-	}
-	if err := registerSkills(base); err != nil {
 		return err
 	}
 	if err := protocol.RegisterTool[*Empty, *Discovery](base.Registry, "mechanize_capabilities", "Discover supported surfaces and shared macOS/Chrome methods. Inspect before selecting an action.", func(ctx context.Context, _ *Empty) (*schema.CallToolResult, *jsonrpc.Error) {
@@ -407,6 +476,9 @@ func registerObserve(base *protocol.DefaultHandler, d Dependencies) error {
 		default:
 			return failure(fmt.Errorf("surface outside authorized scope"))
 		}
+		if input.NativeMenu != "" && (input.NativeRoot != "menuBar" || !model.ValidNativeMenuName(input.NativeMenu) || input.Surface.ProcessID <= 0 || input.Surface.ProcessStartToken == "") {
+			return failure(errors.New("exact named menu and process required"))
+		}
 		if input.NativeRoot != "" && (input.Surface.Kind != "native" || (input.NativeRoot != "menuBar" && input.NativeRoot != "focusedElement")) {
 			return failure(errors.New("supported native observation root required"))
 		}
@@ -429,7 +501,7 @@ func registerObserve(base *protocol.DefaultHandler, d Dependencies) error {
 			if d.ObserveNativeRoot == nil {
 				return failure(errors.New("scoped native observation unavailable"))
 			}
-			observed, err = d.ObserveNativeRoot(ctx, p, input.Surface, input.NativeRoot)
+			observed, err = d.ObserveNativeRoot(ctx, p, input.Surface, input.NativeRoot, input.NativeMenu)
 		} else {
 			if d.Observe == nil {
 				return failure(errors.New("observation unavailable"))
@@ -443,10 +515,10 @@ func registerObserve(base *protocol.DefaultHandler, d Dependencies) error {
 			if err := native.ValidateNativeWindowObservation(observed, input.Surface, input.WindowScope.Title, input.WindowScope.Role); err != nil {
 				return failure(err)
 			}
-		} else if input.Surface.Kind == "native" && (observed.NativeRoot != input.NativeRoot || len(observed.WindowScope) != 0 || observed.WindowRootsOnly) {
+		} else if input.Surface.Kind == "native" && (observed.NativeRoot != input.NativeRoot || observed.NativeMenu != input.NativeMenu || len(observed.WindowScope) != 0 || observed.WindowRootsOnly) {
 			return failure(errors.New("native observation root does not match request"))
 		}
-		if input.NativeRoot != "" && (observed.NativeRoot != input.NativeRoot || observed.Surface != input.Surface) {
+		if input.NativeRoot != "" && (observed.NativeRoot != input.NativeRoot || observed.NativeMenu != input.NativeMenu || observed.Surface != input.Surface) {
 			return failure(errors.New("scoped native observation identity mismatch"))
 		}
 		return result(observed)

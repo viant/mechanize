@@ -13,6 +13,7 @@ import (
 	"github.com/viant/mechanize/model"
 	"github.com/viant/mechanize/script"
 	"github.com/viant/mechanize/session"
+	"github.com/viant/mechanize/vault"
 )
 
 // HostOptions carries trusted deployment providers, never client JSON claims.
@@ -28,6 +29,13 @@ type HostOptions struct {
 	NativeControl        *NativeControlOptions
 	NativeRecording      *NativeRecordingOptions
 	WebControl           *WebControlOptions
+	// NativeVaultInput is a trusted preprovisioned encrypted store plus qualified
+	// native entry protection. It cannot come from configuration JSON or MCP.
+	// The embedding provider owns the store and must retain it until host shutdown.
+	NativeVaultInput    *vault.NativeInputService
+	NativeVaultEntry    *vault.NativeEntryController
+	NativeVaultKeySetup *vault.NativeKeySetup
+	NativeVaultRecords  *vault.NativeRecordInputService
 	// Independent bounded budget for generated consent cleanup transitions after
 	// the physical stop finishes. This option carries no dispatch authority.
 	NativeCleanupPersistenceTimeout time.Duration
@@ -65,6 +73,9 @@ func (h *Host) configureNativeControl(ctx context.Context, c Config, options Hos
 	// separately configured value policy. A union of different users' identifiers
 	// must never expand a controlled helper's per-user authority.
 	o.AllowedValueIdentifiers = nil
+	// The observation client is initialized later during Host construction.
+	// Bind the method now; it resolves the authenticated client at proof time.
+	o.ReleasedInputProof = h.proveReleasedNativeInput
 	var err error
 	h.nativeControl, err = NewNativeControlManager(o)
 	return err
@@ -92,6 +103,8 @@ func (h *Host) controlLeaseEpoch(ctx context.Context, p auth.Principal) (int, er
 }
 
 func (h *Host) nativeControlPolicy(ctx context.Context, p auth.Principal, caps map[string]bool) bool {
+	tabActivation := caps["web:browser.activateTab"] && p.HasScope("desktop:control")
+	originOpening := caps["web:browser.openOrigin"] && p.HasScope("desktop:control")
 	// A native grant cannot qualify a renderer or browser executor generation.
 	for _, action := range model.Actions() {
 		if !action.ReadOnly {
@@ -101,7 +114,13 @@ func (h *Host) nativeControlPolicy(ctx context.Context, p auth.Principal, caps m
 	for _, name := range []string{"element.press", "element.fill", "browser.navigate", "browser.activate", "semanticPress", "replaceValue", "navigation", "tabActivation"} {
 		delete(caps, "web:"+name)
 	}
-	webMutation := false
+	webMutation := originOpening || tabActivation
+	if tabActivation {
+		caps["web:browser.activateTab"] = true
+	}
+	if originOpening {
+		caps["web:browser.openOrigin"] = true
+	}
 	if h.webControl != nil && p.HasScope("desktop:control") {
 		// Renderer authority has its own signed-channel/document admission. A
 		// native lease neither qualifies nor suppresses a qualified web route.
@@ -119,6 +138,9 @@ func (h *Host) nativeControlPolicy(ctx context.Context, p auth.Principal, caps m
 		return webMutation
 	}
 	caps["native:appLaunch"] = true
+	if h.nativeControl.options.SessionText {
+		caps["native:windowSessionText"] = true
+	}
 	if h.nativeControl.options.SessionKeyboard {
 		caps["native:sessionKeyboard"] = true
 	}
@@ -133,7 +155,7 @@ func (h *Host) nativeControlPolicy(ctx context.Context, p auth.Principal, caps m
 	}
 	// These capabilities describe the narrow qualified route. Exact human grant
 	// authorization is still required for every individual dispatch.
-	for _, name := range []string{"boundedObservation", "roleLocator", "idLocator", "nameLocator", "windowScope", "ancestorScope", "attributeRead", "appActivation", "semanticPress", "replaceValue", "semanticSubmit", "targetedFocus"} {
+	for _, name := range []string{"boundedObservation", "roleLocator", "idLocator", "nameLocator", "windowScope", "ancestorScope", "attributeRead", "appActivation", "appQuit", "semanticPress", "replaceValue", "semanticSubmit", "targetedFocus"} {
 		caps["native:"+name] = true
 	}
 	return true
@@ -169,7 +191,7 @@ func (h *Host) executeNativeControl(ctx context.Context, p auth.Principal, step 
 			defer finish()
 		}
 	} else {
-		lease, err = h.AuthorizeOperation(ctx, p, step.Target.Surface, true, consent.Control)
+		lease, err = h.authorizeNativeControlStep(ctx, p, step)
 	}
 	if err != nil {
 		return result, err
@@ -191,7 +213,10 @@ func (h *Host) executeNativeControl(ctx context.Context, p auth.Principal, step 
 		if timeout == 0 {
 			timeout = defaultNativeCleanupPersistenceTimeout
 		}
-		metadataCtx, metadataCancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+		// The admitted lease carries the resolved reusable GrantID. The outer
+		// caller binding may intentionally omit it; cancellation must not lose
+		// that verified binding when persisting cleanup uncertainty.
+		metadataCtx, metadataCancel := context.WithTimeout(context.WithoutCancel(lease.Context), timeout)
 		metadataErr := h.markControlCleanupUnknown(metadataCtx, p)
 		metadataCancel()
 		cleanupErr = errors.Join(cleanupErr, ErrNativeControlCleanupUnknown, metadataErr)

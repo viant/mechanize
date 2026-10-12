@@ -18,6 +18,28 @@ type ConsentRequestInput struct {
 	Purpose         string         `json:"purpose"`
 	DurationSeconds int            `json:"durationSeconds"`
 }
+
+// Scope kinds describe consent boundaries, not model.Surface kinds.
+func consentArgumentValidation(in *ConsentRequestInput) error {
+	switch in.Scope.Kind {
+	case "origin", "application", "window", "browser", "desktop":
+	default:
+		return controllerArgumentError("invalidScopeKind")
+	}
+	if in.Scope.Validate() != nil {
+		return controllerArgumentError("invalidConsentScope")
+	}
+	if len(in.Modes) == 0 {
+		return controllerArgumentError("unsupportedMode")
+	}
+	for _, mode := range in.Modes {
+		if mode != consent.Observe && mode != consent.Control && mode != consent.Record {
+			return controllerArgumentError("unsupportedMode")
+		}
+	}
+	return nil
+}
+
 type PermissionRequired struct {
 	Code          string `json:"code"`
 	RequestID     string `json:"requestID"`
@@ -33,6 +55,9 @@ func RegisterConsent(base *protocol.DefaultHandler, request ConsentRequest) erro
 	return protocol.RegisterTool[*ConsentRequestInput, *PermissionRequired](base.Registry, "mechanize_permission_request", "Request bounded consent from the verified human console. Returns permissionRequired and requestID; submission does not grant permission or dispatch an action.", func(ctx context.Context, in *ConsentRequestInput) (*schema.CallToolResult, *jsonrpc.Error) {
 		if in == nil || in.SessionID == "" {
 			return failure(errors.New("owned session and consent scope required"))
+		}
+		if err := consentArgumentValidation(in); err != nil {
+			return closedBrowserFailure(string(err.(controllerArgumentError)))
 		}
 		p, e := auth.FromContext(ctx)
 		if e != nil {

@@ -1,0 +1,100 @@
+# Run once after a complete fresh observation proves one Create button and no
+# existing window with expectedWindowTitle. Do not retry an uncertain submission.
+# Control/observe consent must match purpose. Source IDs come from this session.
+init:
+- name: endpoint
+  from: endpoint
+  required: true
+- name: credentialResource
+  from: credentialResource
+  required: true
+- name: sessionId
+  from: sessionId
+  required: true
+- name: purpose
+  from: purpose
+  required: true
+- name: requestId
+  from: requestId
+  required: true
+- name: officePid
+  from: officePid
+  required: true
+- name: officeBirth
+  from: officeBirth
+  required: true
+- name: expectedWindowTitle
+  from: expectedWindowTitle
+  required: true
+- name: resultPredicate
+  value:
+    kind: adapter
+    adapter: native
+    name: valueEquals
+    scope: {surfaceRef: office}
+    timeoutMs: 10000
+    freshnessMs: 1000
+    requiredAuthority: observational
+    inputs:
+      bundleID: {kind: string, string: com.microsoft.Excel}
+      processId: {kind: number, number: $AsInt($officePid)}
+      processStartToken: {kind: string, string: $officeBirth}
+      strategy: {kind: string, string: role}
+      selector: {kind: string, string: window}
+      name: {kind: string, string: $expectedWindowTitle}
+      attribute: {kind: string, string: name}
+      expected: {kind: string, string: $expectedWindowTitle}
+- name: createPlan
+  value:
+    schemaVersion: 1
+    name: Create one disposable Excel workbook
+    surfaces:
+      office:
+        kind: native
+        bundleId: com.microsoft.Excel
+        processId: $AsInt($officePid)
+        processStartToken: $officeBirth
+    requires:
+      adapters: [native]
+    steps:
+    - id: activate
+      command: office.activate()
+      effect:
+        businessKey:
+          task: {kind: string, string: excel-create-activation}
+          request: {kind: string, string: $requestId}
+    - id: create-workbook
+      command: 'office.getByRole("button", name: "Create", exact: true).click()'
+      timeoutMs: 15000
+      effect:
+        businessKey:
+          task: {kind: string, string: excel-create-workbook}
+          request: {kind: string, string: $requestId}
+          workbook: {kind: string, string: $expectedWindowTitle}
+        reconcile: $resultPredicate
+      postcondition: $resultPredicate
+- name: createSource
+  value: $AsJSON($createPlan)
+pipeline:
+  validate:
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    name: mechanize_script_validate
+    arguments:
+      format: json
+      source: $createSource
+  submit:
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $credentialResource
+    name: mechanize_script_run
+    arguments:
+      sessionId: $sessionId
+      purpose: $purpose
+      clientRequestId: $requestId
+      format: json
+      source: $createSource
+    post:
+      operationId: $StructuredContent.operationId
+      runId: $StructuredContent.runId

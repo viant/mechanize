@@ -31,7 +31,7 @@ func launchHostOptions(c Config) (HostOptions, error) {
 	}
 	uid := *enrollment.ExpectedUID
 	trust := nativepeer.Options{ExpectedUID: uid, DesignatedRequirement: enrollment.HelperRequirement}
-	options := &NativeControlOptions{HelperPath: c.NativeHelper, LockPath: enrollment.LockPath, HelperRequirement: enrollment.HelperRequirement, ExpectedUID: &uid, LaunchOnly: c.NativeLaunch.Mode != "semantic", SemanticOnly: c.NativeLaunch.Mode == "semantic", TargetedKeyboard: enrollment.TargetedKeyboard, SessionKeyboard: enrollment.SessionKeyboard, WindowFrameClick: enrollment.WindowFrameClick}
+	options := &NativeControlOptions{ConsoleLaunch: c.consoleHelperLaunch(), HelperPath: c.NativeHelper, LockPath: enrollment.LockPath, HelperRequirement: enrollment.HelperRequirement, ExpectedUID: &uid, LaunchOnly: c.NativeLaunch.Mode != "semantic", SemanticOnly: c.NativeLaunch.Mode == "semantic", TargetedKeyboard: enrollment.TargetedKeyboard, SessionKeyboard: enrollment.SessionKeyboard, SessionText: enrollment.SessionText, WindowFrameClick: enrollment.WindowFrameClick}
 	options.VerifyExecutable = func(ctx context.Context, path string) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -73,6 +73,7 @@ func launchHostOptions(c Config) (HostOptions, error) {
 			BrokerIdentityAuthenticated bool  `json:"brokerIdentityAuthenticated"`
 			LaunchEnabled               bool  `json:"launchEnabled"`
 			SessionKeyboardEnabled      bool  `json:"sessionKeyboardEnabled"`
+			SessionTextEnabled          bool  `json:"sessionTextEnabled"`
 			WindowFrameClickEnabled     bool  `json:"windowFrameClickEnabled"`
 			CaptureGranted              bool  `json:"captureGranted"`
 			TargetedKeyboardEnabled     bool  `json:"targetedKeyboardEnabled"`
@@ -98,6 +99,9 @@ func launchHostOptions(c Config) (HostOptions, error) {
 			if enrollment.WindowFrameClick && (!doctor.WindowFrameClickEnabled || !doctor.CaptureGranted || !doctor.EventPostGranted) {
 				return NativeControlReadiness{}, ErrNativeControlUnqualified
 			}
+			if enrollment.SessionText && (!doctor.SessionTextEnabled || !doctor.EventPostGranted) {
+				return NativeControlReadiness{}, ErrNativeControlUnqualified
+			}
 			if (enrollment.TargetedKeyboard && !doctor.TargetedKeyboardEnabled || enrollment.SessionKeyboard && !doctor.SessionKeyboardEnabled) || (enrollment.TargetedKeyboard || enrollment.SessionKeyboard) && !doctor.EventPostGranted {
 				return NativeControlReadiness{}, ErrNativeControlUnqualified
 			}
@@ -107,7 +111,14 @@ func launchHostOptions(c Config) (HostOptions, error) {
 		} else if !doctor.LaunchEnabled {
 			return NativeControlReadiness{}, ErrNativeControlUnqualified
 		}
-		return NativeControlReadiness{AllApplicationsQualified: len(bundles) == 0 && desktopUsers[p.Namespace], TargetedKeyboardQualified: enrollment.TargetedKeyboard && doctor.TargetedKeyboardEnabled, SessionKeyboardQualified: enrollment.SessionKeyboard && doctor.SessionKeyboardEnabled, WindowFrameClickQualified: enrollment.WindowFrameClick && doctor.WindowFrameClickEnabled && doctor.CaptureGranted, EventPost: doctor.EventPostGranted, SemanticQualified: semantic, Accessibility: semantic, IdentityQualified: true, ActiveGraphicalSession: true, WatchdogLive: true, LaunchQualified: true, QualifiedBundles: append([]string(nil), bundles...), ValidUntil: time.Now().Add(time.Second)}, nil
+		return NativeControlReadiness{AllApplicationsQualified: len(bundles) == 0 && desktopUsers[p.Namespace], TargetedKeyboardQualified: enrollment.TargetedKeyboard && doctor.TargetedKeyboardEnabled, SessionKeyboardQualified: enrollment.SessionKeyboard && doctor.SessionKeyboardEnabled, SessionTextQualified: enrollment.SessionText && doctor.SessionTextEnabled, WindowFrameClickQualified: enrollment.WindowFrameClick && doctor.WindowFrameClickEnabled && doctor.CaptureGranted, EventPost: doctor.EventPostGranted, SemanticQualified: semantic, Accessibility: semantic, IdentityQualified: true, ActiveGraphicalSession: true, WatchdogLive: true, LaunchQualified: true, QualifiedBundles: append([]string(nil), bundles...), ValidUntil: time.Now().Add(time.Second)}, nil
 	}
 	return HostOptions{NativeControl: options}, nil
+}
+
+func (c Config) consoleHelperLaunch() *native.ConsoleLaunchOptions {
+	if c.NativeLaunch == nil || c.NativeLaunch.Transport != "console-v1" || c.NativeConsole == nil {
+		return nil
+	}
+	return &native.ConsoleLaunchOptions{SocketPath: c.NativeConsole.SocketPath + ".helper", Requirement: c.NativeConsole.DesignatedRequirement}
 }

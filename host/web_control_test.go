@@ -3,9 +3,11 @@ package host
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,7 +52,7 @@ func newWebControlFixture(t *testing.T) *webControlFixture {
 	f.step = plan.Steps[0]
 	extension := "chrome-extension://" + strings.Repeat("a", 32) + "/"
 	f.enrollment = WebControlScope{Profiles: []WebControlProfile{{ProfileChannel: "enrolled-profile", BrowserInstance: "chrome-instance", ExtensionOrigin: extension, Origins: []string{"https://fixture.test"}}}}
-	f.ready = WebControlReadiness{Authority: WebControlAuthority{Owner: f.principal.Namespace, ExtensionOrigin: extension, ID: "renderer-authority", Generation: 7, BrokerEpoch: "broker-generation", ChannelEpoch: "signed-channel-generation", ScopeHash: "operator-scope-hash", NativeHost: session.ProcessIdentity{PID: 1001, UID: uint32(os.Getuid()), Executable: "/fixture/signed-native-host", StartToken: "host-start"}, BrowserParent: session.ProcessIdentity{PID: 1000, UID: uint32(os.Getuid()), Executable: "/fixture/Google Chrome", StartToken: "chrome-start"}, Document: chrome.Document{Identity: chrome.Identity{ProfileChannel: "enrolled-profile", BrowserInstance: "chrome-instance", TabID: 11, FrameID: 0, DocumentID: "live-document", Generation: 3}, Origin: "https://fixture.test"}}, NativeHostSignatureQualified: true, KernelPeerQualified: true, ChromeParentQualified: true, ProfileQualified: true, ExtensionQualified: true, DocumentQualified: true, ExecutorQualified: true, Actions: []string{"element.press", "element.fill"}, Locators: []string{"role", "id", "testId", "label"}}
+	f.ready = WebControlReadiness{NewlyAcquired: true, Authority: WebControlAuthority{Owner: f.principal.Namespace, ExtensionOrigin: extension, ID: "renderer-authority", Generation: 7, BrokerEpoch: "broker-generation", ChannelEpoch: "signed-channel-generation", ScopeHash: "operator-scope-hash", NativeHost: session.ProcessIdentity{PID: 1001, UID: uint32(os.Getuid()), Executable: "/fixture/signed-native-host", StartToken: "host-start"}, BrowserParent: session.ProcessIdentity{PID: 1000, UID: uint32(os.Getuid()), Executable: "/fixture/Google Chrome", StartToken: "chrome-start"}, Document: chrome.Document{Identity: chrome.Identity{ProfileChannel: "enrolled-profile", BrowserInstance: "chrome-instance", TabID: 11, FrameID: 0, DocumentID: "live-document", Generation: 3}, Origin: "https://fixture.test"}}, NativeHostSignatureQualified: true, KernelPeerQualified: true, ChromeParentQualified: true, ProfileQualified: true, ExtensionQualified: true, DocumentQualified: true, ExecutorQualified: true, Actions: []string{"element.press", "element.fill"}, Locators: []string{"role", "id", "testId", "label"}}
 	f.cleanup = WebControlCleanup{AuthorityRetired: true, ExecutorsQuiesced: true}
 	f.dispatchedResult = automation.StepResult{DispatchState: "dispatched", VerificationState: "verified"}
 	f.manager, err = NewWebControlManager(WebControlOptions{
@@ -64,8 +66,11 @@ func newWebControlFixture(t *testing.T) *webControlFixture {
 			}
 			return r, nil
 		},
-		VerifyChannel: func(context.Context, auth.Principal, WebControlAuthority) error {
+		VerifyChannel: func(_ context.Context, _ auth.Principal, a WebControlAuthority) error {
 			f.verifications++
+			if a != f.ready.Authority {
+				return errors.New("fixture pinned channel changed")
+			}
 			return f.verifyErr
 		},
 		Authorize: func(ctx context.Context, p auth.Principal, s model.Surface) (*consent.Lease, error) {
@@ -182,7 +187,7 @@ func TestWebControlFreshQualificationAndDurableIntentBeforeDispatch(t *testing.T
 		if err != nil || result.DispatchState != "dispatched" || result.VerificationState != "unknown" {
 			t.Errorf("dispatch: %+v %v", result, err)
 		}
-		if f.qualifications != 2 || f.verifications != 3 || f.authorizations != 1 || f.releases != 1 {
+		if f.qualifications != 1 || f.verifications != 3 || f.authorizations != 1 || f.releases != 1 {
 			t.Errorf("fresh admission/retirement checks omitted: %+v", f)
 		}
 		_, err = f.manager.Execute(scoped, p, step, nil)
@@ -327,6 +332,35 @@ func TestHostWebMutationPolicyDoesNotDependOnNativeLease(t *testing.T) {
 	}
 }
 
+func TestWebControlCancellationPreservesConfirmedTransportAbsence(t *testing.T) {
+	for _, confirmed := range []bool{true, false} {
+		t.Run(fmt.Sprint(confirmed), func(t *testing.T) {
+			f := newWebControlFixture(t)
+			var cancelDispatch context.CancelFunc
+			f.manager.options.ExecutePinned = func(context.Context, auth.Principal, model.Step, map[string]model.Value, WebControlAuthority) (automation.StepResult, error) {
+				cancelDispatch()
+				if confirmed {
+					return automation.StepResult{DispatchState: "notDispatched"}, &model.MechanizeError{Code: "dispatchGateCancelled", DispatchState: "notDispatched"}
+				}
+				return automation.StepResult{DispatchState: "notDispatched"}, context.Canceled
+			}
+			withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
+				prepared := prepareWeb(t, f, ctx, p, step)
+				prepared, cancelDispatch = context.WithCancel(prepared)
+				defer cancelDispatch()
+				result, err := f.manager.Execute(prepared, p, step, nil)
+				want := "unknown"
+				if confirmed {
+					want = "notDispatched"
+				}
+				if err == nil || result.DispatchState != want || result.VerificationState != "unknown" || f.releases != 1 || f.records != 0 {
+					t.Errorf("cancellation lost transport evidence: result=%+v err=%v releases=%d records=%d", result, err, f.releases, f.records)
+				}
+			})
+		})
+	}
+}
+
 func TestWebControlOwnerCancellationAndClosedLifecycle(t *testing.T) {
 	f := newWebControlFixture(t)
 	f.manager.options.ExecutePinned = func(ctx context.Context, _ auth.Principal, _ model.Step, _ map[string]model.Value, _ WebControlAuthority) (automation.StepResult, error) {
@@ -375,4 +409,450 @@ func TestWebControlExactAuthorityRetirementEvidenceIsDistinctFromDocumentShutdow
 			t.Errorf("unknown lease retirement falsely released consent: err=%v releases=%d records=%d", err, f2.releases, f2.records)
 		}
 	})
+}
+
+func TestWebControlFailedPinnedRevalidationRetiresOnlyOriginalIntent(t *testing.T) {
+	for _, mode := range []string{"retired", "otherAuthority", "unknownCleanup", "foreignIntent"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newWebControlFixture(t)
+			withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
+				prepared := prepareWeb(t, f, ctx, p, step)
+				original := f.ready.Authority
+				rejected := errors.New("staleGeneration fixture")
+				f.verifyErr = rejected
+				retired := 0
+				f.manager.options.Retire = func(_ context.Context, actual auth.Principal, a WebControlAuthority) (WebControlCleanup, error) {
+					retired++
+					if (a != original && a != f.ready.Authority) || actual.Namespace != p.Namespace || actual.ClientID != p.ClientID {
+						t.Error("retirement borrowed another authority")
+					}
+					if mode == "otherAuthority" {
+						return WebControlCleanup{}, errors.New("exact lease replaced")
+					}
+					if mode == "unknownCleanup" {
+						return WebControlCleanup{UnknownExecutors: true}, nil
+					}
+					return WebControlCleanup{AuthorityRetired: true, RetiredAuthorityQuiesced: true}, nil
+				}
+				if mode == "foreignIntent" {
+					prepared = auth.WithConsentBinding(prepared, auth.ConsentBinding{GrantID: "foreign", SessionID: "foreign", Purpose: "foreign"})
+				}
+				result, e := f.manager.Execute(prepared, p, step, nil)
+				if result.DispatchState != "notDispatched" || e == nil || f.dispatches != 0 {
+					t.Fatal("failed pre-input qualification lost state", e)
+				}
+				if mode == "foreignIntent" {
+					if retired != 0 || f.records != 0 {
+						t.Fatal("foreign intent retired authority")
+					}
+					return
+				}
+				if retired != 1 {
+					t.Fatal("own pin not retired exactly once")
+				}
+				if mode != "retired" {
+					if !errors.Is(e, ErrWebControlCleanupUnknown) || f.records != 1 {
+						t.Fatal("uncertain cleanup unblocked", e)
+					}
+					return
+				}
+				if !errors.Is(e, rejected) || f.records != 0 {
+					t.Fatal("known rejection became uncertainty", e)
+				}
+				if _, e = f.manager.Execute(prepared, p, step, nil); !errors.Is(e, ErrWebControlIntent) || retired != 1 {
+					t.Fatal("consumed original intent replayed", e)
+				}
+				f.verifyErr = nil
+				f.ready.Authority.Generation++
+				f.manager.options.Qualify = func(context.Context, auth.Principal, model.Surface) (WebControlReadiness, error) {
+					r := f.ready
+					r.ValidUntil = time.Now().Add(time.Second)
+					return r, nil
+				}
+				if _, epoch, e := f.manager.Prepare(ctx, p, step); e != nil || epoch != 8 {
+					t.Fatal("next fresh preparation stranded", epoch, e)
+				}
+			})
+		})
+	}
+}
+
+func TestWebControlAllOwnedPreDispatchFailuresAbandonOriginalPin(t *testing.T) {
+	for _, mode := range []string{"consentError", "nilLease", "nilLeaseContext", "foreignLeaseBinding", "verifyChannel", "navigationArguments", "navigationOrigin", "navigationDestination", "cancelBeforeDispatch"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newWebControlFixture(t)
+			if strings.HasPrefix(mode, "navigation") {
+				f.step.Action = "browser.navigate"
+				f.step.Target.Locator = nil
+				f.step.Arguments = map[string]model.Value{"url": {Kind: model.ReferenceValue, Ref: "input.url", Expected: model.StringValue}}
+				f.ready.Actions = append(f.ready.Actions, "browser.navigate")
+			}
+			withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
+				prepared := prepareWeb(t, f, ctx, p, step)
+				original := f.ready.Authority
+				intent := prepared.Value(webControlIntentKey{}).(*webControlIntent)
+				retired := 0
+				f.manager.options.Retire = func(_ context.Context, p auth.Principal, a WebControlAuthority) (WebControlCleanup, error) {
+					retired++
+					if a != original {
+						t.Error("wrong pin retired")
+					}
+					return WebControlCleanup{AuthorityRetired: true, RetiredAuthorityQuiesced: true}, nil
+				}
+				values := map[string]model.Value{"input.url": {Kind: model.StringValue, String: "https://other.test/path"}}
+				switch mode {
+				case "authorityMismatch":
+					f.ready.Authority.Generation++
+				case "actionUnavailable":
+					f.ready.Actions = nil
+				case "consentError":
+					f.consentErr = errors.New("refused")
+				case "nilLease":
+					f.manager.options.Authorize = func(context.Context, auth.Principal, model.Surface) (*consent.Lease, error) { return nil, nil }
+				case "nilLeaseContext":
+					f.manager.options.Authorize = func(context.Context, auth.Principal, model.Surface) (*consent.Lease, error) {
+						return &consent.Lease{Release: func() {}}, nil
+					}
+				case "foreignLeaseBinding":
+					f.manager.options.Authorize = func(c context.Context, _ auth.Principal, _ model.Surface) (*consent.Lease, error) {
+						return &consent.Lease{Context: auth.WithConsentBinding(c, auth.ConsentBinding{}), Release: func() {}}, nil
+					}
+				case "verifyChannel":
+					f.manager.options.VerifyChannel = func(context.Context, auth.Principal, WebControlAuthority) error {
+						f.verifications++
+						if f.verifications >= 3 {
+							return errors.New("channel drift")
+						}
+						return nil
+					}
+				case "navigationArguments":
+					values = nil
+				case "navigationOrigin":
+					values["input.url"] = model.Value{Kind: model.StringValue, String: "file:///fixture"}
+				case "navigationDestination":
+					f.manager.options.Authorize = func(c context.Context, _ auth.Principal, s model.Surface) (*consent.Lease, error) {
+						if s.Origin != step.Target.Surface.Origin {
+							return nil, auth.ErrUnauthorized
+						}
+						return &consent.Lease{Context: c, Release: func() {}}, nil
+					}
+				case "cancelBeforeDispatch":
+					var stop context.CancelFunc
+					f.manager.options.Authorize = func(c context.Context, _ auth.Principal, _ model.Surface) (*consent.Lease, error) {
+						child, cancel := context.WithCancel(c)
+						stop = cancel
+						return &consent.Lease{Context: child, Release: func() {}}, nil
+					}
+					f.manager.options.VerifyChannel = func(context.Context, auth.Principal, WebControlAuthority) error {
+						if stop != nil {
+							stop()
+						}
+						return nil
+					}
+				}
+				result, e := f.manager.Execute(prepared, p, step, values)
+				if e == nil || result.DispatchState != "notDispatched" || f.dispatches != 0 || retired != 1 || f.records != 0 || !intent.consumed || intent.dispatched || intent.executing {
+					t.Fatal("own pre-dispatch pin stranded or classified dispatched", mode, e, retired)
+				}
+			})
+		})
+	}
+}
+
+func TestWebControlConcurrentIntentClaimCannotRetireInFlightExecution(t *testing.T) {
+	for _, failQualification := range []bool{true, false} {
+		t.Run(fmt.Sprint(failQualification), func(t *testing.T) {
+			f := newWebControlFixture(t)
+			withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
+				prepared := prepareWeb(t, f, ctx, p, step)
+				entered, release := make(chan struct{}), make(chan struct{})
+				dispatchEntered, dispatchRelease := make(chan struct{}), make(chan struct{})
+				var qualifications, retirements, dispatches atomic.Int64
+				f.manager.options.VerifyChannel = func(context.Context, auth.Principal, WebControlAuthority) error {
+					if qualifications.Add(1) > 1 {
+						return nil
+					}
+					close(entered)
+					<-release
+					if failQualification {
+						return errors.New("pinned verification refused")
+					}
+					return nil
+				}
+				f.manager.options.ExecutePinned = func(context.Context, auth.Principal, model.Step, map[string]model.Value, WebControlAuthority) (automation.StepResult, error) {
+					dispatches.Add(1)
+					close(dispatchEntered)
+					<-dispatchRelease
+					return automation.StepResult{DispatchState: "dispatched"}, nil
+				}
+				f.manager.options.Retire = func(context.Context, auth.Principal, WebControlAuthority) (WebControlCleanup, error) {
+					retirements.Add(1)
+					return WebControlCleanup{AuthorityRetired: true, RetiredAuthorityQuiesced: true}, nil
+				}
+				done := make(chan error, 1)
+				go func() { _, e := f.manager.Execute(prepared, p, step, nil); done <- e }()
+				<-entered
+				if r, e := f.manager.Execute(prepared, p, step, nil); !errors.Is(e, ErrWebControlIntent) || r.DispatchState != "notDispatched" || retirements.Load() != 0 || qualifications.Load() != 1 {
+					t.Error("concurrent caller borrowed pin", e)
+				}
+				close(release)
+				if !failQualification {
+					<-dispatchEntered
+					if _, e := f.manager.Execute(prepared, p, step, nil); !errors.Is(e, ErrWebControlIntent) || retirements.Load() != 0 {
+						t.Error("duplicate retired in-flight input", e)
+					}
+					close(dispatchRelease)
+				}
+				e := <-done
+				if failQualification != (e != nil) || retirements.Load() != 1 || dispatches.Load() != map[bool]int64{true: 0, false: 1}[failQualification] {
+					t.Error("single owner lifecycle failed", e)
+				}
+			})
+		})
+	}
+}
+
+func TestWebControlAcquisitionValidationRetiresOnlyNewlyOwnedPins(t *testing.T) {
+	for _, fresh := range []bool{true, false} {
+		for _, mode := range []string{"readiness", "action", "postcondition"} {
+			t.Run(fmt.Sprint(fresh)+mode, func(t *testing.T) {
+				f := newWebControlFixture(t)
+				f.ready.NewlyAcquired = fresh
+				if mode == "readiness" {
+					f.ready.KernelPeerQualified = false
+				}
+				if mode == "action" {
+					f.ready.Actions = nil
+				}
+
+				retired := 0
+				f.manager.options.Retire = func(context.Context, auth.Principal, WebControlAuthority) (WebControlCleanup, error) {
+					retired++
+					return WebControlCleanup{AuthorityRetired: true, RetiredAuthorityQuiesced: true}, nil
+				}
+				withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
+					if mode == "postcondition" {
+						step.Postcondition = &model.Predicate{Kind: "adapter", Adapter: "web", Name: "valueEquals", Scope: model.PredicateScope{Target: &step.Target}, Inputs: map[string]model.Value{}, TimeoutMs: 1000, FreshnessMs: 1000, RequiredAuthority: "observational"}
+					}
+					if _, _, e := f.manager.Prepare(ctx, p, step); e == nil {
+						t.Error("invalid preparation admitted")
+					}
+				})
+				expected := 0
+				if fresh {
+					expected = 1
+				}
+				if retired != expected || f.dispatches != 0 {
+					t.Fatal("acquisition provenance ignored", retired, expected)
+				}
+			})
+		}
+	}
+}
+
+func TestWebControlCapabilitiesRetireFreshProbeButNeverBorrowedPin(t *testing.T) {
+	for _, fresh := range []bool{true, false} {
+		t.Run(fmt.Sprint(fresh), func(t *testing.T) {
+			f := newWebControlFixture(t)
+			f.ready.NewlyAcquired = fresh
+			retired := 0
+			f.manager.options.Retire = func(context.Context, auth.Principal, WebControlAuthority) (WebControlCleanup, error) {
+				retired++
+				return WebControlCleanup{AuthorityRetired: true, RetiredAuthorityQuiesced: true}, nil
+			}
+			if !f.manager.Capabilities(f.ctx, f.principal)["web:semanticPress"] {
+				t.Fatal("metadata capability missing")
+			}
+			expected := 0
+			if fresh {
+				expected = 1
+			}
+			if retired != expected || f.dispatches != 0 {
+				t.Fatal("probe leaked or retired borrowed pin")
+			}
+		})
+	}
+}
+
+func TestWebControlCloseOwnsPreparedPinsAndRetainsUncertainCleanup(t *testing.T) {
+	for _, uncertain := range []bool{false, true} {
+		t.Run(fmt.Sprint(uncertain), func(t *testing.T) {
+			f := newWebControlFixture(t)
+			withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
+				prepared := prepareWeb(t, f, ctx, p, step)
+				intent := prepared.Value(webControlIntentKey{}).(*webControlIntent)
+				retired, closed := 0, 0
+				f.manager.options.Retire = func(context.Context, auth.Principal, WebControlAuthority) (WebControlCleanup, error) {
+					retired++
+					return WebControlCleanup{AuthorityRetired: !uncertain, RetiredAuthorityQuiesced: !uncertain, UnknownExecutors: uncertain}, nil
+				}
+				f.manager.options.Close = func(context.Context) error { closed++; return nil }
+				bounded, cancel := context.WithTimeout(ctx, time.Second)
+				defer cancel()
+				e := f.manager.Close(bounded)
+				if (e != nil) != uncertain || retired != 1 || f.dispatches != 0 || closed != map[bool]int{true: 0, false: 1}[uncertain] {
+					t.Fatal("Close lost owned pin/proof", e)
+				}
+				if !uncertain && (!intent.consumed || intent.dispatched) {
+					t.Fatal("prepared Close claimed input")
+				}
+			})
+		})
+	}
+}
+
+func TestWebControlCloseDrainsDispatchBeforeClosingProvider(t *testing.T) {
+	f := newWebControlFixture(t)
+	withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
+		prepared := prepareWeb(t, f, ctx, p, step)
+		entered, release := make(chan struct{}), make(chan struct{})
+		var retired, closed atomic.Int64
+		f.manager.options.ExecutePinned = func(context.Context, auth.Principal, model.Step, map[string]model.Value, WebControlAuthority) (automation.StepResult, error) {
+			close(entered)
+			<-release
+			return automation.StepResult{DispatchState: "dispatched"}, nil
+		}
+		f.manager.options.Retire = func(context.Context, auth.Principal, WebControlAuthority) (WebControlCleanup, error) {
+			retired.Add(1)
+			return WebControlCleanup{AuthorityRetired: true, RetiredAuthorityQuiesced: true}, nil
+		}
+		f.manager.options.Close = func(context.Context) error { closed.Add(1); return nil }
+		done := make(chan error, 1)
+		go func() { _, e := f.manager.Execute(prepared, p, step, nil); done <- e }()
+		<-entered
+		limit, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
+		e := f.manager.Close(limit)
+		cancel()
+		if !errors.Is(e, context.DeadlineExceeded) || closed.Load() != 0 || retired.Load() != 0 {
+			t.Fatal("Close tore down active dispatch", e)
+		}
+		close(release)
+		if e = <-done; e != nil {
+			t.Fatal(e)
+		}
+		if e = f.manager.Close(ctx); e != nil || closed.Load() != 1 || retired.Load() != 1 {
+			t.Fatal("drained close failed", e)
+		}
+	})
+}
+
+func TestWebControlCloseRacingAdmissionRetiresUnpublishedManagerPin(t *testing.T) {
+	f := newWebControlFixture(t)
+	withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
+		entered, release := make(chan struct{}), make(chan struct{})
+		var retired, closed atomic.Int64
+		original := f.manager.options.Qualify
+		f.manager.options.Qualify = func(c context.Context, p auth.Principal, s model.Surface) (WebControlReadiness, error) {
+			r, e := original(c, p, s)
+			close(entered)
+			<-release
+			return r, e
+		}
+		f.manager.options.Retire = func(context.Context, auth.Principal, WebControlAuthority) (WebControlCleanup, error) {
+			retired.Add(1)
+			return WebControlCleanup{AuthorityRetired: true, RetiredAuthorityQuiesced: true}, nil
+		}
+		f.manager.options.Close = func(context.Context) error { closed.Add(1); return nil }
+		done := make(chan error, 1)
+		go func() { _, _, e := f.manager.Prepare(ctx, p, step); done <- e }()
+		<-entered
+		limit, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
+		e := f.manager.Close(limit)
+		cancel()
+		if !errors.Is(e, context.DeadlineExceeded) || closed.Load() != 0 || retired.Load() != 0 {
+			t.Fatal("Close ignored admission work", e)
+		}
+		close(release)
+		if e = <-done; e == nil {
+			t.Fatal("closed manager published a pin")
+		}
+		if e = f.manager.Close(ctx); e != nil || closed.Load() != 1 || retired.Load() != 1 {
+			t.Fatal("admission pin stranded after Close", e)
+		}
+	})
+}
+
+func TestWebControlCancelledPreparationRetiresWithoutExecute(t *testing.T) {
+	f := newWebControlFixture(t)
+	withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
+		child, cancel := context.WithCancel(ctx)
+		var retired atomic.Int64
+		finished := make(chan struct{})
+		f.manager.options.Retire = func(context.Context, auth.Principal, WebControlAuthority) (WebControlCleanup, error) {
+			retired.Add(1)
+			close(finished)
+			return WebControlCleanup{AuthorityRetired: true, RetiredAuthorityQuiesced: true}, nil
+		}
+		if _, _, e := f.manager.Prepare(child, p, step); e != nil {
+			t.Fatal(e)
+		}
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(time.Second):
+			t.Fatal("cancelled preparation remained pinned")
+		}
+		if retired.Load() != 1 || f.dispatches != 0 {
+			t.Fatal("cancelled preparation dispatched")
+		}
+	})
+}
+
+func TestWebControlConfirmedDispatchSurvivesLateCancellationWithoutEffectVerification(t *testing.T) {
+	f := newWebControlFixture(t)
+	withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
+		prepared := prepareWeb(t, f, ctx, p, step)
+		var cancel context.CancelFunc
+		f.manager.options.Authorize = func(c context.Context, p auth.Principal, s model.Surface) (*consent.Lease, error) {
+			child, stop := context.WithCancel(c)
+			cancel = stop
+			return &consent.Lease{Context: child, Release: func() {}}, nil
+		}
+		f.manager.options.ExecutePinned = func(context.Context, auth.Principal, model.Step, map[string]model.Value, WebControlAuthority) (automation.StepResult, error) {
+			cancel()
+			return automation.StepResult{DispatchState: "dispatched", VerificationState: "verified"}, nil
+		}
+		result, e := f.manager.Execute(prepared, p, step, nil)
+		if e != nil || result.DispatchState != "dispatched" || result.VerificationState != "unknown" || result.Postcondition != nil || f.records != 0 {
+			t.Fatal("known dispatch receipt lost or business effect inferred", result, e)
+		}
+	})
+}
+
+func TestWebControlDestinationLeaseMustKeepOriginalGrantAndReleaseOnError(t *testing.T) {
+	for _, mode := range []string{"foreignGrant", "errorWithLease"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newWebControlFixture(t)
+			f.step.Action = "browser.navigate"
+			f.step.Target.Locator = nil
+			f.step.Arguments = map[string]model.Value{"url": {Kind: model.StringValue, String: "https://other.test/path"}}
+			f.ready.Actions = append(f.ready.Actions, "browser.navigate")
+			withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
+				prepared := prepareWeb(t, f, ctx, p, step)
+				released := 0
+				retired := 0
+				f.manager.options.Authorize = func(c context.Context, p auth.Principal, s model.Surface) (*consent.Lease, error) {
+					var e error
+					if s.Origin != step.Target.Surface.Origin {
+						if mode == "foreignGrant" {
+							binding, _ := auth.ConsentBindingFromContext(c)
+							binding.GrantID = "foreign"
+							c = auth.WithConsentBinding(c, binding)
+						} else {
+							e = auth.ErrUnauthorized
+						}
+					}
+					return &consent.Lease{Context: c, Release: func() { released++ }}, e
+				}
+				f.manager.options.Retire = func(context.Context, auth.Principal, WebControlAuthority) (WebControlCleanup, error) {
+					retired++
+					return WebControlCleanup{AuthorityRetired: true, RetiredAuthorityQuiesced: true}, nil
+				}
+				r, e := f.manager.Execute(prepared, p, step, nil)
+				if e == nil || r.DispatchState != "notDispatched" || f.dispatches != 0 || released != 2 || retired != 1 {
+					t.Fatal("destination consent was borrowed/leaked", released, retired, e)
+				}
+			})
+		})
+	}
 }

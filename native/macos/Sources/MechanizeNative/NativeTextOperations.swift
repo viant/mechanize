@@ -5,6 +5,7 @@ struct NativeTextRuntime {
     let attribute: (AXUIElement, String) -> (AXError, CFTypeRef?)
     let settable: (AXUIElement, String) -> (AXError, Bool)
     let set: (AXUIElement, String, CFTypeRef) -> AXError
+    var stringForRange: (AXUIElement, CFRange) -> (AXError, CFTypeRef?) = { _, _ in (.attributeUnsupported, nil) }
     static let system = NativeTextRuntime(attribute: { element, name in
         var value: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(element, name as CFString, &value)
@@ -13,7 +14,13 @@ struct NativeTextRuntime {
         var writable: DarwinBoolean = false
         let status = AXUIElementIsAttributeSettable(element, name as CFString, &writable)
         return (status, writable.boolValue)
-    }, set: { AXUIElementSetAttributeValue($0, $1 as CFString, $2) })
+    }, set: { AXUIElementSetAttributeValue($0, $1 as CFString, $2) }, stringForRange: { element, requested in
+        var range = requested
+        guard let parameter = AXValueCreate(.cfRange, &range) else { return (.illegalArgument, nil) }
+        var value: CFTypeRef?
+        let status = AXUIElementCopyParameterizedAttributeValue(element, kAXStringForRangeParameterizedAttribute as CFString, parameter, &value)
+        return (status, value)
+    })
 }
 struct NativeTextOutcome {
     let dispatchState: String
@@ -25,7 +32,7 @@ func boundedTextLiteral(_ value: Any?) throws -> String {
     guard let value = value as? String, value.utf8.count <= 65_536, !value.contains("\0") else { throw NativeFailure("invalidValue", "Bounded plaintext literal required") }
     return value
 }
-private func classifiedNativeText(_ element: AXUIElement, runtime: NativeTextRuntime) -> Bool {
+private func classifiedNativeText(_ element: AXUIElement, runtime: NativeTextRuntime, comparison: Bool = false) -> Bool {
     let role = runtime.attribute(element, kAXRoleAttribute), subrole = runtime.attribute(element, kAXSubroleAttribute)
     guard role.0 == .success, let roleName = role.1 as? String else { return false }
     let subroleKnown = (subrole.0 == .success && subrole.1 is String) || (subrole.0 == .noValue || subrole.0 == .attributeUnsupported) && subrole.1 == nil
@@ -35,6 +42,9 @@ private func classifiedNativeText(_ element: AXUIElement, runtime: NativeTextRun
         if result.0 == .success, let label = result.1 as? String { labels.append(label) }
         else if (result.0 == .noValue || result.0 == .attributeUnsupported) && result.1 == nil { labels.append("") }
         else { return false }
+    }
+    if comparison {
+        return ReplacementProof.comparisonPermitted(role: roleName, subrole: subrole.1 as? String, subroleKnown: subroleKnown, labels: labels)
     }
     return ReplacementProof.permitted(role: roleName, subrole: subrole.1 as? String, subroleKnown: subroleKnown, valueSettable: true, labels: labels)
 }
@@ -60,20 +70,31 @@ func nativeValueMatches(_ element: AXUIElement, expected: String, revalidate: ()
                         runtime: NativeTextRuntime = .system) throws -> Bool {
     _ = try boundedTextLiteral(expected)
     try revalidate()
-    guard classifiedNativeText(element, runtime: runtime) else { throw NativeFailure("valueComparisonDenied", "Known nonsecure text classification required") }
+    guard classifiedNativeText(element, runtime: runtime, comparison: true) else {
+        FileHandle.standardError.write(Data("Mechanize text comparison: classification unavailable\n".utf8))
+        throw NativeFailure("valueComparisonDenied", "Known nonsecure text classification required")
+    }
     try revalidate()
     let matches = ReplacementProof.compare(expected: expected, permitted: true, read: {
         let (status, value) = runtime.attribute(element, kAXValueAttribute)
-        return status == .success ? value as? String : nil
+        if status == .success, let text = value as? String { return text }
+        guard value == nil && (status == .noValue || status == .attributeUnsupported || status == .success) else { return nil }
+        return try TextRangeRead.read(count: { try? textCharacterCount(element, runtime: runtime) }, range: { length in
+            let (code, raw) = runtime.stringForRange(element, CFRange(location: 0, length: length))
+            return code == .success ? raw as? String : nil
+        }, revalidate: revalidate)
     }, revalidate: {
         try revalidate()
-        guard classifiedNativeText(element, runtime: runtime) else { throw NativeFailure("valueComparisonDenied", "Text classification changed") }
+        guard classifiedNativeText(element, runtime: runtime, comparison: true) else { throw NativeFailure("valueComparisonDenied", "Text classification changed") }
         try revalidate()
     })
     try revalidate()
-    guard classifiedNativeText(element, runtime: runtime) else { throw NativeFailure("valueComparisonDenied", "Text classification changed after comparison") }
+    guard classifiedNativeText(element, runtime: runtime, comparison: true) else { throw NativeFailure("valueComparisonDenied", "Text classification changed after comparison") }
     try revalidate()
-    guard let matches else { throw NativeFailure("valueComparisonUnavailable", "Fresh bounded text comparison unavailable") }
+    guard let matches else {
+        FileHandle.standardError.write(Data("Mechanize text comparison: complete value unavailable\n".utf8))
+        throw NativeFailure("valueComparisonUnavailable", "Fresh bounded text comparison unavailable")
+    }
     return matches
 }
 func replaceNativeText(_ element: AXUIElement, expected: String, verify: Bool, revalidate: () throws -> Void, willMutate: () throws -> Void,

@@ -49,6 +49,8 @@ func TestNativePolicyDoctorHelperProcess(t *testing.T) {
 			NativeWindowActions []string `json:"nativeWindowActions"`
 			NativeTextActions   []string `json:"nativeTextActions"`
 			NativeTextReads     []string `json:"nativeTextReads"`
+			NativeBooleanReads  []string `json:"nativeBooleanReads"`
+			NativeSemanticMenus []string `json:"nativeSemanticMenus"`
 			Fail                bool     `json:"fail"`
 		}
 		stateBytes, err := os.ReadFile(os.Getenv("MECHANIZE_POLICY_HELPER_STATE"))
@@ -61,7 +63,7 @@ func TestNativePolicyDoctorHelperProcess(t *testing.T) {
 		} else if state.Fail {
 			reply.Error = &native.NativeError{Code: "doctorFailed", Message: "fixture doctor failure", Stage: "doctor", DispatchState: "notDispatched"}
 		} else {
-			reply.Result, _ = json.Marshal(map[string]any{"axTrusted": state.AXTrusted, "nativeRootScopes": state.NativeRootScopes, "nativeWindowScopes": state.NativeWindowScopes, "nativeWindowActions": state.NativeWindowActions, "nativeTextActions": state.NativeTextActions, "nativeTextReads": state.NativeTextReads})
+			reply.Result, _ = json.Marshal(map[string]any{"axTrusted": state.AXTrusted, "nativeRootScopes": state.NativeRootScopes, "nativeWindowScopes": state.NativeWindowScopes, "nativeWindowActions": state.NativeWindowActions, "nativeTextActions": state.NativeTextActions, "nativeTextReads": state.NativeTextReads, "nativeBooleanReads": state.NativeBooleanReads, "nativeSemanticMenus": state.NativeSemanticMenus})
 		}
 		encoded, _ := json.Marshal(reply)
 		binary.BigEndian.PutUint32(header[:], uint32(len(encoded)))
@@ -453,5 +455,161 @@ func TestHostPolicyRequiresFreshWindowScopeAdvertisement(t *testing.T) {
 		if policy.Capabilities["native:windowScope"] != tc.menu {
 			t.Fatalf("root scope policy did not follow fresh doctor: %+v caps=%v", tc, policy.Capabilities)
 		}
+		if policy.Capabilities["native:indexedQuery"] != tc.menu {
+			t.Fatalf("indexed query policy did not follow fresh exact-window readiness: %+v caps=%v", tc, policy.Capabilities)
+		}
+	}
+}
+
+func TestHostPolicyWindowTextRequiresSessionOptinAndFreshMethod(t *testing.T) {
+	for _, mode := range []string{"qualified", "noAdvert", "unknownAdvert", "noOptin", "noAX", "launchOnly", "revoked"} {
+		t.Run(mode, func(t *testing.T) {
+			h, f := hostControlFixture(t)
+			f.manager.options.SemanticOnly = true
+			f.manager.options.SessionText = true
+			f.ready.SemanticQualified = true
+			f.ready.SessionTextQualified = true
+			if mode == "noOptin" {
+				f.manager.options.SessionText = false
+			}
+			if mode == "launchOnly" {
+				f.manager.options.LaunchOnly = true
+				f.manager.options.SemanticOnly = false
+				f.manager.options.SessionText = false
+				f.ready.LaunchQualified = true
+			}
+			dir := t.TempDir()
+			statePath, methodsPath := filepath.Join(dir, "doctor.json"), filepath.Join(dir, "methods.log")
+			actions := []string{"typeText"}
+			if mode == "noAdvert" {
+				actions = nil
+			}
+			if mode == "unknownAdvert" {
+				actions = []string{"rawText"}
+			}
+			write := func(actions []string) {
+				body, _ := json.Marshal(map[string]any{"axTrusted": mode != "noAX", "nativeWindowActions": actions})
+				if e := os.WriteFile(statePath, body, 0600); e != nil {
+					t.Fatal(e)
+				}
+			}
+			write(actions)
+			client := policyDoctorClient(t, statePath, methodsPath)
+			g, e := native.NewGateway(client, native.GatewayOptions{AllowedBundles: []string{"com.fixture.app"}})
+			if e != nil {
+				t.Fatal(e)
+			}
+			h.nativeClient = client
+			h.nativeByUser = map[string]*native.Gateway{f.principal.Namespace: g}
+			policy, e := h.Policy(f.ctx, f.principal)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if policy.Capabilities["native:windowSessionText"] != (mode == "qualified" || mode == "revoked") {
+				t.Fatal("unqualified windowtext advertised", mode, policy)
+			}
+			if mode == "revoked" {
+				write(nil)
+				policy, e = h.Policy(f.ctx, f.principal)
+				if e != nil || policy.Capabilities["native:windowSessionText"] {
+					t.Fatal("revoked windowtext retained", e)
+				}
+			}
+		})
+	}
+}
+
+func TestHostPolicyCheckedRequiresFreshBooleanAdvertisement(t *testing.T) {
+	p, err := auth.NewPrincipal("fixture", "", "root-policy", []string{"desktop:observe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := auth.WithPrincipal(context.Background(), p)
+	dir := t.TempDir()
+	statePath, methodsPath := filepath.Join(dir, "doctor.json"), filepath.Join(dir, "methods.log")
+	write := func(ax bool, scopes []string) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"axTrusted": ax, "nativeBooleanReads": scopes})
+		if err := os.WriteFile(statePath, body, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(true, nil)
+	client := policyDoctorClient(t, statePath, methodsPath)
+	g, err := native.NewGateway(client, native.GatewayOptions{AllowedBundles: []string{"com.fixture.app"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Host{nativeClient: client, nativeByUser: map[string]*native.Gateway{p.Namespace: g}, users: map[string]User{p.Namespace: {NativeBundles: []string{"com.fixture.app"}}}}
+	for _, tc := range []struct {
+		ax          bool
+		scopes      []string
+		menu, focus bool
+	}{{true, nil, false, false}, {true, []string{"unknownRoot"}, false, false}, {true, []string{"checked"}, true, false}, {true, []string{"unsupportedWindow"}, false, true}, {true, []string{"checked", "unsupportedWindow"}, true, true}, {false, []string{"checked", "unsupportedWindow"}, false, false}, {true, nil, false, false}} {
+		write(tc.ax, tc.scopes)
+		policy, err := h.Policy(ctx, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if policy.Capabilities["native:checkedObservation"] != tc.menu {
+			t.Fatalf("root scope policy did not follow fresh doctor: %+v caps=%v", tc, policy.Capabilities)
+		}
+	}
+}
+
+func TestHostPolicySemanticMenuRequiresFreshAdvertisementAndControl(t *testing.T) {
+	for _, mode := range []string{"qualified", "noAdvert", "unknownAdvert", "noAX", "launchOnly", "noControl", "revoked"} {
+		t.Run(mode, func(t *testing.T) {
+			h, f := hostControlFixture(t)
+			if mode == "launchOnly" {
+				f.manager.options.LaunchOnly = true
+				f.ready.LaunchQualified = true
+			}
+			if mode == "noControl" {
+				principal, err := auth.NewPrincipal(f.principal.Issuer, f.principal.Tenant, f.principal.Subject, []string{"desktop:observe"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.principal = principal
+				f.ctx = auth.WithPrincipal(context.Background(), principal)
+			}
+			dir := t.TempDir()
+			statePath, methodsPath := filepath.Join(dir, "doctor.json"), filepath.Join(dir, "methods.log")
+			actions := []string{"AXShowMenu"}
+			if mode == "noAdvert" {
+				actions = nil
+			}
+			if mode == "unknownAdvert" {
+				actions = []string{"AXPress"}
+			}
+			write := func(actions []string) {
+				body, _ := json.Marshal(map[string]any{"axTrusted": mode != "noAX", "nativeSemanticMenus": actions})
+				if err := os.WriteFile(statePath, body, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write(actions)
+			client := policyDoctorClient(t, statePath, methodsPath)
+			gateway, err := native.NewGateway(client, native.GatewayOptions{AllowedBundles: []string{"com.fixture.app"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.nativeClient = client
+			h.nativeByUser = map[string]*native.Gateway{f.principal.Namespace: gateway}
+			policy, err := h.Policy(f.ctx, f.principal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if policy.Capabilities["native:semanticMenu"] != (mode == "qualified" || mode == "revoked") {
+				t.Fatalf("menu capability did not follow qualification: %s %+v", mode, policy)
+			}
+			if mode == "revoked" {
+				write(nil)
+				policy, err = h.Policy(f.ctx, f.principal)
+				if err != nil || policy.Capabilities["native:semanticMenu"] {
+					t.Fatalf("revoked menu retained: %v", err)
+				}
+			}
+		})
 	}
 }

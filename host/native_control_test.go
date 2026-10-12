@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -641,6 +642,54 @@ func TestNativeControlWindowKeyboardRequiresSessionOptinExactLeaseAndScope(t *te
 				}
 			} else if e == nil || f.calls != 0 {
 				t.Fatal("unqualified windowkey dispatched", mode, e, f.calls)
+			}
+		})
+	}
+}
+
+func TestNativeControlRecoversStoppedRawFenceOnlyWithTrustedReleasedInputProof(t *testing.T) {
+	for _, allow := range []bool{false, true} {
+		t.Run(fmt.Sprint(allow), func(t *testing.T) {
+			f := newControlFixture(t)
+			f.alive = false
+			lease := session.Lease{ID: "historical", Generation: 77, Owner: f.principal.Namespace, Scope: session.Scope{AllowedBundles: f.enrolled}}
+			raw, _ := json.Marshal(map[string]any{"generation": 77, "lease": lease, "helper": f.identity, "inputProfile": "raw", "lastCleanup": session.CleanupReport{UnknownInputs: true, BusinessOutcomeUnknown: true}})
+			if err := os.WriteFile(f.options.LockPath, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			opts := f.options
+			proofCalls := 0
+			opts.ReleasedInputProof = func(_ context.Context, p auth.Principal) error {
+				proofCalls++
+				if p.Namespace != f.principal.Namespace {
+					t.Fatal("foreign proof")
+				}
+				if !allow {
+					return errors.New("input held")
+				}
+				return nil
+			}
+			originalFactory := opts.HelperFactory
+			opts.HelperFactory = func(ctx context.Context, o native.Options) (NativeControlHelper, error) {
+				f.alive = true
+				f.identity.StartToken = "new-helper"
+				return originalFactory(ctx, o)
+			}
+			manager, err := NewNativeControlManager(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer manager.Close(context.Background())
+			admission, err := manager.Admit(f.ctx, f.principal, f.enrolled)
+			if !allow {
+				if !errors.Is(err, session.ErrCleanupUnknown) || f.starts != 0 {
+					t.Fatal("held input admitted", err, f.starts)
+				}
+			} else if err != nil || admission.Epoch != 78 || f.starts != 1 {
+				t.Fatal("released input not admitted", admission.Epoch, err, f.starts)
+			}
+			if proofCalls != 1 || f.calls != 0 {
+				t.Fatal("proof missing or automation replayed", proofCalls, f.calls)
 			}
 		})
 	}

@@ -20,7 +20,21 @@ import (
 // Execute is Endly's single-action callback. Intent durability precedes input;
 // verified outcome persistence follows the external executor. Database hooks
 // cannot call this executor and database retries cannot replay it.
-func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step, values map[string]model.Value) (integration.StepResult, error) {
+func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step, values map[string]model.Value) (returned integration.StepResult, returnErr error) {
+	started := time.Now()
+	timing := &integration.StepTiming{StartedAt: started.UTC().Format(time.RFC3339Nano)}
+	finishTiming := func() {
+		timing.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		timing.TotalMs = time.Since(started).Milliseconds()
+	}
+	defer func() {
+		if returned.Timing == nil {
+			if timing.FinishedAt == "" {
+				finishTiming()
+			}
+			returned.Timing = timing
+		}
+	}()
 	actual, authErr := auth.FromContext(ctx)
 	if authErr != nil || p.Validate() != nil || actual.Namespace != p.Namespace || actual.ClientID != p.ClientID {
 		return integration.StepResult{}, auth.ErrUnauthorized
@@ -98,7 +112,16 @@ func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step
 		}
 	}
 	if step.Effect.Class == model.ReadOnly {
-		return b.dispatchWhileLocked(data.WithoutCommittedStepIntent(ctx), p, user, step, values)
+		if err := b.checkPrecondition(ctx, p, user, step, values); err != nil {
+			return integration.StepResult{DispatchState: "notDispatched", VerificationState: "unknown"}, err
+		}
+		timing.PreparationMs = time.Since(started).Milliseconds()
+		executionStarted := time.Now()
+		result, err := b.dispatchWhileLocked(data.WithoutCommittedStepIntent(ctx), p, user, step, values)
+		timing.ExecutionMs = time.Since(executionStarted).Milliseconds()
+		finishTiming()
+		result.Timing = timing
+		return result, err
 	}
 	businessKey, keyErr := effectBusinessKey(envelope.Plan, step, values)
 	if keyErr != nil {
@@ -116,6 +139,20 @@ func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step
 	}
 	if previous != nil {
 		return *previous, nil
+	}
+	if err := model.ValidateNativeScopedOutcome(step, values); err != nil {
+		return integration.StepResult{DispatchState: "notDispatched", VerificationState: "unknown"}, err
+	}
+	if b.options.ValidateStepOutcome != nil {
+		contractContext := ReconciliationContext{RunID: metadata.RunID, PlanID: metadata.PlanID, BusinessKey: businessKey, Step: step, Plan: envelope.Plan, Values: values}
+		if err := b.options.ValidateStepOutcome(ctx, p, contractContext); err != nil {
+			return integration.StepResult{DispatchState: "notDispatched", VerificationState: "unknown"}, err
+		}
+	}
+	// Replayed confirmed effects return above without requiring their old baseline.
+	// A new attempt must prove its baseline before any intent or external input.
+	if err := b.checkPrecondition(ctx, p, user, step, values); err != nil {
+		return integration.StepResult{DispatchState: "notDispatched", VerificationState: "unknown"}, err
 	}
 	effectID := key("effect", attemptID)
 	if run.Revision == nil {
@@ -180,13 +217,17 @@ func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step
 		var revoke func()
 		dispatchCtx, revoke, dispatchErr = data.WithCommittedStepIntent(ctx, p, committed)
 		if dispatchErr == nil {
+			timing.PreparationMs = time.Since(started).Milliseconds()
+			executionStarted := time.Now()
 			result, dispatchErr = func() (integration.StepResult, error) {
 				defer revoke()
 				return b.dispatchWhileLocked(dispatchCtx, p, user, step, values)
 			}()
+			timing.ExecutionMs = time.Since(executionStarted).Milliseconds()
 		}
 	}
 	if dispatchErr == nil && step.Postcondition != nil {
+		verificationStarted := time.Now()
 		postValues := make(map[string]model.Value, len(values)+1)
 		for k, v := range values {
 			postValues[k] = v
@@ -205,7 +246,10 @@ func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step
 			// observational UI evidence does not establish business success.
 			result.VerificationState = "verified"
 		}
+		timing.VerificationMs = time.Since(verificationStarted).Milliseconds()
 	}
+	finishTiming()
+	result.Timing = timing
 	state := "unknown"
 	if dispatchErr == nil && result.VerificationState == "verified" {
 		state = "confirmed"
@@ -255,7 +299,9 @@ func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step
 		return result, errors.Join(dispatchErr, fmt.Errorf("durable outcome: %w", err))
 	}
 	if state == "unknown" {
-		return result, errors.Join(dispatchErr, ErrNeedsReconciliation)
+		// Input may already have reached the application. Distinguish this
+		// retained outcome uncertainty from a rejection before dispatch.
+		return result, errors.Join(dispatchErr, fmt.Errorf("effect outcome remains unverified after executor return (dispatchState=%s): %w", result.DispatchState, ErrNeedsReconciliation))
 	}
 	return result, dispatchErr
 }
@@ -425,5 +471,18 @@ func committedIntentFromRun(run *loadrun.Run, previousRevision int, record *data
 		return errors.New("committed attempt readback graph incomplete")
 	}
 	record.RunRevision = *run.Revision
+	return nil
+}
+
+// checkPrecondition uses the same scoped, freshness-checked evaluator as outcomes.
+// False, unavailable, stale and cancelled observations never authorize dispatch.
+func (b *Builder) checkPrecondition(ctx context.Context, p auth.Principal, user *userHost, step model.Step, values map[string]model.Value) error {
+	if step.Precondition == nil {
+		return nil
+	}
+	result, err := b.evaluateWhileLocked(ctx, p, user, *step.Precondition, values)
+	if err != nil || result.Truth != objective.True || ctx.Err() != nil {
+		return errors.Join(err, ctx.Err(), errors.New("step precondition is not verified"))
+	}
 	return nil
 }

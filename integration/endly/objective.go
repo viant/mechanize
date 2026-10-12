@@ -16,6 +16,7 @@ type CompletionRequest struct {
 	Plan            model.Plan
 	Values          map[string]model.Value
 	OperationStatus string
+	PauseRequested  bool
 }
 type BusinessResult struct {
 	BusinessStatus    string            `json:"businessStatus"`
@@ -61,7 +62,7 @@ func (r *Runtime) observeCompletion(ctx context.Context, runID string, p *progra
 			if actor.Validate() != nil {
 				actor = r.principals[session]
 			}
-			request := CompletionRequest{Metadata: ExecutionMetadata{RunID: runID, PlanID: p.planID, SessionID: session}, Plan: p.plan, Values: values, OperationStatus: finished.Status}
+			request := CompletionRequest{Metadata: ExecutionMetadata{RunID: runID, PlanID: p.planID, SessionID: session}, Plan: p.plan, Values: values, OperationStatus: finished.Status, PauseRequested: p.pauseRequested && !p.cancelRequested}
 			r.mu.RUnlock()
 			finalCtx, cancel := context.WithTimeout(auth.WithPrincipal(context.WithoutCancel(ctx), actor), 35*time.Second)
 			result, err = r.completeObjective(finalCtx, actor, request)

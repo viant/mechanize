@@ -90,6 +90,25 @@ func (s *service) step(ctx *endlylib.Context, request *stepRequest) (interface{}
 	}
 	background = context.WithValue(background, executionKey{}, ExecutionMetadata{Resumed: p.resumed, OperationID: operationID, RunID: request.ProgramID, PlanID: p.planID, SessionID: ctx.SessionID, StepIndex: stepIndex})
 	result, err := r.execute(background, actor, *selected, values)
+	if failure := executionFailure(result, err); failure != nil {
+		r.mu.Lock()
+		if p.executionFailure == nil {
+			p.executionFailure = failure
+		}
+		r.mu.Unlock()
+	}
+	if selected.Action == "browser.activateTab" {
+		outcome := tabActivationOutcome(result, err)
+		r.mu.Lock()
+		p.tabActivationOutcome = &outcome
+		r.mu.Unlock()
+	}
+	if selected.Action == "browser.openOrigin" {
+		outcome := originOpeningOutcome(result, err)
+		r.mu.Lock()
+		p.originOpeningOutcome = &outcome
+		r.mu.Unlock()
+	}
 	if err != nil {
 		return nil, err
 	}

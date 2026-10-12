@@ -11,10 +11,13 @@ import (
 
 // ObserveNativeRoot uses ordinary observation consent for an explicitly selected
 // native subtree. It cannot substitute a whole-app observation for that subtree.
-func (h *Host) ObserveNativeRoot(ctx context.Context, p auth.Principal, surface model.Surface, root string) (model.Observation, error) {
+func (h *Host) ObserveNativeRoot(ctx context.Context, p auth.Principal, surface model.Surface, root string, nativeMenu ...string) (model.Observation, error) {
 	user, err := h.authorize(ctx, p)
 	if err != nil {
 		return model.Observation{}, err
+	}
+	if len(nativeMenu) > 1 || len(nativeMenu) == 1 && nativeMenu[0] != "" && (root != "menuBar" || !model.ValidNativeMenuName(nativeMenu[0]) || surface.ProcessID <= 0 || surface.ProcessStartToken == "") {
+		return model.Observation{}, fmt.Errorf("exact named menu and process required")
 	}
 	if surface.Kind != "native" || (root != "menuBar" && root != "focusedElement") {
 		return model.Observation{}, fmt.Errorf("supported native observation root required")
@@ -34,7 +37,7 @@ func (h *Host) ObserveNativeRoot(ctx context.Context, p auth.Principal, surface 
 		return model.Observation{}, auth.ErrUnauthorized
 	}
 	if gateway := h.nativeFor(p.Namespace); gateway != nil {
-		return gateway.ObserveNativeRoot(lease.Context, p, surface, root)
+		return gateway.ObserveNativeRoot(lease.Context, p, surface, root, nativeMenu...)
 	}
 	return model.Observation{}, fmt.Errorf("requested backend is not connected")
 }

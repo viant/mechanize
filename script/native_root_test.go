@@ -47,3 +47,32 @@ func TestNativeRootDSLAndCapabilities(t *testing.T) {
 		t.Fatal("closed workflow schema lacks native root enum")
 	}
 }
+
+func TestNamedMenuDSLNeedsExactProcessAndAdvertisedScope(t *testing.T) {
+	source := `app("com.fixture.Editor",processId:42,processStartToken:"100:1").menuBar(name:"Git").getByRole("AXMenuBarItem",name:"Git",exact:true).click()`
+	plan, err := Compile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Steps[0].Target.Scope.NativeMenu != "Git" || plan.Steps[0].Target.Scope.NativeRoot != "menuBar" {
+		t.Fatal("named menu lost")
+	}
+	caps := map[string]bool{"native:semanticPress": true, "native:roleLocator": true, "native:menuBarScope": true}
+	if (Registry{}).CheckCapabilities(plan, caps) == nil {
+		t.Fatal("old helper accepted named scope")
+	}
+	caps["native:menuScope"] = true
+	if err := (Registry{}).CheckCapabilities(plan, caps); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(plan)
+	decoded, err := DecodeJSON(bytes.NewReader(raw))
+	if err != nil || decoded.Steps[0].Target.Scope.NativeMenu != "Git" {
+		t.Fatal("named menu JSON lost", err)
+	}
+	for _, source := range []string{`app("com.fixture.Editor").menuBar(name:"Git").getById("x").click()`, `app("com.fixture.Editor",processId:42,processStartToken:"100:1").focusedElement(name:"Git").getById("x").click()`, `app("com.fixture.Editor",processId:42,processStartToken:"100:1").menuBar(name:"").getById("x").click()`} {
+		if _, err := Compile(source); err == nil {
+			t.Fatal("unbound menu accepted")
+		}
+	}
+}

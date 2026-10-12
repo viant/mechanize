@@ -46,7 +46,7 @@ func (g *Gateway) ListTabs(ctx context.Context, p auth.Principal) (TabInventory,
 			result.ObservedAt = c.inventoryAt
 		}
 		for _, d := range c.documents {
-			if d.FrameID == 0 {
+			if d.FrameID == 0 && allowedOrigin(c.grant, d.Origin) {
 				result.Documents = append(result.Documents, d)
 			}
 		}
@@ -76,6 +76,11 @@ func (g *Gateway) browserAction(ctx context.Context, p auth.Principal, surface m
 	c, d, err := g.broker.selectDocument(p, surface)
 	if err != nil {
 		return result, err
+	}
+	// Legacy direct entry points are retained solely for inert fixture tests.
+	// Production navigation/activation requires ExecuteControlBound.
+	if !c.fixtureOnly {
+		return result, browserError("bindingRequired", "Browser actions require committed v2 dispatch", "notDispatched")
 	}
 	if !c.grant.Principal.HasScope("desktop:control") {
 		return result, auth.ErrUnauthorized

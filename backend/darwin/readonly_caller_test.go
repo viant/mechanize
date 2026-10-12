@@ -34,6 +34,21 @@ func (f *readonlyFixture) Close() error {
 func readRequest(id string) Request {
 	return Request{RequestID: id, Method: "elements.snapshot", HelperEpoch: "old", DeadlineRemainingMS: 1000}
 }
+func TestReadOnlyPresentationReleaseNeverStartsReplacementHelper(t *testing.T) {
+	old := &readonlyFixture{call: func(context.Context, Request) (Reply, error) {
+		return Reply{}, &TransportError{Cause: context.DeadlineExceeded, DispatchState: "unknown"}
+	}}
+	creates := 0
+	r, _ := NewReadOnlyCaller(old, func(context.Context) (Caller, error) { creates++; return &readonlyFixture{}, nil })
+	defer r.Close()
+	_, _ = r.Call(context.Background(), readRequest("original"))
+	if _, err := r.Call(context.Background(), Request{Method: "controlBadge.releaseSession"}); err == nil {
+		t.Fatal("invalid original connection accepted")
+	}
+	if creates != 0 || len(old.requests) != 1 {
+		t.Fatal("presentation cleanup restarted or replayed helper")
+	}
+}
 func TestReadOnlyCallerNeverReplaysCancelledRequest(t *testing.T) {
 	old := &readonlyFixture{call: func(context.Context, Request) (Reply, error) {
 		return Reply{}, &TransportError{Cause: context.DeadlineExceeded, DispatchState: "unknown"}
@@ -64,7 +79,7 @@ func TestReadOnlyCallerRejectsMutationRecordingUnknownAndLeases(t *testing.T) {
 	f := &readonlyFixture{}
 	r, _ := NewReadOnlyCaller(f, func(context.Context) (Caller, error) { t.Fatal("factory invoked"); return nil, nil })
 	defer r.Close()
-	for _, method := range []string{"elements.replaceText", "elements.press", "elements.submit", "elements.setValue", "elements.focus", "elements.pressKey", "elements.pressSessionKey", "input.key", "input.releaseAll", "app.launch", "app.activate", "capture.image", "record.start", "record.events", "lease.install", "future.read"} {
+	for _, method := range []string{"elements.replaceText", "elements.press", "elements.submit", "elements.setValue", "elements.focus", "elements.pressKey", "elements.pressSessionKey", "input.key", "input.releaseAll", "app.launch", "app.activate", "app.quit", "capture.image", "record.start", "record.events", "lease.install", "future.read"} {
 		if _, err := r.Call(context.Background(), Request{Method: method}); err == nil {
 			t.Fatal("method admitted", method)
 		}
@@ -75,7 +90,7 @@ func TestReadOnlyCallerRejectsMutationRecordingUnknownAndLeases(t *testing.T) {
 	if len(f.requests) != 0 {
 		t.Fatal("denied method dispatched")
 	}
-	for _, method := range []string{"doctor", "apps.list", "windows.list", "elements.snapshot", "elements.read", "elements.valueMatches"} {
+	for _, method := range []string{"doctor", "apps.list", "app.exitStatus", "windows.list", "elements.snapshot", "elements.read", "elements.valueMatches"} {
 		if _, err := r.Call(context.Background(), Request{Method: method}); err != nil {
 			t.Fatal(method, err)
 		}

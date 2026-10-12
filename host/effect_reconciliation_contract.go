@@ -15,6 +15,7 @@ import (
 const nativeChromeExtensionsContract = "native.chrome.openExtensions.v1"
 const declaredEffectReconciliationContract = "plan.effect.reconcile"
 const declaredPostconditionReconciliationContract = "plan.postcondition.reconcile"
+const nativeQuitContract = "native.app.quit.v1"
 const nativeFocusContract = "native.focus.v1"
 
 func validateNativeEffectReconciliationEnrollment(allowed []string) error {
@@ -23,7 +24,7 @@ func validateNativeEffectReconciliationEnrollment(allowed []string) error {
 	}
 	seen := map[string]bool{}
 	for _, id := range allowed {
-		if (id != nativeChromeExtensionsContract && id != declaredEffectReconciliationContract && id != declaredPostconditionReconciliationContract && id != nativeFocusContract) || seen[id] {
+		if (id != nativeChromeExtensionsContract && id != declaredEffectReconciliationContract && id != declaredPostconditionReconciliationContract && id != nativeFocusContract && id != nativeQuitContract) || seen[id] {
 			return errors.New("unknown or duplicate native reconciliation enrollment")
 		}
 		seen[id] = true
@@ -51,6 +52,12 @@ func nativeEffectReconciliationResolver(allowed []string) func(context.Context, 
 		if surface.Kind != "native" || surface.BundleID == "" || surface.Origin != "" || surface.TabID != "" || surface.Title != "" || surface.ProcessID == 0 || surface.ValidateProcessIdentity() != nil || c.Step.Validate() != nil {
 			return durable.ReconciliationContract{}, errors.New("exact original native process fingerprint required")
 		}
+		if c.Step.Action == "app.quit" {
+			if !enrolled[nativeQuitContract] {
+				return durable.ReconciliationContract{}, errors.New("normal quit reconciliation is not enrolled")
+			}
+			return quitReconciliation(c)
+		}
 		if c.Step.Effect.Reconcile != nil {
 			if !enrolled[declaredEffectReconciliationContract] {
 				return durable.ReconciliationContract{}, errors.New("declared effect reconciliation is not enrolled")
@@ -64,8 +71,8 @@ func nativeEffectReconciliationResolver(allowed []string) func(context.Context, 
 			if err != nil {
 				return durable.ReconciliationContract{}, err
 			}
-			if contract.Predicate.Adapter != "native" || contract.Predicate.Name != "valueEquals" {
-				return durable.ReconciliationContract{}, errors.New("original native valueEquals postcondition required")
+			if contract.Predicate.Adapter != "native" || !nativeReconciliationPredicate(contract.Predicate.Name) {
+				return durable.ReconciliationContract{}, errors.New("original qualified native comparison postcondition required")
 			}
 			return validateDeclaredNativeReconciliation(c, contract)
 		}
@@ -135,8 +142,16 @@ func validateDeclaredNativeReconciliation(c durable.ReconciliationContext, contr
 		}
 	}
 	if contract.Predicate.Adapter == "native" {
-		if contract.Predicate.Name != "valueEquals" {
+		if !nativeReconciliationPredicate(contract.Predicate.Name) {
 			return durable.ReconciliationContract{}, errors.New("native reconciliation read is not qualified")
+		}
+		// Keep the original private comparison intact. Evaluation still requires
+		// control consent and fresh helper evidence, and never exports AXValue.
+		if contract.Predicate.Name == "literalValueMatches" {
+			attribute, expected := inputs["attribute"], inputs["expected"]
+			if attribute.Kind != model.StringValue || attribute.String != "value" || expected.Kind != model.StringValue || expected.Validate() != nil {
+				return durable.ReconciliationContract{}, errors.New("private reconciliation requires a value attribute and typed string expectation")
+			}
 		}
 		target, err := nativeReconciliationReadTarget(inputs)
 		if err != nil {
@@ -148,7 +163,7 @@ func validateDeclaredNativeReconciliation(c durable.ReconciliationContext, contr
 		// An explicit CG-window key may declare a narrower result root (for example a
 		// window key opening a focused editor). An already scoped original
 		// action cannot broaden or substitute its root.
-		if (c.Step.Action != "window.pressSessionKey" || c.Step.Target.Scope.NativeRoot != "") && target.Scope.NativeRoot != c.Step.Target.Scope.NativeRoot || contract.Predicate.Scope.Target != nil && scope.Scope.NativeRoot != target.Scope.NativeRoot {
+		if ((c.Step.Action != "window.pressSessionKey" && c.Step.Action != "window.typeText") || c.Step.Target.Scope.NativeRoot != "") && target.Scope.NativeRoot != c.Step.Target.Scope.NativeRoot || contract.Predicate.Scope.Target != nil && scope.Scope.NativeRoot != target.Scope.NativeRoot {
 			return durable.ReconciliationContract{}, errors.New("native predicate must preserve the original root scope")
 		}
 		if len(c.Step.Target.Scope.Window) > 0 && !sameReconciliationWindow(c.Step.Target.Scope.Window, target.Scope.Window, c.Values) {
@@ -173,6 +188,9 @@ func validateDeclaredNativeReconciliation(c durable.ReconciliationContext, contr
 		return durable.ReconciliationContract{}, err
 	}
 	return contract, nil
+}
+func nativeReconciliationPredicate(name string) bool {
+	return name == "valueEquals" || name == "literalValueMatches"
 }
 func sameReconciliationWindow(a, b map[string]model.Value, values map[string]model.Value) bool {
 	if len(a) == 0 || len(b) == 0 {
@@ -312,4 +330,30 @@ func chromeExtensionsReconciliation(c durable.ReconciliationContext) (durable.Re
 	contract := durable.ReconciliationContract{ID: nativeChromeExtensionsContract, Version: "1", Predicate: model.Predicate{Kind: "adapter", Adapter: "native", Name: "valueEquals", Inputs: inputs, Scope: model.PredicateScope{Target: &readTarget}, TimeoutMs: 5000, FreshnessMs: 3000, RequiredAuthority: "observational"}}
 	_, err = contract.Hash()
 	return contract, err
+}
+
+// nativeStepOutcomeAdmission reuses enrolled contract validation before input.
+// It evaluates no predicate, observes no application and changes no effect record.
+func nativeStepOutcomeAdmission(allowed []string) func(context.Context, auth.Principal, durable.ReconciliationContext) error {
+	resolver := nativeEffectReconciliationResolver(append([]string(nil), allowed...))
+	declared, post := false, false
+	for _, id := range allowed {
+		declared = declared || id == declaredEffectReconciliationContract
+		post = post || id == declaredPostconditionReconciliationContract
+	}
+	return func(ctx context.Context, p auth.Principal, c durable.ReconciliationContext) error {
+		if c.Step.Target.Surface.Kind != "native" || c.Step.Effect.Class == model.ReadOnly {
+			return nil
+		}
+		if c.Step.Effect.Reconcile != nil && declared {
+			_, err := resolver(ctx, p, c)
+			return err
+		}
+		predicate := c.Step.Postcondition
+		if predicate == nil || !post || predicate.Adapter != "native" || !nativeReconciliationPredicate(predicate.Name) {
+			return nil
+		}
+		_, err := resolver(ctx, p, c)
+		return err
+	}
 }

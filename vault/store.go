@@ -3,6 +3,8 @@ package vault
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"github.com/viant/mechanize/auth"
@@ -20,20 +22,25 @@ const maxCredentialBytes = 64 * 1024
 // host configuration; root/version/cipher cannot come from MCP or DSL inputs.
 type Store struct {
 	root    *os.Root
+	path    string
 	version string
 	cipher  kms.Cipher
 }
 type envelope struct {
 	Version    string `json:"version"`
 	Ciphertext []byte `json:"ciphertext"`
+	Namespace  string `json:"namespace,omitempty"`
+	Tag        []byte `json:"tag,omitempty"`
 }
 type payload struct {
-	Username []byte `json:"username"`
-	Password []byte `json:"password"`
+	Username     []byte `json:"username"`
+	Password     []byte `json:"password"`
+	Origin       string `json:"origin,omitempty"`
+	AccountAlias string `json:"accountAlias,omitempty"`
 }
 
 func NewStore(root, version string, cipher kms.Cipher) (*Store, error) {
-	if !filepath.IsAbs(root) || version == "" || len(version) > 128 || cipher == nil {
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root || !outsideGit(root) || version == "" || len(version) > 128 || cipher == nil {
 		return nil, ErrUnavailable
 	}
 	// Reject symlinks at every component before opening the anchored root.
@@ -61,7 +68,11 @@ func NewStore(root, version string, cipher kms.Cipher) (*Store, error) {
 		r.Close()
 		return nil, ErrUnavailable
 	}
-	return &Store{root: r, version: version, cipher: cipher}, nil
+	if !outsideGit(root) {
+		r.Close()
+		return nil, ErrUnavailable
+	}
+	return &Store{root: r, path: root, version: version, cipher: cipher}, nil
 }
 func (s *Store) Close() error { return s.root.Close() }
 func scoped(ctx context.Context, t Target) (string, string, error) {
@@ -75,6 +86,15 @@ func scoped(ctx context.Context, t Target) (string, string, error) {
 	return p.Namespace, identifier(p.Namespace, t), nil
 }
 func (s *Store) read(ctx context.Context, t Target) (Credentials, error) {
+	return s.readRevision(ctx, t, "")
+}
+
+// readRevision checks and decrypts the same opened ciphertext bytes. A separate
+// metadata lookup followed by a second open would not bind the consumed values.
+func (s *Store) readRevision(ctx context.Context, t Target, revision string) (Credentials, error) {
+	if !outsideGit(s.path) {
+		return Credentials{}, ErrUnavailable
+	}
 	ns, id, err := scoped(ctx, t)
 	if err != nil {
 		return Credentials{}, err
@@ -88,15 +108,27 @@ func (s *Store) read(ctx context.Context, t Target) (Credentials, error) {
 	}
 	defer f.Close()
 	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 2*maxCredentialBytes {
+	if err != nil || !privateVaultFile(info) || info.Size() > 2*maxCredentialBytes {
 		return Credentials{}, ErrUnavailable
 	}
 	b, err := io.ReadAll(io.LimitReader(f, 2*maxCredentialBytes))
 	if err != nil {
 		return Credentials{}, ErrUnavailable
 	}
+	if revision != "" {
+		digest := sha256.Sum256(b)
+		if subtle.ConstantTimeCompare([]byte(hex.EncodeToString(digest[:])), []byte(revision)) != 1 {
+			return Credentials{}, ErrConflict
+		}
+	}
 	var e envelope
 	if json.Unmarshal(b, &e) != nil || e.Version != s.version {
+		return Credentials{}, ErrUnavailable
+	}
+	if revision != "" && (e.Namespace != ns || len(e.Tag) != 32) {
+		return Credentials{}, ErrUnavailable
+	}
+	if (e.Namespace != "" || len(e.Tag) != 0) && (e.Namespace != ns || s.verifyEnvelope(ctx, id, e) != nil) {
 		return Credentials{}, ErrUnavailable
 	}
 	plain, err := s.cipher.Decrypt(ctx, &kms.Key{Raw: e.Version, Path: ns + ":" + id}, e.Ciphertext)
@@ -106,6 +138,16 @@ func (s *Store) read(ctx context.Context, t Target) (Credentials, error) {
 	defer clear(plain)
 	var value payload
 	if json.Unmarshal(plain, &value) != nil || len(value.Username) == 0 || len(value.Password) == 0 || len(value.Username)+len(value.Password) > maxCredentialBytes {
+		clear(value.Username)
+		clear(value.Password)
+		return Credentials{}, ErrUnavailable
+	}
+	if (value.Origin != "" || value.AccountAlias != "") && (value.Origin != t.Origin || value.AccountAlias != t.Account) {
+		clear(value.Username)
+		clear(value.Password)
+		return Credentials{}, ErrUnavailable
+	}
+	if revision != "" && (value.Origin != t.Origin || value.AccountAlias != t.Account) {
 		clear(value.Username)
 		clear(value.Password)
 		return Credentials{}, ErrUnavailable
@@ -125,6 +167,9 @@ func (s *Store) Lookup(ctx context.Context, t Target) (Reference, error) {
 
 // put is reachable only through Manager.Submit's verified native-human boundary.
 func (s *Store) put(ctx context.Context, t Target, username, password []byte) (Reference, error) {
+	if !outsideGit(s.path) {
+		return Reference{}, ErrUnavailable
+	}
 	ns, id, err := scoped(ctx, t)
 	if err != nil {
 		return Reference{}, err
@@ -132,7 +177,7 @@ func (s *Store) put(ctx context.Context, t Target, username, password []byte) (R
 	if len(username) == 0 || len(password) == 0 || len(username)+len(password) > maxCredentialBytes {
 		return Reference{}, ErrScope
 	}
-	plain, err := json.Marshal(payload{Username: username, Password: password})
+	plain, err := json.Marshal(payload{Username: username, Password: password, Origin: t.Origin, AccountAlias: t.Account})
 	if err != nil {
 		return Reference{}, ErrUnavailable
 	}
@@ -141,8 +186,19 @@ func (s *Store) put(ctx context.Context, t Target, username, password []byte) (R
 	if err != nil {
 		return Reference{}, ErrUnavailable
 	}
-	encoded, err := json.Marshal(envelope{Version: s.version, Ciphertext: b})
+	sealed := envelope{Version: s.version, Ciphertext: b, Namespace: ns}
+	signer, ok := s.cipher.(interface {
+		EnvelopeTag(context.Context, string, string, string, []byte) ([]byte, error)
+	})
+	if !ok {
+		return Reference{}, ErrUnavailable
+	}
+	sealed.Tag, err = signer.EnvelopeTag(ctx, s.version, ns, id, b)
 	if err != nil {
+		return Reference{}, ErrUnavailable
+	}
+	encoded, err := json.Marshal(sealed)
+	if err != nil || len(encoded) > 2*maxCredentialBytes {
 		return Reference{}, ErrUnavailable
 	}
 	var random [16]byte

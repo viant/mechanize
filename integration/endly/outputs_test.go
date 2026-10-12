@@ -121,3 +121,15 @@ func TestOperationOutputsRejectRunningAndFailure(t *testing.T) {
 		t.Fatal("failed output admitted")
 	}
 }
+
+func TestOpenOriginExportsOnlyOpaqueCreatedTabMetadata(t *testing.T) {
+	r := &Runtime{}
+	for _, value := range []model.Value{{Kind: model.StringValue, String: "profile/browser/42"}, {Kind: model.StringValue, String: "https://fixture.test/path"}, {Kind: model.StringValue, String: "PRIVATE_CANARY"}, {Kind: model.ObjectValue, Object: map[string]model.Value{"url": {Kind: model.StringValue, String: "https://fixture.test"}}}} {
+		p := &program{values: map[string]model.Value{}}
+		r.captureOutput(p, model.Step{Action: "browser.openOrigin", Bind: "createdTab"}, value)
+		saved := p.outputs["createdTab"]
+		if (saved.reason == "") != (value.Kind == model.StringValue && value.String == "profile/browser/42") {
+			t.Fatal("created-tab metadata projection leaked or rejected", saved)
+		}
+	}
+}

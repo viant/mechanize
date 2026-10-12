@@ -48,6 +48,40 @@ final class NativeTextFixture {
     }) }
 }
 final class NativeTextOperationsTests: XCTestCase {
+    func testComboLiteralComparisonReadsButCannotReplace() throws {
+        let fixture = NativeTextFixture()
+        fixture.role = "AXComboBox"; fixture.title = "Number Format"; fixture.value = "Percentage"
+        XCTAssertTrue(try nativeValueMatches(fixture.element, expected: "Percentage", revalidate: {}, runtime: fixture.runtime))
+        XCTAssertGreaterThan(fixture.valueReads, 0)
+        XCTAssertTrue(fixture.writes.isEmpty)
+        XCTAssertThrowsError(try replaceNativeText(fixture.element, expected: "General", verify: true, revalidate: {}, willMutate: { XCTFail("Comparison qualification must not permit a combo replacement") }, runtime: fixture.runtime))
+        XCTAssertTrue(fixture.writes.isEmpty)
+        fixture.subrole = "AXSecureComboBox"
+        fixture.valueReads = 0
+        XCTAssertThrowsError(try nativeValueMatches(fixture.element, expected: "Percentage", revalidate: {}, runtime: fixture.runtime))
+        XCTAssertEqual(fixture.valueReads, 0)
+    }
+    func testLiteralComparisonUsesCompleteRangeOnlyForAbsentValue() throws {
+        let fixture = NativeTextFixture()
+        fixture.value = "Sales report"; fixture.count = fixture.value.utf16.count
+        let base = fixture.runtime
+        var rangeReads = 0
+        let runtime = NativeTextRuntime(attribute: { element, name in
+            if name == kAXValueAttribute { return (.attributeUnsupported, nil) }
+            return base.attribute(element, name)
+        }, settable: base.settable, set: { _, _, _ in XCTFail("comparison must never write"); return .failure }, stringForRange: { _, range in
+            rangeReads += 1; XCTAssertEqual(range.location, 0); XCTAssertEqual(range.length, fixture.count)
+            return (.success, fixture.value as CFString)
+        })
+        XCTAssertTrue(try nativeValueMatches(fixture.element, expected: fixture.value, revalidate: {}, runtime: runtime))
+        XCTAssertGreaterThan(rangeReads, 0)
+        let failed = NativeTextRuntime(attribute: { element, name in
+            if name == kAXValueAttribute { return (.cannotComplete, nil) }
+            return base.attribute(element, name)
+        }, settable: base.settable, set: base.set, stringForRange: { _, _ in XCTFail("transport errors cannot use range fallback"); return (.success, fixture.value as CFString) })
+        XCTAssertThrowsError(try nativeValueMatches(fixture.element, expected: fixture.value, revalidate: {}, runtime: failed))
+    }
+
     func testExplicitWholeElementSelectionThenOneSelectedTextWriteAndIndependentProof() throws {
         let f = NativeTextFixture(); f.value = "prior"; f.count = 5
         var reserved = 0

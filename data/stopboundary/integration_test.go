@@ -2,7 +2,6 @@ package stopboundary_test
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"path/filepath"
 	"runtime"
@@ -18,16 +17,17 @@ import (
 	"github.com/viant/mechanize/data"
 	"github.com/viant/mechanize/data/loadrun"
 	"github.com/viant/mechanize/data/stopboundary"
+	"github.com/viant/mechanize/internal/datlytest"
 	"github.com/viant/xdatly/handler"
 )
 
 func ptr[T any](v T) *T { return &v }
 
 type fixture struct {
-	ctx    context.Context
-	p      auth.Principal
-	db     *sql.DB
-	server *standalone.Server
+	ctx      context.Context
+	p        auth.Principal
+	fixtures *standalone.Server
+	server   *standalone.Server
 }
 
 func openFixture(t *testing.T) *fixture {
@@ -45,7 +45,7 @@ func openFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite3", cfg.DSN)
+	fixtures, err := datlytest.Open(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,8 +58,8 @@ func openFixture(t *testing.T) *fixture {
 	if err = server.Reload(ctx, 1); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = server.Shutdown(context.Background()); _ = db.Close() })
-	return &fixture{ctx, p, db, server}
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()); _ = fixtures.Shutdown(context.Background()) })
+	return &fixture{ctx, p, fixtures, server}
 }
 func (f *fixture) seed(t *testing.T, name string) (data.StopBoundaryAuthority, context.Context) {
 	t.Helper()
@@ -67,20 +67,15 @@ func (f *fixture) seed(t *testing.T, name string) (data.StopBoundaryAuthority, c
 	run := data.ReconcileEffectKey("stop-run", name)
 	plan := data.ReconcileEffectKey("stop-plan", name)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	// SQL provisions an isolated test fixture only; behavior uses generated components.
-	for _, s := range []struct {
-		q string
-		a []any
-	}{
-		{"INSERT INTO plan_revisions(namespace,id,objective_id,content_hash,content_json,created_at) VALUES(?,?,?,?,?,?)", []any{ns, plan, run, "fixture-hash", "{}", now}},
-		{"INSERT INTO runs(namespace,id,plan_id,status,revision,endly_session_id,endly_operation_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)", []any{ns, run, plan, "running", 3, "session", "operation", now, now}},
-		{"INSERT INTO attempts(namespace,id,run_id,step_id,plan_id,lease_epoch,state,created_at) VALUES(?,?,?,?,?,?,?,?)", []any{ns, "attempt-" + run, run, "original-step", plan, 1, "intent", now}},
-		{"INSERT INTO effects(namespace,id,attempt_id,run_id,business_key,state,revision,evidence_json) VALUES(?,?,?,?,?,?,?,?)", []any{ns, "effect-" + run, "attempt-" + run, run, "original-key", "unknown", 2, `{"dispatchState":"dispatched","verificationState":"unknown"}`}},
-		{"INSERT INTO events(namespace,id,run_id,attempt_id,sequence,kind,payload_json,created_at) VALUES(?,?,?,?,?,?,?,?)", []any{ns, "outcome-" + run, run, "attempt-" + run, 1, "outcome", "original-outcome", now}},
-	} {
-		if _, err := f.db.ExecContext(f.ctx, s.q, s.a...); err != nil {
-			t.Fatal(err)
-		}
+	graph := &datlytest.Graph{
+		Plan:     &datlytest.Plan{Namespace: ns, ID: plan, ObjectiveID: run, ContentHash: "fixture-hash", ContentJSON: "{}", CreatedAt: now},
+		Run:      &datlytest.Run{Namespace: ns, ID: run, PlanID: plan, Status: "running", Revision: 3, SessionID: ptr("session"), OperationID: ptr("operation"), CreatedAt: now, UpdatedAt: now},
+		Attempts: []datlytest.Attempt{{Namespace: ns, ID: "attempt-" + run, RunID: run, StepID: "original-step", PlanID: plan, LeaseEpoch: 1, State: "intent", CreatedAt: now}},
+		Effects:  []datlytest.Effect{{Namespace: ns, ID: "effect-" + run, AttemptID: "attempt-" + run, RunID: run, BusinessKey: "original-key", State: "unknown", Revision: 2, EvidenceJSON: `{"dispatchState":"dispatched","verificationState":"unknown"}`}},
+		Events:   []datlytest.Event{{Namespace: ns, ID: "outcome-" + run, RunID: run, AttemptID: ptr("attempt-" + run), Sequence: 1, Kind: "outcome", PayloadJSON: "original-outcome", CreatedAt: now}},
+	}
+	if err := datlytest.Apply(f.ctx, f.fixtures, datlytest.Input{Namespace: ns, Mode: "graph", Graph: graph}); err != nil {
+		t.Fatal(err)
 	}
 	a := data.StopBoundaryAuthority{Namespace: ns, RunID: run, PlanID: plan, RequestID: "request-" + name, EndlySessionID: "session", EndlyOperationID: "operation", QuiescenceProof: "fixture-Endly-terminal-physical-fence-held", RunRevision: 3, AuditSequence: 2, Now: now}
 	guard, err := data.WithStateMutationPermit(f.ctx, ns, run)
@@ -216,7 +211,7 @@ func TestGeneratedStopBoundaryRejectsUntrustedStaleOrForgedIngress(t *testing.T)
 			case "changedCursor":
 				a.AuditSequence = 8
 			case "terminal":
-				if _, err := f.db.Exec("UPDATE runs SET status='failed' WHERE namespace=? AND id=?", a.Namespace, a.RunID); err != nil {
+				if err := datlytest.Apply(f.ctx, f.fixtures, datlytest.Input{Namespace: a.Namespace, Mode: "failedRun", RunID: a.RunID}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -281,7 +276,7 @@ func TestGeneratedStopBoundaryRollsBackRunWhenAuditInsertFails(t *testing.T) {
 	other, _ := f.seed(t, "collision-holder")
 	ctx, a := authority(t, g, a)
 	// Force a database uniqueness failure after validation, using only disposable fixture setup.
-	if _, err := f.db.Exec("INSERT INTO events(namespace,id,run_id,sequence,kind,payload_json,created_at) VALUES(?,?,?,?,?,?,?)", a.Namespace, a.AuditID, other.RunID, 2, "fixture", "{}", a.Now); err != nil {
+	if err := datlytest.Apply(f.ctx, f.fixtures, datlytest.Input{Namespace: a.Namespace, Mode: "graph", Graph: &datlytest.Graph{Events: []datlytest.Event{{Namespace: a.Namespace, ID: a.AuditID, RunID: other.RunID, Sequence: 2, Kind: "fixture", PayloadJSON: "{}", CreatedAt: a.Now}}}}); err != nil {
 		t.Fatal(err)
 	}
 	o, err := f.invoke(ctx, body(a))

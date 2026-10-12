@@ -1,0 +1,10 @@
+#package('github.com/viant/mechanize/internal/datlytest/auditcounts')
+#setting($_ = $input_type('AuditCountsInput'))
+#setting($_ = $output_type('AuditCountsOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/test/auditcounts', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $Data<[]*Counts>(output/view))
+SELECT counts.*,type(counts,'Counts'),CAST(counts.deliveries AS int),CAST(counts.preparations AS int)
+FROM (${embed:sql/root.sql}) counts

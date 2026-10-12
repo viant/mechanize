@@ -98,6 +98,10 @@ func (b *Builder) CompleteObjective(ctx context.Context, p auth.Principal, reque
 		result.VerificationState = "unknown"
 		result.Reason = "Endly execution failed; business objective remains unverified and stopped run requires attention"
 	case manager.OperationCancelled:
+		if request.PauseRequested {
+			result.Reason = "Endly operation stopped for owner-requested pause"
+			break
+		}
 		target = "cancelled"
 		result.BusinessStatus = "cancelled"
 		result.Reason = "Endly operation cancelled"

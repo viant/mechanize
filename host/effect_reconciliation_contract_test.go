@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -436,5 +437,127 @@ func TestAppWideWindowKeyOutcomeCanNarrowToOriginalDeclaredFocusRoot(t *testing.
 	c.Step.Target.Scope.NativeRoot = "menuBar"
 	if _, err := resolver(ctx, p, c); err == nil {
 		t.Fatal("different original root accepted")
+	}
+}
+
+func TestPrivateNativeReconciliationRetainsOriginalComparison(t *testing.T) {
+	ctx, principal := reconciliationActor(t)
+	for _, declared := range []bool{false, true} {
+		for _, expected := range []string{"", "Regional sales analysis"} {
+			c := scopedOriginalPostconditionContext("focusedElement", false)
+			c.Step.Postcondition.Name = "literalValueMatches"
+			c.Step.Postcondition.Inputs["attribute"] = reconciliationString("value")
+			c.Step.Postcondition.Inputs["expected"] = model.Value{Kind: model.ReferenceValue, Ref: "input.originalText", Expected: model.StringValue}
+			c.Values["input.originalText"] = reconciliationString(expected)
+			id := declaredPostconditionReconciliationContract
+			if declared {
+				c.Step.Effect.Reconcile, c.Step.Postcondition = c.Step.Postcondition, nil
+				id = declaredEffectReconciliationContract
+			}
+			contract, err := nativeEffectReconciliationResolver([]string{id})(ctx, principal, c)
+			if err != nil || contract.ID != id || contract.Predicate.Name != "literalValueMatches" || !reflect.DeepEqual(contract.Predicate.Inputs["expected"], reconciliationString(expected)) || contract.Predicate.Inputs["nativeRoot"].String != "focusedElement" {
+				t.Fatalf("original private comparison changed: %+v %v", contract, err)
+			}
+		}
+	}
+}
+
+func TestPrivateNativeReconciliationRejectsChangedScopeAndTypes(t *testing.T) {
+	ctx, principal := reconciliationActor(t)
+	for _, change := range []string{"attribute", "expectedType", "missingExpected", "birth", "root", "window", "predicate"} {
+		t.Run(change, func(t *testing.T) {
+			c := scopedOriginalPostconditionContext("focusedElement", false)
+			pred := c.Step.Postcondition
+			pred.Name = "literalValueMatches"
+			pred.Inputs["attribute"] = reconciliationString("value")
+			pred.Inputs["expected"] = reconciliationString("original text")
+			switch change {
+			case "attribute":
+				pred.Inputs["attribute"] = reconciliationString("name")
+			case "expectedType":
+				pred.Inputs["expected"] = model.Value{Kind: model.BoolValue, Bool: true}
+			case "missingExpected":
+				delete(pred.Inputs, "expected")
+			case "birth":
+				pred.Inputs["processStartToken"] = reconciliationString("1790968111:309053")
+			case "root":
+				pred.Inputs["nativeRoot"] = reconciliationString("menuBar")
+			case "window":
+				c.Step.Target.Scope.Window = map[string]model.Value{"title": reconciliationString("Original")}
+			case "predicate":
+				pred.Name = "otherPrivateRead"
+			}
+			if _, err := nativeEffectReconciliationResolver([]string{declaredPostconditionReconciliationContract})(ctx, principal, c); err == nil {
+				t.Fatal("invalid private reconciliation accepted")
+			}
+		})
+	}
+}
+
+func TestPrivateReconciliationEvaluatesFreshMatcherWithoutValueExport(t *testing.T) {
+	for _, mode := range []string{"match", "different", "missingEvidence", "observeOnly"} {
+		t.Run(mode, func(t *testing.T) {
+			scopes := []string{"desktop:observe", "desktop:control"}
+			if mode == "observeOnly" {
+				scopes = []string{"desktop:observe"}
+			}
+			principal, err := auth.NewPrincipal("fixture", "", "alice", scopes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := auth.WithPrincipal(context.Background(), principal)
+			c := scopedOriginalPostconditionContext("focusedElement", false)
+			c.Step.Postcondition.Name = "literalValueMatches"
+			c.Step.Postcondition.Inputs["attribute"] = reconciliationString("value")
+			c.Step.Postcondition.Inputs["expected"] = reconciliationString("known disposable text")
+			contract, err := nativeEffectReconciliationResolver([]string{declaredPostconditionReconciliationContract})(ctx, principal, c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			adapter, err := objective.NewNativeWithMatcher(func(context.Context, auth.Principal, model.Selector, string) (model.Value, objective.NativeEvidence, error) {
+				t.Fatal("private reconciliation exported ordinary AXValue")
+				return model.Value{}, objective.NativeEvidence{}, nil
+			}, func(_ context.Context, _ auth.Principal, target model.Selector, expected string) (bool, objective.NativeEvidence, error) {
+				calls++
+				if target.Surface != c.Step.Target.Surface || target.Scope.NativeRoot != "focusedElement" || expected != "known disposable text" {
+					t.Fatal("original comparison scope or value changed")
+				}
+				proof := objective.NativeEvidence{HelperEpoch: "fresh-epoch", TargetRef: "fresh-field", ObservedAt: time.Now()}
+				if mode == "missingEvidence" {
+					proof.TargetRef = ""
+				}
+				return mode != "different", proof, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			evaluator, err := objective.New(map[string]objective.Enrollment{"native": adapter.Enrollment()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := evaluator.Evaluate(ctx, principal, contract.Predicate, c.Values)
+			if mode == "observeOnly" {
+				// The evaluator may return a denied adapter read as Unknown.
+				if calls != 0 || (err == nil && result.Truth != objective.Unknown) {
+					t.Fatal("observation-only identity reached private matcher")
+				}
+				return
+			}
+			want := objective.True
+			if mode == "different" {
+				want = objective.False
+			}
+			if mode == "missingEvidence" {
+				want = objective.Unknown
+			}
+			if err != nil || result.Truth != want || calls != 1 {
+				t.Fatalf("fresh comparison incorrectly evaluated %+v %v", result, err)
+			}
+			raw, _ := json.Marshal(result)
+			if strings.Contains(string(raw), "known disposable text") || objective.RequireBusinessSuccess(result) == nil {
+				t.Fatal("private UI evidence leaked content or claimed business success")
+			}
+		})
 	}
 }

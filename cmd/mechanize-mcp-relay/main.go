@@ -26,6 +26,7 @@ import (
 	"github.com/viant/jsonrpc/transport"
 	"github.com/viant/jsonrpc/transport/client/http/streamable"
 	base "github.com/viant/jsonrpc/transport/server/base"
+	"github.com/viant/mechanize/internal/devcredential"
 	"github.com/viant/scy"
 )
 
@@ -60,6 +61,9 @@ func privateFileInfo(info os.FileInfo) bool {
 	return ok && int(stat.Uid) == os.Getuid() && info.Mode().IsRegular() && info.Mode().Perm()&0077 == 0 && info.Size() <= 1<<20
 }
 func credential(ctx context.Context, path string) (string, error) {
+	if token, handled, err := devcredential.Load(ctx, path); err != nil || handled {
+		return token, err
+	}
 	data, err := privateRead(path)
 	if err != nil {
 		return "", err

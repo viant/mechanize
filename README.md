@@ -68,9 +68,17 @@ resources; do not put secret values in client arguments. For Codex, a relay can
 connect stdio to an already-running loopback broker; see
 [the Codex MCP connection guide](docs/codex-mcp-connection.md). Once connected,
 discover the tools the host actually advertises. Skill guidance is available
-through the compatibility tools `skill_list` and `skill_get`, and through
-skill resources whose roots use URIs such as
-`skill://mechanize-desktop/SKILL.md`.
+through the protocol methods `skills/list` and `skills/get`, the compatibility
+tools `skill_list` and `skill_get`, and `resources/read`. For example,
+`skill_get` accepts `{"uri":"skill://mechanize-desktop/SKILL.md"}`.
+
+Each enrolled user may configure `skillDirectories` with absolute paths to
+private, dedicated skill folders outside the source repository. Each root
+contains named subdirectories with `SKILL.md` entrypoints. Mechanize rejects
+symlinks, writable shared roots, oversized content, and duplicate skill URIs.
+Local guides join the bundled catalog as immutable snapshots for that user's
+MCP connection; reconnect after editing a guide. Skill resources expose guidance
+only, never Vault records or arbitrary filesystem paths.
 
 ## Typed DSL
 
@@ -128,3 +136,23 @@ credentials and personal recordings out of issues and pull requests. A useful
 app procedure includes preconditions, observed selectors, expected outcome,
 and recovery behavior; passing a parser or mock test alone does not qualify it
 for live use.
+
+### Product capabilities and app skills
+
+Mechanize owns reusable observation/control, capability discovery, consent,
+secure local credential references, recording, durable effects and recovery.
+Endly owns orchestration. App and site skills supply verified interaction knowledge,
+parameterized procedures and outcome checks; a skill never grants access or turns
+an unsupported API into a qualified capability.
+
+When qualification finds a generally useful missing behavior, implement it in
+Mechanize's native/browser adapter or shared closed DSL, test its safety boundary,
+and qualify it through MCP and Endly before documenting support in a skill.
+App-specific names and workflows stay in app/site guides. Source-only improvements
+and historical unknown effects must remain explicit in those guides.
+
+## Credits and Acknowledgements
+
+**Library Authors:**
+
+- Adrian Witas

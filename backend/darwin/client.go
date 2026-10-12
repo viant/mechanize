@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/viant/mechanize/model"
 	"github.com/viant/mechanize/session"
 	"io"
 	"os"
@@ -29,6 +30,7 @@ type Lease struct {
 	Generation uint64 `json:"generation"`
 }
 type Request struct {
+	PresentationSession string          `json:"presentationSession,omitempty"`
 	ProtocolVersion     int             `json:"protocolVersion"`
 	RequestID           string          `json:"requestId"`
 	Method              string          `json:"method"`
@@ -45,22 +47,43 @@ type Receipt struct {
 	TargetRef     string `json:"targetRef,omitempty"`
 }
 type NativeError struct {
-	Code          string `json:"code"`
-	Message       string `json:"message"`
-	Stage         string `json:"stage"`
-	RetryableRead bool   `json:"retryableRead"`
-	DispatchState string `json:"dispatchState"`
+	protocolQualified bool   // set only after correlated helper transport validation
+	Code              string `json:"code"`
+	Message           string `json:"message"`
+	Stage             string `json:"stage"`
+	RetryableRead     bool   `json:"retryableRead"`
+	DispatchState     string `json:"dispatchState"`
 }
 
 func (e *NativeError) Error() string { return e.Code + ": " + e.Message }
 
+// NativeExecutionFailure exposes only closed native metadata from a correlated
+// helper reply. Constructed/decoded errors alone do not carry this provenance.
+func (e *NativeError) NativeExecutionFailure() (string, string, bool) {
+	if e == nil || !e.protocolQualified || e.Stage != "native" || !model.NativeExecutionFailureCode(e.Code) {
+		return "", "", false
+	}
+	if e.DispatchState != "notDispatched" && e.DispatchState != "dispatched" && e.DispatchState != "unknown" {
+		return "", "", false
+	}
+	return e.Code, e.DispatchState, true
+}
+
+type ForegroundAcquisition struct {
+	Version              int  `json:"version"`
+	ActivationRequested  bool `json:"activationRequested"`
+	WindowRaiseRequested bool `json:"windowRaiseRequested"`
+	Confirmed            bool `json:"confirmed"`
+}
+
 type Reply struct {
-	ProtocolVersion int             `json:"protocolVersion"`
-	RequestID       string          `json:"requestId"`
-	HelperEpoch     string          `json:"helperEpoch"`
-	Result          json.RawMessage `json:"result,omitempty"`
-	Error           *NativeError    `json:"error,omitempty"`
-	Receipt         *Receipt        `json:"receipt,omitempty"`
+	ForegroundAcquisition *ForegroundAcquisition `json:"foregroundAcquisition,omitempty"`
+	ProtocolVersion       int                    `json:"protocolVersion"`
+	RequestID             string                 `json:"requestId"`
+	HelperEpoch           string                 `json:"helperEpoch"`
+	Result                json.RawMessage        `json:"result,omitempty"`
+	Error                 *NativeError           `json:"error,omitempty"`
+	Receipt               *Receipt               `json:"receipt,omitempty"`
 }
 
 // TransportError carries conservative mutation uncertainty after any request
@@ -74,8 +97,11 @@ func (e *TransportError) Error() string { return "native transport: " + e.Cause.
 func (e *TransportError) Unwrap() error { return e.Cause }
 
 type Options struct {
-	HelperPath     string
-	AllowMutations bool
+	Console *ConsoleLaunchOptions
+	// PrivateAdministration is a broker-only read profile; no ordinary AX/input routes.
+	PrivateAdministration bool
+	HelperPath            string
+	AllowMutations        bool
 	// AllowLaunch grants only application lifecycle authority, never AX/input.
 	AllowLaunch bool
 	// AllowSemantic is the development AX-only profile; raw input remains disabled.
@@ -84,6 +110,7 @@ type Options struct {
 	// AllowSessionKeyboard explicitly grants login-session event delivery. It is
 	// never inferred from process-targeted keyboard or used as a retry fallback.
 	AllowSessionKeyboard bool
+	AllowSessionText     bool
 	// AllowWindowFrameClick grants only one-use capture-bound window clicks.
 	AllowWindowFrameClick bool
 	// AllowRecording grants passive capture only; no input/fence authority.
@@ -98,6 +125,7 @@ type Options struct {
 	Fence    *os.File
 }
 type Client struct {
+	consoleChild     *consoleChild
 	command          *exec.Cmd
 	input            io.WriteCloser
 	output           io.ReadCloser
@@ -118,11 +146,11 @@ func NewClient(ctx context.Context, options Options) (*Client, error) {
 	if options.HelperPath == "" {
 		return nil, errors.New("native helper path is required")
 	}
-	if (options.AllowTargetedKeyboard || options.AllowSessionKeyboard || options.AllowWindowFrameClick) && (!options.AllowSemantic || options.AllowMutations || options.AllowLaunch || options.AllowRecording) {
+	if (options.AllowTargetedKeyboard || options.AllowSessionKeyboard || options.AllowSessionText || options.AllowWindowFrameClick) && (!options.AllowSemantic || options.AllowMutations || options.AllowLaunch || options.AllowRecording) {
 		return nil, errors.New("native input routes require explicit semantic composite profile")
 	}
 	profiles := 0
-	for _, enabled := range []bool{options.AllowMutations, options.AllowLaunch, options.AllowSemantic, options.AllowRecording} {
+	for _, enabled := range []bool{options.AllowMutations, options.AllowLaunch, options.AllowSemantic, options.AllowRecording, options.PrivateAdministration} {
 		if enabled {
 			profiles++
 		}
@@ -146,6 +174,9 @@ func NewClient(ctx context.Context, options Options) (*Client, error) {
 	}
 	defer handshake.close()
 	args := []string{}
+	if options.PrivateAdministration {
+		args = append(args, "--private-administration")
+	}
 	if options.AllowMutations {
 		args = append(args, "--allow-mutations")
 	} else if options.AllowLaunch {
@@ -157,6 +188,9 @@ func NewClient(ctx context.Context, options Options) (*Client, error) {
 	}
 	if options.AllowTargetedKeyboard {
 		args = append(args, "--allow-targeted-keyboard")
+	}
+	if options.AllowSessionText {
+		args = append(args, "--allow-session-text")
 	}
 	if options.AllowSessionKeyboard {
 		args = append(args, "--allow-session-keyboard")
@@ -195,22 +229,47 @@ func NewClient(ctx context.Context, options Options) (*Client, error) {
 		}
 	}()
 	command.Stderr = options.Stderr
-	input, err := command.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-	output, err := command.StdoutPipe()
-	if err != nil {
-		input.Close()
-		return nil, err
-	}
-	if err = command.Start(); err != nil {
-		input.Close()
-		output.Close()
-		return nil, err
+	var input io.WriteCloser
+	var output io.ReadCloser
+	var remote *consoleChild
+	if options.Console != nil {
+		stdinRead, stdinWrite, e := os.Pipe()
+		if e != nil {
+			return nil, e
+		}
+		defer stdinRead.Close()
+		stdoutRead, stdoutWrite, e := os.Pipe()
+		if e != nil {
+			stdinWrite.Close()
+			return nil, e
+		}
+		defer stdoutWrite.Close()
+		remote, err = launchConsoleHelper(ctx, options, handshake, args, []*os.File{stdinRead, stdoutWrite, artifact, heartbeatRead, fence})
+		if err != nil {
+			stdinWrite.Close()
+			stdoutRead.Close()
+			return nil, err
+		}
+		input = stdinWrite
+		output = stdoutRead
+	} else {
+		input, err = command.StdinPipe()
+		if err != nil {
+			return nil, err
+		}
+		output, err = command.StdoutPipe()
+		if err != nil {
+			input.Close()
+			return nil, err
+		}
+		if err = command.Start(); err != nil {
+			input.Close()
+			output.Close()
+			return nil, err
+		}
 	}
 	launched = true
-	client := &Client{command: command, input: input, output: output, lane: make(chan struct{}, 1), stopped: make(chan struct{}), watchdog: heartbeatWrite, closeSignal: make(chan struct{}), inputPossible: options.AllowMutations || options.AllowTargetedKeyboard || options.AllowSessionKeyboard || options.AllowWindowFrameClick, businessPossible: options.AllowMutations || options.AllowLaunch || options.AllowSemantic, trustRequired: handshake != nil}
+	client := &Client{consoleChild: remote, command: command, input: input, output: output, lane: make(chan struct{}, 1), stopped: make(chan struct{}), watchdog: heartbeatWrite, closeSignal: make(chan struct{}), inputPossible: options.AllowMutations || options.AllowTargetedKeyboard || options.AllowSessionKeyboard || options.AllowSessionText || options.AllowWindowFrameClick, businessPossible: options.AllowMutations || options.AllowLaunch || options.AllowSemantic, trustRequired: handshake != nil}
 	go func() {
 		ticker := time.NewTicker(250 * time.Millisecond)
 		defer ticker.Stop()
@@ -227,7 +286,7 @@ func NewClient(ctx context.Context, options Options) (*Client, error) {
 			}
 		}
 	}()
-	go func() { client.waitErr = command.Wait(); close(client.stopped) }()
+	go client.waitForExit()
 	if handshake != nil {
 		identity, authErr := handshake.authenticate(ctx, client.PID())
 		if authErr != nil {
@@ -324,6 +383,9 @@ func (c *Client) Call(ctx context.Context, request Request) (Reply, error) {
 			return empty, &TransportError{value.err, "unknown"}
 		}
 		if value.reply.Error != nil {
+			// The gateway retains receipt conflict checks; diagnostic provenance does
+			// not reinterpret a mismatched epoch or an unconfirmed transport outcome.
+			value.reply.Error.protocolQualified = request.HelperEpoch != "" && value.reply.HelperEpoch == request.HelperEpoch
 			return value.reply, value.reply.Error
 		}
 		return value.reply, nil
@@ -335,23 +397,43 @@ func (c *Client) Call(ctx context.Context, request Request) (Reply, error) {
 		return empty, &TransportError{context.DeadlineExceeded, "unknown"}
 	}
 }
+func (c *Client) waitForExit() {
+	if c.consoleChild != nil {
+		c.waitErr = c.consoleChild.wait()
+		if !c.consoleChild.reaped.Load() {
+			// App loss revokes input/heartbeat immediately, without inventing exit proof.
+			_ = c.watchdog.Close()
+			_ = c.input.Close()
+		}
+	} else {
+		c.waitErr = c.command.Wait()
+	}
+	close(c.stopped)
+}
+
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
 		close(c.closeSignal)
 		c.watchdog.Close()
 		c.input.Close()
+		if c.consoleChild != nil {
+			c.consoleChild.stop()
+		}
 		// Give the independent helper watchdog a bounded cleanup opportunity.
 		select {
 		case <-c.stopped:
 		case <-time.After(300 * time.Millisecond):
 		}
-		if c.command.Process != nil {
+		if c.consoleChild == nil && c.command != nil && c.command.Process != nil {
 			_ = c.command.Process.Kill()
 		}
 		c.output.Close()
 	})
 	select {
 	case <-c.stopped:
+		if c.consoleChild != nil && !c.consoleChild.reaped.Load() {
+			return fmt.Errorf("console helper teardown unconfirmed")
+		}
 		return nil
 	case <-time.After(time.Second):
 		return fmt.Errorf("helper teardown exceeded one second")
@@ -398,7 +480,10 @@ func readFrameBounded(reader io.Reader, maximum int) ([]byte, error) {
 
 // PID identifies the supervised helper for diagnostics, never an input target.
 func (c *Client) PID() int {
-	if c.command.Process == nil {
+	if c.consoleChild != nil {
+		return c.consoleChild.pid
+	}
+	if c.command == nil || c.command.Process == nil {
 		return 0
 	}
 	return c.command.Process.Pid

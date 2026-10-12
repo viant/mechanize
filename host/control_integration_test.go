@@ -157,8 +157,9 @@ func (f *hostDispatchHelper) Call(ctx context.Context, request native.Request) (
 	return reply, nil
 }
 func TestHostNativeDispatchConsentCleanup(t *testing.T) {
-	for _, mode := range []string{"clean", "launch-only", "disconnect", "cancel", "slow-persistence", "persistence-outage"} {
+	for _, mode := range []string{"clean", "launch-only", "disconnect", "cancel", "slow-persistence", "persistence-outage", "reusable-disconnect", "reusable-cancel", "reusable-persistence-outage"} {
 		unknown := mode != "clean" && mode != "launch-only"
+		reusable := strings.HasPrefix(mode, "reusable-")
 		t.Run(fmt.Sprintf("cleanup=%s", mode), func(t *testing.T) {
 			h, f := hostControlFixture(t)
 
@@ -189,7 +190,7 @@ func TestHostNativeDispatchConsentCleanup(t *testing.T) {
 				Invoke: func(ctx context.Context, p auth.Principal, request exec.ComponentRequest) (any, error) {
 					if strings.HasSuffix(request.Target.Route.Path, "/consentrevoke") {
 						cleanupWrites++
-						if mode == "persistence-outage" {
+						if strings.HasSuffix(mode, "persistence-outage") {
 							// The injected database reports an unconfirmed timed-out write.
 							return nil, context.DeadlineExceeded
 						}
@@ -224,13 +225,21 @@ func TestHostNativeDispatchConsentCleanup(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			decision, _ := json.Marshal(map[string]any{"requestID": request.ID, "decision": consent.AllowSession})
+			decisionKind := consent.AllowSession
+			if reusable {
+				decisionKind = consent.AllowUntilRevoked
+			}
+			decision, _ := json.Marshal(map[string]any{"requestID": request.ID, "decision": decisionKind})
 			value, err := h.consent.NativeRPC(human, "decide", decision)
 			if err != nil {
 				t.Fatal(err)
 			}
 			grant := value.(*consent.Grant)
-			bound := auth.WithConsentBinding(f.ctx, auth.ConsentBinding{SessionID: "fixture-session", GrantID: grant.ID, Purpose: in.Purpose})
+			requestedGrantID := grant.ID
+			if reusable {
+				requestedGrantID = ""
+			}
+			bound := auth.WithConsentBinding(f.ctx, auth.ConsentBinding{SessionID: "fixture-session", GrantID: requestedGrantID, Purpose: in.Purpose})
 			epoch, err := h.controlLeaseEpoch(bound, f.principal)
 			if err != nil {
 				t.Fatal(err)
@@ -239,7 +248,7 @@ func TestHostNativeDispatchConsentCleanup(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if mode == "cancel" {
+			if mode == "cancel" || mode == "reusable-cancel" {
 				var cancel context.CancelFunc
 				bound, cancel = context.WithCancel(bound)
 				helper.dispatchCancel = cancel
@@ -251,6 +260,9 @@ func TestHostNativeDispatchConsentCleanup(t *testing.T) {
 				step.Target.Locator = nil
 			}
 			result, err := h.execute(bound, f.principal, step, nil)
+			if binding, ok := auth.ConsentBindingFromContext(bound); !ok || binding.GrantID != requestedGrantID {
+				t.Fatal("cleanup changed caller consent binding")
+			}
 			if helper.mutations != 1 {
 				t.Fatalf("dispatch count %d", helper.mutations)
 			}
@@ -258,7 +270,7 @@ func TestHostNativeDispatchConsentCleanup(t *testing.T) {
 				if !errors.Is(err, ErrNativeControlCleanupUnknown) || result.DispatchState != "unknown" {
 					t.Fatalf("unknown cleanup: %+v %v", result, err)
 				}
-				if mode == "persistence-outage" {
+				if strings.HasSuffix(mode, "persistence-outage") {
 					var actionable *model.MechanizeError
 					if !errors.Is(err, ErrNativeControlCleanupPersistence) || !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &actionable) || actionable.Code != "cleanupPersistenceUnknown" || actionable.RetryableRead {
 						t.Fatalf("missing actionable persistence failure: %v", err)

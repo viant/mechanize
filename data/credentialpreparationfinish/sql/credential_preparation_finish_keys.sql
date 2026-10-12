@@ -1,0 +1,1 @@
+SELECT Namespace AS Namespace, ClientId AS ClientId, PreparationId AS PreparationId FROM `/`

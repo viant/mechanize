@@ -25,7 +25,7 @@ func (Registry) Describe() []Definition {
 	definitions := []Definition{
 		{Name: "app", Arguments: []model.ValueKind{model.StringValue}, Result: "app", Effect: model.ReadOnly, Options: map[string]model.ValueKind{"processId": model.NumberValue, "processStartToken": model.StringValue}},
 		{Name: "web.tab", Result: "page", Effect: model.ReadOnly, Options: map[string]model.ValueKind{"origin": model.StringValue, "title": model.StringValue, "id": model.StringValue}},
-		{Name: "menuBar", Receivers: []string{"app"}, Result: "app", Effect: model.ReadOnly, Capabilities: []string{"menuBarScope"}},
+		{Name: "menuBar", Options: map[string]model.ValueKind{"name": model.StringValue}, Receivers: []string{"app"}, Result: "app", Effect: model.ReadOnly, Capabilities: []string{"menuBarScope"}},
 		{Name: "focusedElement", Receivers: []string{"app"}, Result: "app", Effect: model.ReadOnly, Capabilities: []string{"focusedElementScope"}},
 		{Name: "window", Receivers: []string{"app"}, Result: "window", Effect: model.ReadOnly}, {Name: "frame", Receivers: []string{"page"}, Result: "frame", Effect: model.ReadOnly, Capabilities: []string{"frameScope"}},
 		{Name: "getByRole", Receivers: []string{"app", "window", "page", "frame", "locator"}, Result: "locator", Effect: model.ReadOnly, Capabilities: []string{"roleLocator"}},
@@ -36,6 +36,10 @@ func (Registry) Describe() []Definition {
 		{Name: "getByTestId", Options: map[string]model.ValueKind{"exact": model.BoolValue}, DefaultOptions: map[string]model.Value{"exact": {Kind: model.BoolValue, Bool: true}}, Receivers: []string{"app", "window", "page", "frame", "locator"}, Result: "locator", Effect: model.ReadOnly, Capabilities: []string{"testIdLocator"}},
 	}
 	for _, a := range model.Actions() {
+		// Canonical-only actions are invoked by their tracked convenience tool.
+		if a.Method == "" {
+			continue
+		}
 		effect := model.ExternalNonIdempotent
 		result := "void"
 		if a.ReadOnly {
@@ -49,11 +53,18 @@ func (Registry) Describe() []Definition {
 			args = append(args, a.ArgumentType)
 		}
 		receivers := []string{"locator"}
-		if a.Method == "open" || a.Method == "activate" || a.Method == "pressWindowKey" || a.Method == "clickWindowFrame" {
+		if a.Method == "navigate" || a.Method == "activateTab" {
+			receivers = []string{"page"}
+		}
+		if a.Method == "open" || a.Method == "activate" || a.Method == "quit" || a.Method == "pressWindowKey" || a.Method == "typeWindowText" || a.Method == "clickWindowFrame" {
 			receivers = []string{"app"}
 		}
 		if a.Method == "expect" {
 			receivers = []string{"app", "window", "page", "frame", "locator"}
+		}
+		if a.Method == "typeWindowText" {
+			definitions = append(definitions, Definition{Action: a.Action, Name: a.Method, Receivers: receivers, Result: result, Effect: effect, Capabilities: []string{a.Capability}, Options: map[string]model.ValueKind{"windowId": model.NumberValue, "text": model.StringValue, "focusRole": model.StringValue, "focusIdentifier": model.StringValue, "focusName": model.StringValue, "timeout": model.DurationValue}})
+			continue
 		}
 		if a.Method == "pressWindowKey" {
 			definitions = append(definitions, Definition{Action: a.Action, Name: a.Method, Receivers: receivers, Result: result, Effect: effect, Capabilities: []string{a.Capability}, Options: map[string]model.ValueKind{"windowId": model.NumberValue, "key": model.StringValue, "timeout": model.DurationValue}})
@@ -86,6 +97,9 @@ func (Registry) CheckCapabilities(plan *model.Plan, supported map[string]bool) e
 			return fmt.Errorf("step %s requires checkedObservation capability", s.ID)
 		}
 		for target := &s.Target; target != nil; target = target.Ancestor {
+			if target.Scope.NativeMenu != "" && !supported["native:menuScope"] {
+				return fmt.Errorf("step %s requires native menuScope capability", s.ID)
+			}
 			if target.Scope.NativeRoot != "" {
 				capability := map[string]string{"menuBar": "menuBarScope", "focusedElement": "focusedElementScope"}[target.Scope.NativeRoot]
 				if capability == "" || !supported[s.Target.Surface.Kind+":"+capability] {
@@ -95,7 +109,15 @@ func (Registry) CheckCapabilities(plan *model.Plan, supported map[string]bool) e
 			if target.Ancestor != nil && !supported[s.Target.Surface.Kind+":ancestorScope"] {
 				return fmt.Errorf("step %s requires ancestorScope capability", s.ID)
 			}
-			if target.Cardinality != "one" && !supported[s.Target.Surface.Kind+":orderedQuery"] {
+			if s.Target.Surface.Kind == "native" && target.Cardinality == "nth" {
+				if !supported["native:indexedQuery"] || target.Locator == nil || target.Locator.Strategy != "role" || len(target.Scope.Window) == 0 || target.Order != "tree" {
+					return fmt.Errorf("step %s requires window-scoped native indexedQuery", s.ID)
+				}
+			} else if s.Target.Surface.Kind == "web" && target.Cardinality == "nth" {
+				if !supported["web:indexedQuery"] || target.Order != "document" {
+					return fmt.Errorf("step %s requires qualified web indexedQuery in document order", s.ID)
+				}
+			} else if target.Cardinality != "one" && !supported[s.Target.Surface.Kind+":orderedQuery"] {
 				return fmt.Errorf("step %s requires orderedQuery capability", s.ID)
 			}
 			if len(target.Scope.Frame) != 0 && !supported[s.Target.Surface.Kind+":frameScope"] {

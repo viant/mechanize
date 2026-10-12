@@ -286,3 +286,28 @@ func TestNativePredicateScopedReadFailureNeverFallsBackToWholeApplication(t *tes
 		t.Fatal("scoped failure retried or widened", err, reads)
 	}
 }
+
+func TestNativeNamedMenuPredicateRetainsScope(t *testing.T) {
+	p, _ := auth.NewPrincipal("fixture", "", "named-menu", nil)
+	ctx := auth.WithPrincipal(context.Background(), p)
+	reads := 0
+	adapter, _ := NewNative(func(_ context.Context, _ auth.Principal, target model.Selector, attribute string) (model.Value, NativeEvidence, error) {
+		reads++
+		if target.Scope.NativeRoot != "menuBar" || target.Scope.NativeMenu != "Git" || target.Surface.ProcessID != 42 {
+			t.Fatal("predicate widened menu")
+		}
+		return model.Value{Kind: model.StringValue, String: "42"}, NativeEvidence{HelperEpoch: "fixture", TargetRef: "item", ObservedAt: time.Now()}, nil
+	})
+	inputs := nativeInputs()
+	inputs["processId"] = model.Value{Kind: model.NumberValue, Number: 42}
+	inputs["processStartToken"] = model.Value{Kind: model.StringValue, String: "100:1"}
+	inputs["nativeRoot"] = model.Value{Kind: model.StringValue, String: "menuBar"}
+	inputs["nativeMenu"] = model.Value{Kind: model.StringValue, String: "Git"}
+	if _, err := adapter.Evaluate(ctx, p, "valueEquals", inputs); err != nil || reads != 1 {
+		t.Fatal("named predicate unavailable", err)
+	}
+	delete(inputs, "nativeRoot")
+	if _, err := adapter.Evaluate(ctx, p, "valueEquals", inputs); err == nil || reads != 1 {
+		t.Fatal("unscoped menu reached reader")
+	}
+}

@@ -23,7 +23,7 @@ type runtimeOutput struct {
 }
 
 // OperationOutputs is an ephemeral snapshot, not a durable checkpoint. Only
-// explicitly requested completed element.read bindings can appear in Outputs.
+// explicitly requested completed element.read or created-tab metadata bindings can appear in Outputs.
 type OperationOutputs struct {
 	SessionID   string                 `json:"sessionId"`
 	OperationID string                 `json:"operationId"`
@@ -94,13 +94,13 @@ func (r *Runtime) OperationOutputs(ctx context.Context, session, operation strin
 	for _, name := range bindings {
 		read := false
 		for _, step := range p.plan.Steps {
-			if step.Bind == name && step.Action == "element.read" {
+			if step.Bind == name && (step.Action == "element.read" || step.Action == "browser.openOrigin") {
 				read = true
 				break
 			}
 		}
 		if !read {
-			return OperationOutputs{}, errors.New("requested binding is not a read output")
+			return OperationOutputs{}, errors.New("requested binding is not an exportable read or browser metadata output")
 		}
 		output, ok := p.outputs[name]
 		if !ok {
@@ -124,6 +124,20 @@ func (r *Runtime) OperationOutputs(ctx context.Context, session, operation strin
 
 // captureOutput runs under r.mu. Never resolve runtime references for export.
 func (r *Runtime) captureOutput(p *program, step model.Step, value model.Value) {
+	if step.Action == "browser.openOrigin" && step.Bind != "" {
+		if p.outputs == nil {
+			p.outputs = map[string]runtimeOutput{}
+		}
+		if _, ok := p.outputs[step.Bind]; !ok && len(p.outputs) >= 32 {
+			return
+		}
+		if value.Kind == model.StringValue && model.OpaqueTabHandle(value.String) && !sensitiveOutputName(step.Bind) {
+			p.outputs[step.Bind] = runtimeOutput{value: value, bytes: len(value.String)}
+		} else {
+			p.outputs[step.Bind] = runtimeOutput{reason: "created-tab metadata unavailable"}
+		}
+		return
+	}
 	if step.Action != "element.read" || step.Bind == "" {
 		return
 	}

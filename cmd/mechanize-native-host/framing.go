@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"github.com/viant/mechanize/internal/chromeframe"
 	"io"
 	"unicode/utf8"
 )
@@ -17,21 +18,21 @@ func ReadFrame(reader io.Reader) (json.RawMessage, error) {
 		return nil, err
 	}
 	length := binary.NativeEndian.Uint32(header[:])
-	if length == 0 || length > MaxFrameBytes {
+	if length == 0 || length > chromeframe.PrivateLimit {
 		return nil, errors.New("invalid native message length")
 	}
 	message := make([]byte, length)
 	if _, err := io.ReadFull(reader, message); err != nil {
 		return nil, err
 	}
-	if !utf8.Valid(message) || !json.Valid(message) {
+	if !utf8.Valid(message) || !json.Valid(message) || len(message) > MaxFrameBytes && !chromeframe.OversizeAllowed(message) {
 		return nil, errors.New("invalid JSON frame")
 	}
 	return message, nil
 }
 
 func WriteFrame(writer io.Writer, message json.RawMessage) error {
-	if len(message) == 0 || len(message) > MaxFrameBytes || !utf8.Valid(message) || !json.Valid(message) {
+	if len(message) == 0 || len(message) > chromeframe.PrivateLimit || len(message) > MaxFrameBytes && !chromeframe.OversizeAllowed(message) || !utf8.Valid(message) || !json.Valid(message) {
 		return errors.New("invalid outgoing JSON frame")
 	}
 	var header [4]byte

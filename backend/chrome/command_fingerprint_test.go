@@ -129,3 +129,49 @@ func TestCommandFingerprintV2TransportFieldsExcludedLogicalFieldsRetained(t *tes
 		}
 	}
 }
+
+func TestCommandFingerprintV2BindsOptionalDocumentIndexWithoutChangingLegacyShape(t *testing.T) {
+	original := fingerprintCommand()
+	before, e := logicalMutationEnvelopeV2(original)
+	if e != nil {
+		t.Fatal(e)
+	}
+	index := 0
+	indexed := fingerprintCommand()
+	indexed.Locator.Index = &index
+	indexed.Locator.Order = "document"
+	first, e := FingerprintMutationV2(indexed)
+	if e != nil {
+		t.Fatal(e)
+	}
+	index = 1
+	second, e := FingerprintMutationV2(indexed)
+	if e != nil || first.SHA256 == second.SHA256 {
+		t.Fatal("index omitted from original intent fingerprint")
+	}
+	after, e := logicalMutationEnvelopeV2(original)
+	if e != nil || !bytes.Equal(before, after) || strings.Contains(string(after), `"index"`) || strings.Contains(string(after), `"order"`) {
+		t.Fatal("legacy fingerprint changed")
+	}
+	for _, mode := range []string{"missingOrder", "missingIndex", "negative", "oversize", "tree"} {
+		bad := fingerprintCommand()
+		value := 0
+		bad.Locator.Index = &value
+		bad.Locator.Order = "document"
+		switch mode {
+		case "missingOrder":
+			bad.Locator.Order = ""
+		case "missingIndex":
+			bad.Locator.Index = nil
+		case "negative":
+			value = -1
+		case "oversize":
+			value = 1000
+		case "tree":
+			bad.Locator.Order = "tree"
+		}
+		if _, e = FingerprintMutationV2(bad); e == nil {
+			t.Fatal("unsafe indexed envelope accepted", mode)
+		}
+	}
+}

@@ -18,6 +18,9 @@ public struct InventoryTarget: Codable, Identifiable {
 /// a private Unix socket peer, and supplies broker data. Display strings are not authentication.
 /// No implementation may infer verified identity from a request's self-reported client name.
 public protocol ConsentHostAdapter: LocalConsentBroker {
+    func runtimeSettings() async throws -> RuntimeSettingsSnapshot
+    func updateRuntimePort(expectedRevision: Int, port: Int) async throws -> RuntimeSettingsSnapshot
+    func browserStatus() async throws -> BrowserConnectionStatus
     func inventory() async throws -> [InventoryTarget]
     func helperPermissionDoctor() async throws -> [HelperPermissionStatus]
     func applicationAccess() async throws -> ApplicationAccessSnapshot
@@ -26,6 +29,9 @@ public protocol ConsentHostAdapter: LocalConsentBroker {
     func openSystemPermissionSettings(_ permission: HelperPermission) async throws
 }
 public extension ConsentHostAdapter {
+    func runtimeSettings() async throws -> RuntimeSettingsSnapshot { throw ConsentError.disconnected }
+    func updateRuntimePort(expectedRevision: Int, port: Int) async throws -> RuntimeSettingsSnapshot { throw ConsentError.disconnected }
+    func browserStatus() async throws -> BrowserConnectionStatus { throw ConsentError.disconnected }
     func applicationAccess() async throws -> ApplicationAccessSnapshot { throw ConsentError.disconnected }
     func updateApplicationAccess(expectedRevision: Int, policy: ApplicationAccessPolicy) async throws -> ApplicationAccessSnapshot { throw ConsentError.disconnected }
 }

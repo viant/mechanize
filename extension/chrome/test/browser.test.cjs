@@ -10,11 +10,11 @@ function fixture() {
   const completed = new Set(), failed = new Set();
   const chrome = {
     storage: {session: {async get(keys) { if (keys === null) return {...state.stored}; if (typeof keys === 'string') return {[keys]: state.stored[keys]}; return Object.fromEntries(keys.map(k => [k, state.stored[k]])); }, async set(values) { Object.assign(state.stored, values); }}},
-    tabs: {async sendMessage() { return {validated: true, identity}; }, async update(tabId, changes) { state.updates++; state.listenersBeforeDispatch = completed.size > 0; state.committed = true; for (const f of completed) f({tabId, frameId: 0}); }, async get() { return {id: 7, active: true, title: 'Cases', url: state.redirect ? 'https://untrusted.example.test' : 'https://fixture.example.test/next'}; }},
-    webNavigation: {onCompleted: {addListener: f => completed.add(f), removeListener: f => completed.delete(f)}, onErrorOccurred: {addListener: f => failed.add(f), removeListener: f => failed.delete(f)}, async getAllFrames() { return [{frameId: 0, documentId: state.committed ? 'doc2' : 'doc1', url: state.redirect ? 'https://untrusted.example.test' : 'https://fixture.example.test/next'}]; }}
+    tabs: {async sendMessage() { return {validated: true, identity}; }, async update(tabId, changes) { state.updates++; state.listenersBeforeDispatch = completed.size > 0; state.committed = true; if(!state.suppressCompletion)for (const f of completed) f({tabId, frameId: 0}); }, async get() { return state.keepOldDocument ? {id:7,active:true,title:'Source',url:'https://fixture.example.test/start',pendingUrl:state.pendingURL} : {id: 7, active: true, title: 'Cases', url: state.redirect ? 'https://untrusted.example.test' : 'https://fixture.example.test/next'}; }},
+    webNavigation: {onCompleted: {addListener: f => completed.add(f), removeListener: f => completed.delete(f)}, onErrorOccurred: {addListener: f => failed.add(f), removeListener: f => failed.delete(f)}, async getAllFrames() { return state.keepOldDocument ? [{frameId:0,documentId:'doc1',url:'https://fixture.example.test/start'}] : [{frameId: 0, documentId: state.committed ? 'doc2' : 'doc1', url: state.redirect ? 'https://untrusted.example.test' : 'https://fixture.example.test/next'}]; }}
   };
   const context = vm.createContext({chrome, TextEncoder, URL, Date, setTimeout, clearTimeout, crypto: require('node:crypto').webcrypto});
-  for (const file of ['protocol.js', 'browser.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
+  for (const file of ['protocol.js', 'fingerprint.js', 'browser.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   return {state, api: context.MechanizeBrowser, enrollment: {origins: ['https://fixture.example.test']}, context};
 }
 test('navigation subscribes first, dispatches once, persists receipt and never replays', async () => {
@@ -42,6 +42,16 @@ test('forbidden destination blocks input and missing receipt after restart stays
   assert.equal(receipt.receiptAvailable, false);
   assert.equal(f.state.updates, 0);
 });
+test('all websites permits an explicit new public destination without changing receipt safeguards', async () => {
+  const f=fixture(); f.enrollment={allWebsites:true,origins:[]};
+  const c=command('browser.navigate',{args:{url:'https://another.example.test/next'}});
+  const receipt=await f.api.execute(c,f.enrollment);
+  assert.equal(receipt.ready,true);assert.equal(f.state.updates,1);
+  await f.api.execute({...c,requestId:'r2'},f.enrollment);assert.equal(f.state.updates,1);
+  const unsafe=fixture();unsafe.enrollment={allWebsites:true,origins:[]};
+  await assert.rejects(unsafe.api.execute(command('browser.navigate',{args:{url:'file:///private/fixture'}}),unsafe.enrollment),e=>e.code==='originDenied');
+  assert.equal(unsafe.state.updates,0);
+});
 test('redirect denial preserves unknown effect and tab activation does not imply window focus', async () => {
   const f = fixture();
   const oldUpdate = f.context.chrome.tabs.update;
@@ -53,4 +63,81 @@ test('redirect denial preserves unknown effect and tab activation does not imply
   const activated = await a.api.execute(command('browser.activate', {args: undefined}), a.enrollment);
   assert.equal(activated.active, true);
   assert.ok(activated.inputSemantics.includes('physical window focus not verified'));
+});
+
+test('protected origins deny non-root destinations, redirected metadata and old unsafe receipts',async()=>{
+  const denied=new Set(['https://untrusted.example.test']),f=fixture();f.enrollment={allWebsites:true,origins:[]};
+  await assert.rejects(f.api.execute(command('browser.navigate',{args:{url:'https://untrusted.example.test/private'}}),f.enrollment,denied),e=>e.code==='originDenied');
+  assert.equal(f.state.updates,0);
+  const update=f.context.chrome.tabs.update;f.context.chrome.tabs.update=async(...args)=>{await update(...args);f.state.redirect=true;};
+  const result=await f.api.execute(command(),f.enrollment,denied);
+  assert.equal(result.error.code,'redirectOriginDenied');assert.equal(result.newDocument,undefined);
+  assert.ok(!JSON.stringify(f.state.stored).includes('Cases'));
+  const cached=fixture();await cached.api.execute(command(),cached.enrollment);
+  const before=JSON.stringify(cached.state.stored);
+  await assert.rejects(cached.api.query(command('receipt.query'),new Set(['https://fixture.example.test'])),e=>e.code==='secureDocumentRequired');
+  assert.equal(JSON.stringify(cached.state.stored),before);
+});
+
+test('explicit protected HTTPS root navigation retains quarantine and exports identity without reading title',async()=>{
+ const f=fixture(),origin='https://protected.example.test',protectedOrigins=new Set([origin]);
+ f.enrollment={allWebsites:true,origins:[]};
+ f.context.chrome.tabs.get=async()=>({id:7,active:true,url:origin+'/',get title(){throw Error('TITLE-CANARY must not be read');}});
+ f.context.chrome.webNavigation.getAllFrames=async()=>[{frameId:0,documentId:f.state.committed?'doc2':'doc1',url:f.state.committed?origin+'/':'https://fixture.example.test/'}];
+ const c=command('browser.navigate',{args:{url:origin+'/'}});
+ const r=await f.api.execute(c,f.enrollment,protectedOrigins);
+ assert.equal(r.dispatchState,'dispatched');assert.equal(r.ready,true);assert.equal(r.newDocument.origin,origin);assert.equal(r.newDocument.title,'');assert.equal(r.newDocument.titleTruncated,false);
+ assert.equal(protectedOrigins.has(origin),true);assert.ok(!JSON.stringify(f.state.stored).includes('CANARY'));
+ const cached=await f.api.query({...c,requestId:'query'},protectedOrigins);assert.equal(cached.privateTarget,true);assert.equal(f.state.updates,1);
+ f.state.stored['browserReceipt:a1'].newDocument.title='PRIVATE-CANARY';
+ await assert.rejects(f.api.query(c,protectedOrigins),e=>e.code==='secureDocumentRequired');
+});
+test('v2 navigation binds fingerprint and requires exact prior renderer retirement',async()=>{
+ const f=fixture();const original=f.context.chrome.tabs.sendMessage;let retired=false;
+ f.context.chrome.tabs.sendMessage=async(tab,m)=>{if(m.action==='executor.retire'){retired=true;return {identity,retiredAuthorityQuiesced:true,controlLease:m.controlLease}}return original(tab,m)};
+ const c=command('browser.navigate',{scopeHash:'a'.repeat(64),locator:null,controlLease:{id:'lease1',generation:1},fingerprintVersion:2});
+ c.fingerprintSHA256=(await f.context.MechanizeFingerprint.mutationV2(c)).sha256;
+ const result=await f.api.execute(c,f.enrollment);
+ assert.equal(retired,true);assert.equal(f.state.updates,1);assert.equal(result.retiredAuthorityQuiesced,true);assert.equal(result.fingerprintSHA256,c.fingerprintSHA256);
+ await f.api.execute({...c,requestId:'repeat'},f.enrollment);assert.equal(f.state.updates,1);
+});
+test('v2 navigation never dispatches without retirement proof or matching fingerprint',async()=>{
+ for(const invalidHash of [false,true]){
+  const f=fixture();const c=command('browser.navigate',{scopeHash:'a'.repeat(64),locator:null,controlLease:{id:'lease1',generation:1},fingerprintVersion:2});
+  c.fingerprintSHA256=invalidHash?'b'.repeat(64):(await f.context.MechanizeFingerprint.mutationV2(c)).sha256;
+  await assert.rejects(f.api.execute(c,f.enrollment));assert.equal(f.state.updates,0);
+ }
+});
+
+test('navigation returns a bounded receipt before its action deadline when loading continues',async()=>{
+ const f=fixture();f.state.suppressCompletion=true;let observationWait;
+ f.context.setTimeout=(fn,ms)=>{observationWait=ms;return setTimeout(fn,0);};
+ const c=command('browser.navigate',{deadlineUnixMs:Date.now()+3000});
+ const r=await f.api.execute(c,f.enrollment);
+ assert.ok(observationWait<=1000,'readiness waited through dispatch deadline');
+ assert.ok(observationWait<=c.deadlineUnixMs-Date.now()-200,'no reply budget retained');
+ assert.equal(r.dispatchState,'dispatched');assert.equal(r.ready,false);assert.equal(r.newDocument.documentId,'doc2');
+ assert.equal(f.state.updates,1);
+ const saved=await f.api.query({...c,requestId:'new-read-request'});
+ assert.equal(saved.dispatchState,'dispatched');assert.equal(f.state.updates,1);
+});
+
+test('pending protected navigation does not classify the old source as a denied redirect',async()=>{
+ const f=fixture(),origin='https://private.fixture.test';
+ f.state.suppressCompletion=true;f.state.keepOldDocument=true;f.state.pendingURL=origin+'/';
+ f.context.setTimeout=(fn)=>setTimeout(fn,0);
+ const c=command('browser.navigate',{args:{url:origin},deadlineUnixMs:Date.now()+3000});
+ const r=await f.api.execute(c,{origins:['https://fixture.example.test',origin]},new Set([origin]));
+ assert.equal(r.dispatchState,'dispatched');assert.equal(r.ready,false);assert.equal(r.error,undefined);assert.equal(r.newDocument,undefined);assert.equal(r.privateTarget,true);
+ assert.equal(f.state.updates,1);assert.ok(!JSON.stringify(f.state.stored).includes('Source'));
+});
+
+test('pending navigation never grants a document and still refuses a foreign pending URL',async()=>{
+ for(const foreign of [false,true]){
+  const f=fixture();f.state.suppressCompletion=true;f.state.keepOldDocument=true;f.state.pendingURL=foreign?'https://foreign.invalid/':'https://fixture.example.test/next';
+  f.context.setTimeout=(fn)=>setTimeout(fn,0);
+  const r=await f.api.execute(command('browser.navigate',{deadlineUnixMs:Date.now()+3000}),f.enrollment);
+  assert.equal(r.newDocument,undefined);assert.equal(r.ready,false);
+  assert.equal(r.error?.code,foreign?'redirectOriginDenied':undefined);assert.equal(f.state.updates,1);
+ }
 });

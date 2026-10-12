@@ -161,3 +161,51 @@ func TestReconcileNeverDispatchedPreservesFenceOnIncompleteOriginalOutcomeProof(
 		t.Fatalf("physical-only recovery: %+v %v", report, err)
 	}
 }
+
+func TestReleasedInputRecoveryRequiresStoppedOwnedHelperAndPreservesBusinessUnknown(t *testing.T) {
+	options, alive, identity := fixtureOptions(t)
+	ctx, p := supervisorActor(t, "alice")
+	lease := Lease{ID: "historical", Generation: 33, Owner: p.Namespace, Scope: Scope{AllApplications: true}}
+	prior := record{Generation: 33, Lease: &lease, Helper: &identity, InputProfile: InputProfileRaw, LastCleanup: &CleanupReport{UnknownInputs: true, BusinessOutcomeUnknown: true}}
+	raw, _ := json.Marshal(prior)
+	if err := os.WriteFile(options.LockPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := NewSupervisor(options)
+	calls := 0
+	proof := func(context.Context, Lease, ProcessIdentity) error { calls++; return nil }
+	if _, err := s.ReconcileReleasedInput(ctx, p, proof); !errors.Is(err, ErrOldHelperAlive) || calls != 0 {
+		t.Fatal("live helper reached proof", err, calls)
+	}
+	*alive = false
+	foreignCtx, foreign := supervisorActor(t, "bob")
+	if _, err := s.ReconcileReleasedInput(foreignCtx, foreign, proof); !errors.Is(err, ErrCleanupUnknown) || calls != 0 {
+		t.Fatal("foreign owner reached proof", err, calls)
+	}
+	if _, err := s.ReconcileReleasedInput(ctx, p, nil); !errors.Is(err, ErrCleanupUnknown) {
+		t.Fatal("missing proof accepted")
+	}
+	denied := errors.New("input still held")
+	if _, err := s.ReconcileReleasedInput(ctx, p, func(context.Context, Lease, ProcessIdentity) error { return denied }); !errors.Is(err, ErrCleanupUnknown) {
+		t.Fatal("held input accepted", err)
+	}
+	unchanged, _ := os.ReadFile(options.LockPath)
+	if string(unchanged) != string(raw) {
+		t.Fatal("failed proof rewrote fence")
+	}
+	report, err := s.ReconcileReleasedInput(ctx, p, func(_ context.Context, l Lease, h ProcessIdentity) error {
+		if l.Generation != 33 || l.ID != lease.ID || h != identity {
+			t.Fatal("proof identity changed")
+		}
+		return proof(ctx, l, h)
+	})
+	if err != nil || !report.BusinessOutcomeUnknown || report.UnknownInputs || !report.FenceReleased || calls != 1 {
+		t.Fatalf("recovery: %+v %v calls=%d", report, err, calls)
+	}
+	fresh, _ := NewSupervisor(options)
+	next, err := fresh.Acquire(ctx, p, Scope{AllApplications: true})
+	if err != nil || next.Generation != 34 {
+		t.Fatal("could not transfer recovered fence", next, err)
+	}
+	_, _ = fresh.Close(ctx)
+}

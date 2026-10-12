@@ -1,22 +1,22 @@
 module github.com/viant/mechanize
 
-go 1.25.8
+go 1.26.0
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/mattn/go-sqlite3 v1.14.18
 	github.com/viant/afs v1.30.1-0.20260914155934-90e95d483861
-	github.com/viant/datly v1.1.1-0.20261004024140-a3837f55687f
+	github.com/viant/datly v1.1.1-0.20261012150720-636d0bfdcbba
 	github.com/viant/endly v0.89.1-0.20261004025400-cfbe7fb225b9
 	github.com/viant/jsonrpc v0.25.0
-	github.com/viant/mcp v0.24.1-0.20261004125052-e39034d8394f
-	github.com/viant/mcp-protocol v0.19.1-0.20261004125051-011abe959ebd
+	github.com/viant/mcp v0.24.1-0.20261008165059-494f36529f6e
+	github.com/viant/mcp-protocol v0.19.1-0.20261008202502-046707df5ed9
 	github.com/viant/scy v0.35.1-0.20260914041206-699e6c909726
-	github.com/viant/sqlx v0.26.1-0.20261003124505-e725e2a580af
+	github.com/viant/sqlx v0.26.1-0.20261012000356-69034efb5257
 	github.com/viant/x v0.5.1-0.20260915043005-1bc42b9eef47
-	github.com/viant/xdatly v1.0.1-0.20261004012855-455c8546f229
+	github.com/viant/xdatly v1.0.1-0.20261011023101-d5ce35689c9c
 	github.com/xeipuuv/gojsonschema v1.2.0
-	golang.org/x/sys v0.46.0
+	golang.org/x/sys v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -42,6 +42,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0 // indirect
+	github.com/ebitengine/purego v0.11.1 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
@@ -51,6 +52,7 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-sql-driver/mysql v1.7.1 // indirect
+	github.com/go-vgo/robotgo v1.3.5 // indirect
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.1 // indirect
@@ -76,17 +78,18 @@ require (
 	github.com/richardlehane/msoleps v1.0.3 // indirect
 	github.com/satori/go.uuid v1.2.1-0.20181028125025-b2ce2384e17b // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
+	github.com/vcaesar/keycode v0.20.0 // indirect
 	github.com/viant/assertly v0.9.3-0.20240801181709-c4d200a736e1 // indirect
-	github.com/viant/bindly v0.2.1-0.20260915164201-7cf35da5bd9a // indirect
+	github.com/viant/bindly v0.4.1-0.20261011212616-2c051ae6bd9e // indirect
 	github.com/viant/gmetric v0.3.2 // indirect
 	github.com/viant/gosh v0.3.0 // indirect
 	github.com/viant/govalidator v0.3.4-0.20260913213120-027a9dd54d73 // indirect
 	github.com/viant/igo v0.2.1 // indirect
 	github.com/viant/parsly v0.3.3 // indirect
-	github.com/viant/sqlparser v0.13.1-0.20261003124328-b8c0b54602af // indirect
-	github.com/viant/structology v0.10.1-0.20260925145657-42c5a7e1d1d7 // indirect
-	github.com/viant/structql v0.5.4 // indirect
-	github.com/viant/tagly v0.3.1-0.20260914020630-eadee36c3630 // indirect
+	github.com/viant/sqlparser v0.13.1-0.20261012001419-edea4bd5d9c1 // indirect
+	github.com/viant/structology v0.10.1-0.20261010052450-67e71257a7da // indirect
+	github.com/viant/structql v0.5.5-0.20261008164328-d0b837beaa3a // indirect
+	github.com/viant/tagly v0.4.1-0.20261007173811-969600917520 // indirect
 	github.com/viant/toolbox v0.39.0 // indirect
 	github.com/viant/velty v0.4.1-0.20260915052314-fca47c0595f8 // indirect
 	github.com/viant/xlsy v0.3.1 // indirect

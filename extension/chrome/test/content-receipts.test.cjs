@@ -14,12 +14,23 @@ function fixture() {
   window.HTMLElement.prototype.getClientRects = () => [{width: 100, height: 20}];
   Object.defineProperty(window, 'crypto', {value: webcrypto, configurable: true});
   window.chrome = {runtime: {id: 'fixture', onMessage: {addListener: f => listeners.push(f)}}};
-  for (const file of ['protocol.js', 'dom.js', 'recorder.js', 'content.js']) window.eval(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'));
+  for (const file of ['protocol.js', 'accessibility-provider.js', 'dom.js', 'recorder.js', 'content.js']) window.eval(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'));
   const sync = message => {let response; listeners[0](message, {id: 'fixture'}, value => response = value); return response;};
   const send = message => new Promise(resolve => listeners[0](message, {id: 'fixture'}, resolve));
   sync({type: 'bind', binding});
   return {window, sync, send, close: () => window.close()};
 }
+
+test('metadata validation reports fresh generation without serializing a credential-shaped DOM',async t=>{
+ const f=fixture();t.after(f.close);
+ const password=f.window.document.createElement('input');password.type='password';password.value='PRIVATE-CANARY';f.window.document.body.append(password);
+ await new Promise(resolve=>f.window.setTimeout(resolve,0));
+ const checked=await f.send(command('executor.validate'));
+ assert.equal(checked.validated,true);assert.ok(checked.identity.documentGeneration>identity.documentGeneration);
+ assert.equal(checked.nodes,undefined);assert.equal(checked.value,undefined);assert.ok(!JSON.stringify(checked).includes('CANARY'));
+ const observed=await f.send(command('observe'));
+ assert.equal(observed.error.code,'secureDocumentRequired');
+});
 const mutate = (f, attemptId, extra = {}) => f.sync(command('element.press', {attemptId, locator: {strategy: 'id', value: 'save'}, ...extra}));
 const exported = (f, args = {offset: 0, limit: 64}, extra = {}) => f.send(command('executor.receipts', {args, ...extra}));
 function delayDigest(f) {

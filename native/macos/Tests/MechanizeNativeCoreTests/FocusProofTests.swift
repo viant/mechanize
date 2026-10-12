@@ -43,3 +43,12 @@ extension FocusProofTests {
   }
  }
 }
+
+extension FocusProofTests {
+ func testTransientForegroundRefreshAfterSetterRetriesOnlyRead()throws {
+  var setters=0,reads=0,pauses=0
+  setters+=1
+  try FocusProof.settle(validate:{reads+=1;if reads==1{throw NativeFailure("foregroundRefreshUnavailable","fixture")}},refresh:{},pause:{pauses+=1})
+  XCTAssertEqual(setters,1);XCTAssertEqual(reads,2);XCTAssertEqual(pauses,1)
+ }
+}

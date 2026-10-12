@@ -30,7 +30,13 @@ func (b *Builder) prepareStepAuthority(ctx context.Context, p auth.Principal, st
 	after, afterOK := integration.ExecutionFromContext(prepared)
 	oldBinding, oldOK := auth.ConsentBindingFromContext(ctx)
 	newBinding, newOK := auth.ConsentBindingFromContext(prepared)
-	if beforeOK != afterOK || !reflect.DeepEqual(before, after) || oldOK != newOK || oldBinding != newBinding {
+	// An operator-installed preparation provider may select an existing
+	// reusable human grant when the request omitted its ID. Authorization
+	// still rechecks that grant before dispatch. It cannot replace an explicit
+	// grant or change client/session/purpose/execution identity.
+	selectedGrant := oldOK && newOK && oldBinding.GrantID == "" && newBinding.GrantID != "" &&
+		oldBinding.SessionID != "" && oldBinding.Purpose != "" && oldBinding.SessionID == newBinding.SessionID && oldBinding.Purpose == newBinding.Purpose
+	if beforeOK != afterOK || !reflect.DeepEqual(before, after) || oldOK != newOK || oldBinding != newBinding && !selectedGrant {
 		return nil, 0, errors.New("executor authority changed execution or consent binding")
 	}
 	if err := prepared.Err(); err != nil {

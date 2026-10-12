@@ -94,6 +94,14 @@ func (g *Gateway) activateApp(ctx context.Context, p auth.Principal, step model.
 	if result.DispatchState != "dispatched" {
 		return result, nativeError("activationOutcomeUnknown", "Activation receipt unavailable; reconcile before replay")
 	}
+	var confirmation struct {
+		applicationIdentity
+		ForegroundConfirmed bool `json:"foregroundConfirmed"`
+	}
+	if json.Unmarshal(reply.Result, &confirmation) != nil || !confirmation.ForegroundConfirmed || !confirmation.Active || confirmation.BundleID != app.BundleID || confirmation.PID != app.PID || confirmation.LaunchTime != app.LaunchTime || confirmation.StartToken != app.StartToken {
+		result.DispatchState = "unknown"
+		return result, &model.MechanizeError{Code: "activationPostconditionUnknown", Stage: "verification", DispatchState: "unknown", EffectState: "unknown", Message: "Helper did not confirm exact foreground identity after activation; reconcile before replay"}
+	}
 	current, err := g.currentApplication(ctx, step.Target.Surface)
 	if err != nil || current.PID != app.PID || current.LaunchTime != app.LaunchTime || current.StartToken != app.StartToken || !current.Active {
 		result.DispatchState = "unknown"

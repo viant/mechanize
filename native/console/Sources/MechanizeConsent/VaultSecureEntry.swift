@@ -1,9 +1,10 @@
 import SwiftUI
+import AppKit
 import ConsentCore
 
-/// Deliberately unwired until the signed broker and secure-window capture
-/// suppression are qualified. No reveal control exists without platform auth.
-struct VaultSecureEntry: View {
+/// Mounted only after the native window coordinator obtains exact-window
+/// confirmation. No reveal control exists without platform authorization.
+@MainActor struct VaultSecureEntry: View {
     let request: VaultEntryRequest
     let adapter: any VaultSecureInputAdapter
     @State private var username = ""
@@ -16,11 +17,15 @@ struct VaultSecureEntry: View {
             Text("Save credential in Vault").font(.title2)
             Text(request.origin).font(.headline).textSelection(.enabled)
             Text("Account alias: \(request.accountAlias)")
-            Text("This credential is used only for this exact site and account. Saving resumes the waiting workflow after the browser document is checked again.")
+            Text("This credential is encrypted locally for this exact site and account.")
             SecureField("Username", text: $username)
                 .privacySensitive().accessibilityLabel("Username, secure entry")
+                .disabled(submitting || !adapter.secureCaptureSuppressionConfirmed)
+            Button("Paste username locally") { pasteLocally(usernameField: true) }.disabled(submitting || !adapter.secureCaptureSuppressionConfirmed)
             SecureField("Password", text: $password)
                 .privacySensitive().accessibilityLabel("Password, secure entry")
+                .disabled(submitting || !adapter.secureCaptureSuppressionConfirmed)
+            Button("Paste password locally") { pasteLocally(usernameField: false) }.disabled(submitting || !adapter.secureCaptureSuppressionConfirmed)
             if !adapter.secureCaptureSuppressionConfirmed {
                 Text("Secure capture protection is unavailable. Credential entry is disabled.").foregroundStyle(.secondary)
             }
@@ -30,15 +35,26 @@ struct VaultSecureEntry: View {
                     clearFields()
                     Task { try? await adapter.cancel(requestID: request.id) }
                 }.disabled(submitting)
-                Button("Encrypt, save and resume") { submit() }
+                Button("Encrypt and save") { submit() }
                     .disabled(submitting || username.isEmpty || password.isEmpty || !request.isValid || !adapter.secureCaptureSuppressionConfirmed)
             }
         }
         .padding(24).frame(width: 460)
-        .disabled(!adapter.secureCaptureSuppressionConfirmed)
+        .onChange(of: adapter.secureCaptureSuppressionConfirmed) { _, protected in
+            if !protected { clearFields() }
+        }
         .onDisappear { clearFields() }
     }
     private func clearFields() { username = ""; password = "" }
+    private func pasteLocally(usernameField: Bool) {
+        let result = VaultClipboard.importLocally(source: NativeVaultClipboard(),
+            secureCaptureSuppressionConfirmed: adapter.secureCaptureSuppressionConfirmed,
+            requestValid: request.isValid, submitting: submitting) { bytes in
+                guard let text = String(data: bytes, encoding: .utf8) else { throw VaultInputError.expired }
+                if usernameField { username = text } else { password = text }
+            }
+        status = result == .imported ? "Imported locally. Clipboard cleared if unchanged." : "Local clipboard import unavailable."
+    }
     private func submit() {
         guard request.isValid, adapter.secureCaptureSuppressionConfirmed else { clearFields(); status = "Credential request is no longer available."; return }
         // Strings remain native UI state only. Swift/Cocoa may retain copies;
@@ -52,8 +68,16 @@ struct VaultSecureEntry: View {
                 passwordBytes.resetBytes(in: 0..<passwordBytes.count)
                 submitting = false
             }
-            do { try await adapter.submit(request: request, username: userBytes, password: passwordBytes); status = "Credential saved. Workflow continuation requested." }
-            catch { status = "Credential could not be saved or resumed. Check the local connection and site." }
+            do { try await adapter.submit(request: request, username: userBytes, password: passwordBytes); status = "Credential saved." }
+            catch { status = "Save could not be confirmed. Inspect Vault before another attempt." }
         }
+    }
+}
+
+private struct NativeVaultClipboard: VaultClipboardSource {
+    var changeCount: Int { NSPasteboard.general.changeCount }
+    func readUTF8() -> Data? { NSPasteboard.general.string(forType: .string).map { Data($0.utf8) } }
+    func clear(ifUnchanged revision: Int) {
+        if NSPasteboard.general.changeCount == revision { NSPasteboard.general.clearContents() }
     }
 }

@@ -8,7 +8,7 @@ import (
 	"github.com/viant/datly/mcp/resource"
 )
 
-//go:embed mechanize-*
+//go:embed mechanize-app-discovery mechanize-desktop mechanize-finder mechanize-intellij mechanize-microsoft-office mechanize-openoffice mechanize-recording mechanize-scenario
 var Files embed.FS
 
 const Entrypoint = "skill://mechanize-desktop/SKILL.md"

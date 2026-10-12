@@ -1,0 +1,31 @@
+# API preparation only: this workflow performs no Office input and grants no access.
+# Supply endpoint and bearerTokenSecret as a Scy reference, never a token value.
+pipeline:
+  capabilities:
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $bearerTokenSecret
+    timeoutMs: 30000
+    name: mechanize_capabilities
+    arguments: {}
+    post:
+      officeCapabilities: $StructuredContent
+  describe:
+    action: mcp/runner:call
+    url: $endpoint
+    bearerTokenSecret: $bearerTokenSecret
+    timeoutMs: 30000
+    name: mechanize_describe
+    arguments: {}
+    post:
+      officeContract: $StructuredContent
+  assertContract:
+    action: validator:assert
+    name: Office qualification uses the shared typed workflow contract
+    actual: $officeContract
+    expect:
+      schemaVersion: 1
+      sourceFormats:
+      - dsl
+      - json
+      - yaml

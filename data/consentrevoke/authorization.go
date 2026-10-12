@@ -9,5 +9,5 @@ func (input *RevokeInput) Init(ctx context.Context) error {
 	if _, err := data.RequireScope(ctx, input.Namespace); err != nil {
 		return err
 	}
-	return data.RequireConsentAuthority(ctx, "revoke")
+	return data.RequireConsentAuthority(ctx, data.ConsentCleanupOperation(ctx))
 }

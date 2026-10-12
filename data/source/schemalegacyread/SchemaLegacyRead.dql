@@ -1,0 +1,10 @@
+#package('github.com/viant/mechanize/data/schemalegacyread')
+#setting($_ = $input_type('SchemaLegacyReadInput'))
+#setting($_ = $output_type('SchemaLegacyReadOutput'))
+#setting($_ = $case_format('lc'))
+#setting($_ = $route('/internal/data/schemalegacyread', 'GET'))
+#setting($_ = $connector('user'))
+#define($_ = $Namespace<string>(query/namespace).Required())
+#define($_ = $Data<[]*HistoryState>(output/view))
+SELECT history.*,type(history,'HistoryState'),CAST(history.audit_count AS int),CAST(history.blocked_count AS int)
+FROM (${embed:sql/root.sql}) history

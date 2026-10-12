@@ -1,0 +1,1 @@
+SELECT e.* FROM events e WHERE e.namespace=:Namespace AND e.attempt_id=:AttemptID AND e.kind='intent'

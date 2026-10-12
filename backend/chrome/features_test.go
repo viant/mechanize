@@ -187,3 +187,30 @@ func TestUnknownBrowserReceiptStillBlocksAllNewMutation(t *testing.T) {
 	_, e := b.call(context.Background(), c, Command{Action: "element.press", Identity: d.Identity, AttemptID: "a2"}, true)
 	code(t, e, "unknownEffect")
 }
+
+func TestMatchingUnknownInputReceiptRetainsOriginalErrorAndReplayFence(t *testing.T) {
+	user := principal(t, "uncertain-input")
+	grant := enrollment(user, "uncertain-profile")
+	b := fixtureBroker(t, grant)
+	conn := connectHost(t, b, grant)
+	d := document(grant, 7)
+	publish(t, b, conn, grant, d)
+	c, _, _ := b.selectDocument(user, model.Surface{Kind: "web", Origin: fixtureOrigin})
+	done := make(chan error, 1)
+	go func() {
+		_, err := b.call(context.Background(), c, Command{Action: "element.press", Identity: d.Identity, AttemptID: "uncertain-click"}, true)
+		done <- err
+	}()
+	cmd := nextCommand(t, conn)
+	WriteFrame(conn, Reply{RequestID: cmd.RequestID, AttemptID: cmd.AttemptID, Identity: cmd.Identity, DispatchState: "unknown", EffectState: "unknown", Error: browserError("browserInputTimeout", "Input result uncertain", "unknown")})
+	code(t, <-done, "browserInputTimeout")
+	b.mu.Lock()
+	unknown := c.unknown[cmd.AttemptID]
+	_, retained := c.receipts[cmd.AttemptID]
+	b.mu.Unlock()
+	if !unknown || retained {
+		t.Fatal("uncertain receipt cleared replay fence")
+	}
+	_, err := b.call(context.Background(), c, Command{Action: "element.press", Identity: d.Identity, AttemptID: "another-click"}, true)
+	code(t, err, "unknownEffect")
+}

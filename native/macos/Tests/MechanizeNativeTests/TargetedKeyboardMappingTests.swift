@@ -2,6 +2,14 @@ import XCTest
 import Carbon
 @testable import MechanizeNative
 final class TargetedKeyboardMappingTests: XCTestCase {
+    func testDigitMappingRejectsKeypadFallbackAndAmbiguousLayout() throws {
+        XCTAssertEqual(try uniquePrintableKeyCode("1", mappings: [(18, "1"), (83, "1")]), 18)
+        XCTAssertThrowsError(try uniquePrintableKeyCode("1", mappings: [(83, "1")]))
+        XCTAssertThrowsError(try uniquePrintableKeyCode("1", mappings: [(18, "1"), (19, "1")]))
+        XCTAssertThrowsError(try uniquePrintableKeyCode("1", mappings: [(18, "&")]))
+        XCTAssertThrowsError(try uniquePrintableKeyCode("01", mappings: [(18, "01")]))
+        XCTAssertEqual(try uniquePrintableKeyCode("A", mappings: [(0, "a")]), 0)
+    }
     func testLayoutIndependentNavigationKeys() throws {
         XCTAssertEqual(try targetedKeyCode("Space"),49)
         XCTAssertEqual(try targetedKeyCode("Tab"),48)

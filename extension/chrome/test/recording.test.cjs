@@ -4,34 +4,39 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {JSDOM} = require('jsdom');
 function fixture() {
-  const dom = new JSDOM('<input id="case" value="CASE-42"><input type="password" id="password" value="swordfish"><div data-mechanize-secret><input id="hidden-secret" value="private"></div><button id="save">Save</button>', {url: 'https://fixture.example.test', runScripts: 'outside-only'});
+  const dom = new JSDOM('<input id="case" value="CASE-42"><button id="save">Save</button>', {url: 'https://fixture.example.test', runScripts: 'outside-only'});
   dom.window.TextEncoder = TextEncoder;
-  for (const file of ['protocol.js', 'dom.js', 'recorder.js']) dom.window.eval(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'));
+  for (const file of ['protocol.js', 'accessibility-provider.js', 'dom.js', 'recorder.js']) dom.window.eval(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'));
   const identity = {profileChannel: 'p1', browserInstance: 'b1', tabId: 7, frameId: 0, documentId: 'doc1', documentGeneration: 1};
   const recorder = new dom.window.MechanizeRecorder(dom.window.document, () => identity, dom.window.location.origin);
   return {dom, recorder};
 }
-test('explicit scoped recording excludes injected events and redacts secrets locally', t => {
-  const {dom, recorder} = fixture();
-  t.after(() => dom.window.close());
+test('explicit recording excludes injected events and records ordinary controls', t => {
+  const {dom, recorder} = fixture(); t.after(() => dom.window.close());
   const doc = dom.window.document;
-  recorder.capture({isTrusted: true, type: 'input', target: doc.getElementById('case')});
+  recorder.capture({isTrusted:true, type:'input', target:doc.getElementById('case')});
   assert.equal(recorder.events.length, 0);
-  recorder.control('record.start', {leaseExpiresUnixMs: Date.now() + 29000, recordingId: 'r1'});
-  doc.getElementById('case').dispatchEvent(new dom.window.Event('input', {bubbles: true}));
-  assert.equal(recorder.events.length, 1); // Only explicit start marker.
-  recorder.capture({isTrusted: true, type: 'input', target: doc.getElementById('password')});
-  recorder.capture({isTrusted: true, type: 'input', target: doc.getElementById('hidden-secret')});
-  recorder.capture({isTrusted: true, type: 'input', target: doc.getElementById('case')});
-  const batch = recorder.control('record.events', {leaseExpiresUnixMs: Date.now() + 29000, recordingId: 'r1', afterSequence: 1});
-  assert.equal(batch.events[0].redacted, true);
-  assert.equal(batch.events[0].value, undefined);
-  assert.equal(batch.events[1].redacted, true);
-  assert.equal(batch.events[2].value, 'CASE-42');
-  assert.equal(batch.events[2].selectorConfidence, 'uniqueDOM');
-  assert.equal(batch.events[2].lineage, 'r1:doc1:4');
-  assert.ok(!JSON.stringify(batch).includes('swordfish'));
-  assert.ok(!JSON.stringify(batch).includes('private'));
+  recorder.control('record.start', {leaseExpiresUnixMs:Date.now()+29000, recordingId:'r1'});
+  doc.getElementById('case').dispatchEvent(new dom.window.Event('input', {bubbles:true}));
+  assert.equal(recorder.events.length, 1);
+  recorder.capture({isTrusted:true, type:'input', target:doc.getElementById('case')});
+  const batch = recorder.control('record.events', {leaseExpiresUnixMs:Date.now()+29000, recordingId:'r1', afterSequence:1});
+  assert.equal(batch.events[0].value, 'CASE-42');
+  assert.equal(batch.events[0].selectorConfidence, 'uniqueDOM');
+});
+test('credential appearance purges buffered recording and permanently suppresses the document', t => {
+  const {dom, recorder} = fixture(); t.after(() => dom.window.close());
+  const doc = dom.window.document;
+  recorder.control('record.start', {leaseExpiresUnixMs:Date.now()+29000, recordingId:'r1'});
+  recorder.capture({isTrusted:true, type:'input', target:doc.getElementById('case')});
+  doc.body.insertAdjacentHTML('beforeend', '<input autocomplete="username" value="credential-canary">');
+  assert.throws(() => recorder.control('record.events', {leaseExpiresUnixMs:Date.now()+29000, recordingId:'r1'}), e => e.code === 'secureDocumentRequired');
+  assert.equal(recorder.active, false);
+  assert.equal(recorder.events.length, 0);
+  doc.body.innerHTML = '<input id="case" value="reflected-canary">';
+  recorder.capture({isTrusted:true, type:'input', target:doc.getElementById('case')});
+  assert.equal(recorder.events.length, 0);
+  assert.throws(() => recorder.control('record.start', {leaseExpiresUnixMs:Date.now()+29000, recordingId:'r1'}), e => e.code === 'secureDocumentRequired');
 });
 test('pause/stop and bounded overflow expose gaps without silent replay', t => {
   const {dom, recorder} = fixture();

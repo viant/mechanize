@@ -39,7 +39,7 @@ type identityHandshake struct {
 func prepareIdentity(options Options) (*identityHandshake, error) {
 	configured := options.Requirement != "" || options.ExpectedUID != nil
 	if !configured {
-		if options.AllowMutations || options.AllowLaunch || options.AllowSemantic || options.AllowRecording {
+		if options.AllowMutations || options.AllowLaunch || options.AllowSemantic || options.AllowRecording || options.PrivateAdministration {
 			return nil, errors.New("native action opt-in requires enrolled native helper code requirement and expected UID")
 		}
 		return nil, nil

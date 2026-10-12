@@ -2,7 +2,6 @@ package recovery
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 	datahost "github.com/viant/mechanize/data/host"
 	"github.com/viant/mechanize/data/recoveryload"
 	integration "github.com/viant/mechanize/integration/endly"
+	"github.com/viant/mechanize/internal/datlytest"
 	"github.com/viant/mechanize/model"
 	core "github.com/viant/mechanize/recovery"
 )
@@ -198,32 +198,24 @@ func seedRecovery(t *testing.T, ctx context.Context, p auth.Principal, root stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite3", cfg.DSN)
+	server, err := datlytest.Open(scoped, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer server.Shutdown(context.Background())
 	plan := row.Plans[0]
-	if _, err = db.ExecContext(ctx, "INSERT INTO plan_revisions(namespace,id,objective_id,content_hash,content_json,created_at) VALUES(?,?,?,?,?,?)", *plan.Namespace, *plan.Id, *plan.ObjectiveId, *plan.ContentHash, *plan.ContentJson, *plan.CreatedAt); err != nil {
+	graph := &datlytest.Graph{Plan: &datlytest.Plan{Namespace: *plan.Namespace, ID: *plan.Id, ObjectiveID: *plan.ObjectiveId, ContentHash: *plan.ContentHash, ContentJSON: *plan.ContentJson, CreatedAt: *plan.CreatedAt}, Run: &datlytest.Run{Namespace: *row.Namespace, ID: *row.Id, PlanID: *row.PlanId, Status: *row.Status, Revision: *row.Revision, CreatedAt: *row.CreatedAt, UpdatedAt: *row.UpdatedAt}}
+	for _, v := range row.Attempts {
+		graph.Attempts = append(graph.Attempts, datlytest.Attempt{Namespace: *v.Namespace, ID: *v.Id, RunID: *v.RunId, StepID: *v.StepId, PlanID: *v.PlanId, LeaseEpoch: *v.LeaseEpoch, State: *v.State, CreatedAt: *v.CreatedAt})
+	}
+	for _, v := range row.Effects {
+		graph.Effects = append(graph.Effects, datlytest.Effect{Namespace: *v.Namespace, ID: *v.Id, AttemptID: *v.AttemptId, RunID: *v.RunId, BusinessKey: *v.BusinessKey, State: *v.State, Revision: *v.Revision, EvidenceJSON: *v.EvidenceJson})
+	}
+	for _, v := range row.Milestones {
+		graph.Milestones = append(graph.Milestones, datlytest.Milestone{Namespace: *v.Namespace, ID: *v.Id, RunID: *v.RunId, AttemptID: *v.AttemptId, State: *v.State, EvidenceJSON: *v.EvidenceJson})
+	}
+	if err = datlytest.Apply(scoped, server, datlytest.Input{Namespace: p.Namespace, Mode: "graph", Graph: graph}); err != nil {
 		t.Fatal(err)
-	}
-	if _, err = db.ExecContext(ctx, "INSERT INTO runs(namespace,id,plan_id,status,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", *row.Namespace, *row.Id, *row.PlanId, *row.Status, *row.Revision, *row.CreatedAt, *row.UpdatedAt); err != nil {
-		t.Fatal(err)
-	}
-	for _, attempt := range row.Attempts {
-		if _, err = db.ExecContext(ctx, "INSERT INTO attempts(namespace,id,run_id,step_id,plan_id,lease_epoch,state,created_at) VALUES(?,?,?,?,?,?,?,?)", *attempt.Namespace, *attempt.Id, *attempt.RunId, *attempt.StepId, *attempt.PlanId, *attempt.LeaseEpoch, *attempt.State, *attempt.CreatedAt); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, effect := range row.Effects {
-		if _, err = db.ExecContext(ctx, "INSERT INTO effects(namespace,id,attempt_id,run_id,business_key,state,revision,evidence_json) VALUES(?,?,?,?,?,?,?,?)", *effect.Namespace, *effect.Id, *effect.AttemptId, *effect.RunId, *effect.BusinessKey, *effect.State, *effect.Revision, *effect.EvidenceJson); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, milestone := range row.Milestones {
-		if _, err = db.ExecContext(ctx, "INSERT INTO milestones(namespace,id,run_id,attempt_id,state,evidence_json) VALUES(?,?,?,?,?,?)", *milestone.Namespace, *milestone.Id, *milestone.RunId, *milestone.AttemptId, *milestone.State, *milestone.EvidenceJson); err != nil {
-			t.Fatal(err)
-		}
 	}
 }
 func TestGeneratedRepairAdmissionAtomicLineageCASBudgetAndAcknowledgement(t *testing.T) {

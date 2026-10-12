@@ -31,10 +31,22 @@ import (
 	"github.com/viant/mechanize/model"
 	"github.com/viant/mechanize/script"
 	"github.com/viant/mechanize/security/keychain"
+	"github.com/viant/mechanize/vault"
 	"github.com/viant/scy"
 )
 
 type Host struct {
+	activateTabFixture              tabActivationBackend
+	openOriginFixture               originOpeningBackend // Unexported inert-test seam; production uses chrome.
+	privateNative                   *privateNativeAdministration
+	chromeStartupUnqualified        bool            // Immutable until a new explicitly reviewed host startup.
+	chromeAllWebsites               map[string]bool // Trusted operator enrollment only; never tool input.
+	vaultExposure                   *vault.ExposureGate
+	nativeVaultStore                *vault.Store
+	nativeVaultRecords              *vault.RecordStore
+	credentials                     *credentialService
+	runtimeListen                   string
+	runtimeSettingsRoot             string
 	frameMu                         sync.Mutex
 	framePermits                    map[string]*windowFramePermit
 	framesClosed                    bool
@@ -78,6 +90,24 @@ func New(ctx context.Context, c Config) (*Host, error) {
 }
 
 func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, error) {
+	if c.NativeVault != nil && (options.NativeVaultInput != nil || options.NativeVaultEntry != nil || options.NativeVaultKeySetup != nil || options.NativeVaultRecords != nil) {
+		return nil, errors.New("native Vault cannot mix configured and injected providers")
+	}
+	if options.NativeVaultInput != nil && c.NativeConsole == nil {
+		return nil, errors.New("native Vault requires the enrolled signed console channel")
+	}
+	if options.NativeVaultInput != nil && options.NativeVaultInput.ExposureGate() == nil {
+		return nil, errors.New("native Vault requires one shared qualified exposure gate")
+	}
+	if options.NativeVaultInput != nil && (options.NativeVaultEntry == nil || options.NativeVaultEntry.ExposureGate() != options.NativeVaultInput.ExposureGate()) || options.NativeVaultInput == nil && options.NativeVaultEntry != nil {
+		return nil, errors.New("native Vault requires its matching native window lifecycle")
+	}
+	if options.NativeVaultInput != nil && (options.NativeVaultKeySetup == nil || !options.NativeVaultKeySetup.MatchesInput(options.NativeVaultInput)) || options.NativeVaultInput == nil && options.NativeVaultKeySetup != nil {
+		return nil, errors.New("native Vault requires its matching key custody and setup provider")
+	}
+	if options.NativeVaultRecords != nil && (options.NativeVaultInput == nil || options.NativeVaultEntry == nil || options.NativeVaultRecords.ExposureGate() == nil || options.NativeVaultRecords.ExposureGate() != options.NativeVaultEntry.ExposureGate() || options.NativeVaultKeySetup == nil || !options.NativeVaultKeySetup.MatchesRecordInput(options.NativeVaultRecords)) {
+		return nil, errors.New("native records require the matching signed lifecycle, exposure gate and multi-store key custody")
+	}
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -90,11 +120,27 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 	if err != nil {
 		return nil, err
 	}
-	h := &Host{owner: ctx, captureHelper: c.NativeHelper, captureWindow: native.CaptureWindow, captureWindows: native.ListCaptureWindows, recordingLeases: map[string]*consent.Lease{}, Verifier: verifier, users: map[string]User{}}
+	h := &Host{owner: ctx, runtimeListen: c.RuntimeListenAddress, runtimeSettingsRoot: c.StorageRoot, captureHelper: c.NativeHelper, captureWindow: native.CaptureWindow, captureWindows: native.ListCaptureWindows, recordingLeases: map[string]*consent.Lease{}, Verifier: verifier, users: map[string]User{}}
+	if options.NativeVaultInput != nil {
+		h.vaultExposure = options.NativeVaultInput.ExposureGate()
+	}
 	if c.Artifacts != nil {
 		h.captureMaxBytes = int(min(c.Artifacts.MaxBytes, int64(native.MaximumCaptureBytes)))
 	}
 	fail := func(err error) (*Host, error) { _ = h.Close(context.Background()); return nil, err }
+	if c.NativeVault != nil {
+		configured, err := configuredNativeVault(c)
+		if err != nil {
+			return fail(err)
+		}
+		h.nativeVaultStore = configured.store
+		h.nativeVaultRecords = configured.recordStore
+		options.NativeVaultInput = configured.input
+		options.NativeVaultEntry = configured.entry
+		options.NativeVaultKeySetup = configured.setup
+		options.NativeVaultRecords = configured.records
+		h.vaultExposure = configured.input.ExposureGate()
+	}
 	union := map[string]bool{}
 	allApplications := false
 	valueIDs := map[string][]string{}
@@ -109,6 +155,10 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 			valueIDs[bundle] = append(valueIDs[bundle], ids...)
 		}
 	}
+	h.privateNative, err = configuredPrivateNative(c)
+	if err != nil {
+		return nil, err
+	}
 	if err := h.configureNativeControl(ctx, c, options); err != nil {
 		return fail(err)
 	}
@@ -116,7 +166,7 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 		return fail(err)
 	}
 	if c.NativeHelper != "" && (len(union) > 0 || allApplications) {
-		readOptions := native.Options{HelperPath: c.NativeHelper, Stderr: os.Stderr}
+		readOptions := native.Options{Console: c.consoleHelperLaunch(), HelperPath: c.NativeHelper, Stderr: os.Stderr}
 		if c.NativeLaunch != nil {
 			readOptions.Requirement = c.NativeLaunch.HelperRequirement
 			readOptions.ExpectedUID = c.NativeLaunch.ExpectedUID
@@ -173,20 +223,44 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 			h.nativeByUser[namespace] = gateway
 		}
 	}
+	chromeReconnectReady := make(chan struct{})
+	defer close(chromeReconnectReady)
 	if c.Chrome != nil {
 		for _, grant := range c.Chrome.Grants {
 			if _, ok := h.users[grant.Principal.Namespace]; !ok {
 				return fail(errors.New("Chrome grant is outside enrolled user set"))
 			}
 		}
-		broker, err := chrome.NewBroker(ctx, *c.Chrome)
-		if err != nil {
-			return fail(err)
+		chromeConfig := *c.Chrome
+		chromeConfig.ReconnectBindings = func(callCtx context.Context, p auth.Principal, scope chrome.ReconnectBindingScope, check func(context.Context) error, consume func([]chrome.ReconnectBinding) error) error {
+			// The socket starts before the durable Runtime is constructed.
+			// Publish that state through a synchronization edge, not a racy
+			// nil check or an extended qualification deadline.
+			select {
+			case <-chromeReconnectReady:
+				return h.chromeReconnectBindings(callCtx, p, scope, check, consume)
+			case <-callCtx.Done():
+				return callCtx.Err()
+			}
 		}
-		h.chrome, err = chrome.NewGateway(broker, chrome.GatewayOptions{})
-		if err != nil {
-			_ = broker.Close()
-			return fail(err)
+		if len(h.nativeByUser) > 0 {
+			chromeConfig.ControlBadge = h.presentBrowserControlBadge
+		}
+		chromeConfig.ControllerPolicies = &controllerPolicySettings{rootPath: h.runtimeSettingsRoot}
+		broker, err := chrome.NewBroker(ctx, chromeConfig)
+		if errors.Is(err, chrome.ErrProcessQualification) && ctx.Err() == nil {
+			// No Chrome socket or credential loader has run. Keep independently
+			// authorized native/admin services alive; do not change enrollment.
+			h.chromeStartupUnqualified = true
+		} else {
+			if err != nil {
+				return fail(err)
+			}
+			h.chrome, err = chrome.NewGateway(broker, chrome.GatewayOptions{ControllerPolicies: &controllerPolicySettings{rootPath: h.runtimeSettingsRoot}})
+			if err != nil {
+				_ = broker.Close()
+				return fail(err)
+			}
 		}
 	}
 	if err := h.configureChromeRetirement(c); err != nil {
@@ -229,7 +303,7 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 	if err = validateNativeEffectReconciliationEnrollment(c.NativeEffectReconciliation); err != nil {
 		return fail(err)
 	}
-	h.durable, err = durable.New(durable.Options{ObjectiveEvaluator: nativeEvaluator, ReconciliationGuard: h.effectReconciliationGuard, ResolveReconciliation: nativeEffectReconciliationResolver(c.NativeEffectReconciliation), SourceRoot: c.SourceRoot, StorageRoot: c.StorageRoot, MaxUsers: c.MaxUsers, VerifyArtifact: verifyArtifact, StateMutationGuard: func(ctx context.Context, p auth.Principal, runID string) (func(), error) {
+	h.durable, err = durable.New(durable.Options{ValidateStepOutcome: nativeStepOutcomeAdmission(c.NativeEffectReconciliation), ObjectiveEvaluator: nativeEvaluator, ReconciliationGuard: h.effectReconciliationGuard, ResolveReconciliation: nativeEffectReconciliationResolver(c.NativeEffectReconciliation), SourceRoot: c.SourceRoot, StorageRoot: c.StorageRoot, MaxUsers: c.MaxUsers, VerifyArtifact: verifyArtifact, StateMutationGuard: func(ctx context.Context, p auth.Principal, runID string) (func(), error) {
 		if h.Runtime == nil {
 			return nil, durable.ErrStatePatchUnavailable
 		}
@@ -245,7 +319,7 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 		return fail(err)
 	}
 	h.applicationAccess = &applicationAccessService{invoke: h.durable.InvokePrivateComponent, enrolled: h.enrolled}
-	h.Runtime, err = automation.NewWithOptions(h.durable.Execute, automation.Options{OnSessionClose: h.cancelWindowFrameSession, PreparePlan: h.durable.PreparePlan, EvaluatePostcondition: h.durable.EvaluatePostcondition, CompleteObjective: h.durable.CompleteObjective, LoadResume: h.durable.LoadResume, AttachInitialOperation: func(ctx context.Context, p auth.Principal, runID string, revision int, sessionID, operationID string) error {
+	h.Runtime, err = automation.NewWithOptions(h.durable.Execute, automation.Options{OnSessionClose: h.cancelOwnedSession, PreparePlan: h.durable.PreparePlan, EvaluatePostcondition: h.durable.EvaluatePostcondition, CompleteObjective: h.durable.CompleteObjective, LoadResume: h.durable.LoadResume, AttachInitialOperation: func(ctx context.Context, p auth.Principal, runID string, revision int, sessionID, operationID string) error {
 		_, err := h.durable.AttachOperation(ctx, p, runID, revision, sessionID, operationID)
 		return err
 	}, AttachOperation: func(ctx context.Context, p auth.Principal, runID string, revision int, sessionID, operationID string) error {
@@ -261,16 +335,17 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 			return fail(err)
 		}
 	}
-	h.consent, err = NewConsentBroker(ConsentBrokerOptions{Invoke: h.durable.InvokePrivateComponent, Enrolled: h.enrolled, SessionOwned: h.Runtime.CheckSession, Policy: h.ConsentPolicy})
+	h.consent, err = NewConsentBroker(ConsentBrokerOptions{Invoke: h.durable.InvokePrivateComponent, Enrolled: h.enrolled, SessionOwned: h.Runtime.CheckSession, Policy: h.ConsentPolicy, RecoverCleanup: h.proveConsentCleanup, ControllerPolicy: h.controllerPolicyAuthorization})
 	if err != nil {
 		return fail(err)
 	}
+	h.credentials = newCredentialService(h)
 	if c.NativeConsole != nil {
 		peer, err := nativepeer.NewVerifier(nativepeer.Options{ExpectedUID: c.NativeConsole.ExpectedUID, DesignatedRequirement: c.NativeConsole.DesignatedRequirement})
 		if err != nil {
 			return fail(err)
 		}
-		h.consentListener, err = OpenConsentListener(ctx, ConsentListenerOptions{SocketPath: c.NativeConsole.SocketPath, Verifier: h.Verifier, VerifyPeer: peer, Broker: h.consent, Additional: h.NativeInformation})
+		h.consentListener, err = OpenConsentListener(ctx, ConsentListenerOptions{SocketPath: c.NativeConsole.SocketPath, Verifier: h.Verifier, VerifyPeer: peer, Broker: h.consent, Additional: h.NativeInformation, VaultInput: options.NativeVaultInput, VaultEntry: options.NativeVaultEntry, VaultKeySetup: options.NativeVaultKeySetup, VaultRecords: options.NativeVaultRecords})
 		if err != nil {
 			return fail(err)
 		}
@@ -295,9 +370,18 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 	if err != nil {
 		return fail(err)
 	}
-	h.Server, err = gateway.New(gateway.Dependencies{BrowserStatus: h.BrowserStatus, StateStopBoundary: h.durable.StopBoundary, EffectReconcile: h.durable.ReconcileEffect, Recovery: h.recovery, Scenarios: h.scenarios, CaptureWindow: h.CaptureWindow, CaptureWindows: h.CaptureWindows, CaptureWindowFrame: h.CaptureWindowFrame, StateResume: h.ResumeRun, PermissionRequest: h.consent.Request, PermissionStatus: h.consent.RequestStatus, Recording: h.recording, Runtime: h.Runtime, Observe: h.Observe, ObserveNativeRoot: h.ObserveNativeRoot, ObserveNativeWindow: h.ObserveNativeWindow, Policy: h.Policy, StateGet: h.durable.StateGet, StatePatch: h.durable.StatePatch, StatePause: h.PauseRun})
+	h.Server, err = gateway.New(gateway.Dependencies{LocalSkills: h.localSkills, CredentialPrepare: h.CredentialPrepare, CredentialRecover: h.CredentialRecover, CredentialResumeManual: h.CredentialResumeManual, CredentialApply: h.CredentialApply, CredentialSubmit: h.CredentialSubmit, CredentialStatus: h.CredentialStatus, BrowserActivateTab: h.BrowserActivateTab, BrowserTabLocationMatches: h.BrowserTabLocationMatches, BrowserOpenOrigin: h.BrowserOpenOrigin, BrowserLocationMatches: h.BrowserLocationMatches, BrowserTabs: h.BrowserTabs, BrowserStatus: h.BrowserStatus, StateStopBoundary: h.durable.StopBoundary, EffectReconcile: h.durable.ReconcileEffect, Recovery: h.recovery, Scenarios: h.scenarios, CaptureWindow: h.CaptureWindow, CaptureWindows: h.CaptureWindows, CaptureWindowFrame: h.CaptureWindowFrame, StateResume: h.ResumeRun, PermissionRequest: h.consent.Request, PermissionStatus: h.consent.RequestStatus, Recording: h.recording, Runtime: h.Runtime, Observe: h.Observe, ObserveNativeRoot: h.ObserveNativeRoot, ObserveNativeWindow: h.ObserveNativeWindow, Policy: h.Policy, StateGet: h.durable.StateGet, StatePatch: h.durable.StatePatch, StatePause: h.PauseRun})
 	if err != nil {
 		return fail(err)
+	}
+	if h.chrome != nil {
+		dispatcher, controllerErr := gateway.NewControllerDispatcher(h.Server, h.Runtime)
+		if controllerErr != nil {
+			return fail(controllerErr)
+		}
+		if controllerErr = h.chrome.SetControllerDispatcher(dispatcher); controllerErr != nil {
+			return fail(controllerErr)
+		}
 	}
 	return h, nil
 }
@@ -350,8 +434,10 @@ func (h *Host) Policy(ctx context.Context, p auth.Principal) (script.Policy, err
 	nativeReadReady := false
 	nativeWindowPositionSupported := false
 	nativeWindowKeyboardSupported := false
+	nativeWindowTextSupported := false
 	nativeTextReplaceSupported := false
 	nativeWindowScopeSupported := false
+	nativeSemanticMenuSupported := false
 	if h.nativeFor(p.Namespace) != nil && h.nativeClient != nil {
 		// Capability discovery must establish current read readiness without
 		// borrowing the gateway's possibly stale in-memory doctor result. This
@@ -368,15 +454,21 @@ func (h *Host) Policy(ctx context.Context, p auth.Principal) (script.Policy, err
 			})
 			if doctorErr == nil && reply.Error == nil {
 				var doctor struct {
-					AXTrusted           bool     `json:"axTrusted"`
-					NativeRootScopes    []string `json:"nativeRootScopes"`
-					NativeWindowScopes  []string `json:"nativeWindowScopes"`
-					NativeWindowActions []string `json:"nativeWindowActions"`
-					NativeTextActions   []string `json:"nativeTextActions"`
-					NativeTextReads     []string `json:"nativeTextReads"`
+					AXTrusted              bool     `json:"axTrusted"`
+					NativeRootScopes       []string `json:"nativeRootScopes"`
+					NativeMenuScopeVersion int      `json:"nativeMenuScopeVersion"`
+					NativeWindowScopes     []string `json:"nativeWindowScopes"`
+					NativeWindowActions    []string `json:"nativeWindowActions"`
+					NativeTextActions      []string `json:"nativeTextActions"`
+					NativeTextReads        []string `json:"nativeTextReads"`
+					NativeBooleanReads     []string `json:"nativeBooleanReads"`
+					NativeSemanticMenus    []string `json:"nativeSemanticMenus"`
 				}
 				if json.Unmarshal(reply.Result, &doctor) == nil && doctor.AXTrusted && ctx.Err() == nil {
 					nativeReadReady = true
+					if doctor.NativeMenuScopeVersion == 1 {
+						caps["native:menuScope"] = true
+					}
 					caps["native:boundedObservation"] = true
 					caps["native:roleLocator"] = true
 					caps["native:idLocator"] = true
@@ -386,6 +478,9 @@ func (h *Host) Policy(ctx context.Context, p auth.Principal) (script.Policy, err
 						if scope == "exactTitle" {
 							nativeWindowScopeSupported = true
 							caps["native:windowScope"] = true
+							// Indexed native selection is a gateway query over the
+							// complete exact-window AX tree, not a helper input mode.
+							caps["native:indexedQuery"] = true
 						}
 					}
 					caps["native:ancestorScope"] = true
@@ -407,7 +502,20 @@ func (h *Host) Policy(ctx context.Context, p auth.Principal) (script.Policy, err
 							caps["native:valueMatches"] = true
 						}
 					}
+					for _, name := range doctor.NativeBooleanReads {
+						if name == "checked" {
+							caps["native:checkedObservation"] = true
+						}
+					}
+					for _, action := range doctor.NativeSemanticMenus {
+						if action == "AXShowMenu" {
+							nativeSemanticMenuSupported = true
+						}
+					}
 					for _, action := range doctor.NativeWindowActions {
+						if action == "typeText" {
+							nativeWindowTextSupported = true
+						}
 						if action == "pressSessionKey" {
 							nativeWindowKeyboardSupported = true
 						}
@@ -434,8 +542,15 @@ func (h *Host) Policy(ctx context.Context, p auth.Principal) (script.Policy, err
 		}
 	}
 	allowMutation := h.nativeControlPolicy(ctx, p, caps)
+	if nativeReadReady && nativeSemanticMenuSupported && caps["native:semanticPress"] {
+		caps["native:semanticMenu"] = true
+	}
+	if !nativeReadReady || !nativeWindowTextSupported {
+		delete(caps, "native:windowSessionText")
+	}
 	if !nativeReadReady || !nativeWindowScopeSupported {
 		delete(caps, "native:windowScope")
+		delete(caps, "native:indexedQuery")
 	}
 	// semanticPress is set only after native control admission succeeds for a
 	// non-launch-only helper. A ready web route cannot qualify native movement.
@@ -496,6 +611,12 @@ func (h *Host) Observe(ctx context.Context, p auth.Principal, surface model.Surf
 	return model.Observation{}, fmt.Errorf("requested backend is not connected")
 }
 func (h *Host) execute(ctx context.Context, p auth.Principal, step model.Step, values map[string]model.Value) (automation.StepResult, error) {
+	if step.Action == "browser.activateTab" {
+		return h.executeActivateTab(ctx, p, step)
+	}
+	if step.Action == "browser.openOrigin" {
+		return h.executeOpenOrigin(ctx, p, step)
+	}
 	if step.Effect.Class != model.ReadOnly {
 		if step.Target.Surface.Kind == "web" {
 			if h.webControl == nil {
@@ -565,6 +686,9 @@ func (h *Host) Close(ctx context.Context) error {
 		ctx, cancel = context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 	}
+	if h.credentials != nil {
+		h.credentials.close()
+	}
 	var failures []error
 	frameDone := h.inhibitWindowFrames(ctx)
 	// Physical inhibition cannot wait behind an Endly action or a Datly writer.
@@ -633,6 +757,14 @@ func (h *Host) Close(ctx context.Context) error {
 	if h.artifacts != nil {
 		failures = append(failures, h.artifacts.Close())
 	}
+	if h.nativeVaultStore != nil {
+		failures = append(failures, h.nativeVaultStore.Close())
+		h.nativeVaultStore = nil
+	}
+	if h.nativeVaultRecords != nil {
+		failures = append(failures, h.nativeVaultRecords.Close())
+		h.nativeVaultRecords = nil
+	}
 	if h.chrome != nil {
 		failures = append(failures, h.chrome.Close())
 	}
@@ -653,10 +785,30 @@ func (h *Host) PauseRun(ctx context.Context, p auth.Principal, runID string, rev
 	if _, err := h.authorize(ctx, p); err != nil {
 		return durable.State{}, err
 	}
+	before, err := h.durable.PauseReference(ctx, p, runID)
+	if err != nil {
+		return durable.State{}, err
+	}
+	if before.Revision != revision {
+		return durable.State{}, errors.New("pause revision changed")
+	}
+	if before.Status != "new" && before.Status != "running" && before.Status != "paused" {
+		return durable.State{}, errors.New("terminal run cannot be paused")
+	}
 	if err := h.Runtime.QuiesceRun(ctx, p, runID); err != nil {
 		return durable.State{}, err
 	}
-	return h.durable.TransitionRun(ctx, p, runID, revision, "paused")
+	after, err := h.durable.StateGet(ctx, p, runID)
+	if err != nil {
+		return durable.State{}, err
+	}
+	if after.PlanID != before.PlanID || after.OperationID != before.OperationID || after.SessionID != before.SessionID {
+		return durable.State{}, errors.New("run correlation changed during pause")
+	}
+	if after.Status == "paused" && len(after.UnresolvedEffects) == 0 {
+		return after, nil
+	}
+	return h.durable.TransitionRun(ctx, p, runID, after.Revision, "paused")
 }
 
 // Native read policies belong to the verified principal, never a user union.

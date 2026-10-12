@@ -5,6 +5,17 @@ import Foundation
 public enum ReplacementProof {
     public static func permitted(role: String?, subrole: String?, subroleKnown: Bool, valueSettable: Bool?, labels: [String]) -> Bool {
         guard ["AXTextField","AXTextArea"].contains(role ?? ""), subroleKnown, subrole != "AXSecureTextField", valueSettable == true else { return false }
+        return publicLabels(labels)
+    }
+    /// Comparison does not imply replacement authority for a combo box.
+    public static func comparisonPermitted(role: String?, subrole: String?, subroleKnown: Bool, labels: [String]) -> Bool {
+        if role == "AXComboBox" {
+            guard subroleKnown, subrole == nil || subrole == "" else { return false }
+            return publicLabels(labels)
+        }
+        return permitted(role: role, subrole: subrole, subroleKnown: subroleKnown, valueSettable: true, labels: labels)
+    }
+    private static func publicLabels(_ labels: [String]) -> Bool {
         let label = labels.joined(separator:" ").lowercased()
         return !["password","credential","secret","token","securetextfield","api key"].contains(where:label.contains)
     }

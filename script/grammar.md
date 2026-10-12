@@ -95,9 +95,39 @@ Native instance narrowing accepts `app("com.google.Chrome", processId: 4464, pro
 `locator.pressSessionKey("Cmd+Shift+G")` is an explicit native login-session
 keyboard action with its own `sessionKeyboard` capability. It requires native
 PID/birth narrowing and the same closed named-key syntax as `pressKey`.
+Source codecs also accept the single ASCII digits `0` through `9`, including
+`Cmd+1`; multiple digits, Unicode digit lookalikes and raw key-code strings are
+rejected. Native digit mapping requires one matching main-keyboard character in
+the current layout and refuses numeric-keypad fallback or ambiguous mappings.
+The map is checked again before dispatch. This addition needs both updated
+broker and helper binaries; it does not establish live Office shortcut proof.
 `pressKey` remains process-targeted; neither action falls back to the other.
 Session delivery is not atomically addressed to a PID or window. The helper
 must qualify current foreground and focused-container ancestry immediately
 before posting, preserve key-up cleanup, and leave outcome verification to the
 independent postcondition. Source integration is under qualification; this
 entry does not claim installed or production availability.
+
+## Opt-in window text
+
+`app(...).typeWindowText(windowId: ..., text: ..., focusRole: ..., focusIdentifier: ..., focusName: ...)`
+requires a complete native process identity and `native:windowSessionText`.
+At least one of `focusIdentifier` or `focusName` is required; `focusRole` is
+mandatory. Text is bounded, single-line literal data (typed inputs are allowed),
+not a chord or command sequence. The action is externally non-idempotent and
+cannot bind a result. See [window text contract](../docs/native-window-text.md)
+for runtime enrollment, focus checks, cancellation and verification requirements.
+
+### Explicit native menu disclosure
+
+`locator.showMenu(timeout: 5s)` is a distinct native action requiring
+`semanticMenu` capability. It invokes advertised AXShowMenu on an enabled
+AXMenuButton/AXPopUpButton under exact process identity and the normal consent
+and fence checks. It does not reinterpret click/AXPress or submit/AXConfirm, and
+it does not fall back to keyboard input. Source support does not qualify an old
+installed helper or prove that a menu opened; declare and observe the resulting
+menu, and preserve unknown effects.
+
+`app("com.example.Editor", processId: 42, processStartToken: "1790000000:1").quit()` requests normal quit of that existing process. Omitting process identity requires exactly one running instance of the bundle. The `appQuit` capability requires an advertising helper and existing control consent/fence. Quit accepts no force flag, executable path, or launch arguments. A submission can remain unknown, including while an unsaved-document dialog is open; only independent confirmation that the original process exited verifies the action. Never replay an uncertain quit. Lifecycle submission invalidates old native references and capture permits.
+
+Quit observes exit for up to five seconds, bounded by the action's remaining deadline. A delayed exit can be adopted later through `mechanize_effect_reconcile` when the host enrolls `native.app.quit.v1` in `nativeEffectReconciliation`. This read-only contract requires an original plan that already contains the exact PID and birth token; it cannot adopt a bundle-only quit or revise the plan afterward. It uses observation consent and an authenticated read-only helper advertising `app.exitStatus`, so it does not require re-enabling uncertain control or sending another quit. A still-running process (including an unsaved-document dialog), unavailable observation, or mismatched identity leaves the effect unresolved. Reconciliation confirms only the original process's exit, not document saving or other business outcomes, and does not resume the plan or clear unrelated control barriers.

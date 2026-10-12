@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/viant/mechanize/auth"
+	"github.com/viant/mechanize/model"
 	"github.com/viant/mechanize/script"
 	"testing"
 	"time"
@@ -40,6 +41,12 @@ func (f *windowKeyFixture) Call(ctx context.Context, r Request) (Reply, error) {
 			panic("missing held window fence")
 		}
 		f.keys++
+		if f.mode == "preparationOnly" {
+			reply.ForegroundAcquisition = &ForegroundAcquisition{Version: 1, ActivationRequested: true, WindowRaiseRequested: true, Confirmed: true}
+			reply.Receipt = &Receipt{DispatchState: "notDispatched"}
+			reply.Error = &NativeError{Code: "staleReference", Message: "Exact target changed after visibility preparation", DispatchState: "notDispatched"}
+			return reply, reply.Error
+		}
 		json.Unmarshal(r.Params, &f.params)
 		reply.Receipt = &Receipt{DispatchState: "dispatched", TargetRef: "window:9625"}
 		proof := map[string]any{"pid": 1, "startToken": "100:1", "bundleID": "fixture.app", "windowId": 9625, "identity": "window:9625", "key": "Escape", "requestId": r.RequestID, "observedAt": time.Now(), "businessSuccess": false, "inputSemantics": "explicit login-session chord; global focus may change"}
@@ -140,5 +147,50 @@ func TestWindowKeyTimestampQuantizationDoesNotCreateSpuriousUnknown(t *testing.T
 	}
 	if windowKeyTimeQualified(start, start, received.Add(4*time.Second)) {
 		t.Fatal("stale proof accepted")
+	}
+}
+
+func TestWindowKeyboardPreparationProofNeverBecomesInputReceipt(t *testing.T) {
+	ctx, p := nativeActor(t)
+	f := &windowKeyFixture{mode: "preparationOnly"}
+	g, e := NewGateway(f, GatewayOptions{AllowedBundles: []string{"fixture.app"}, Lease: func(context.Context, auth.Principal) (Lease, error) { return Lease{ID: "held", Generation: 3}, nil }})
+	if e != nil {
+		t.Fatal(e)
+	}
+	plan, e := script.Compile(`app("fixture.app",processId:1,processStartToken:"100:1").pressWindowKey(windowId:9625,key:"Escape")`)
+	if e != nil {
+		t.Fatal(e)
+	}
+	result, e := g.Execute(ctx, p, plan.Steps[0], nil)
+	if e == nil || result.DispatchState != "notDispatched" || result.VerificationState == "verified" || f.keys != 1 {
+		t.Fatal("visibility preparation promoted/replayed business input", result, e)
+	}
+	for _, method := range f.calls {
+		if method == "app.activate" || method == "input.key" {
+			t.Fatal("gateway split/replayed native action")
+		}
+	}
+}
+
+// The future outcome can name a different title. Only the authored current
+// physical-window target may reach foreground preparation and key dispatch.
+func TestWindowKeyboardDestinationPostconditionDoesNotChangePhysicalTarget(t *testing.T) {
+	ctx, p := nativeActor(t)
+	f := &windowKeyFixture{mode: "valid"}
+	g, err := NewGateway(f, GatewayOptions{AllowedBundles: []string{"fixture.app"}, Lease: func(context.Context, auth.Principal) (Lease, error) { return Lease{ID: "held", Generation: 3}, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := script.Compile(`app("fixture.app",processId:1,processStartToken:"100:1").pressWindowKey(windowId:9625,key:"Escape")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Steps[0].Postcondition = &model.Predicate{Kind: "adapter", Adapter: "native", Name: "valueEquals", TimeoutMs: 1000, FreshnessMs: 1000, RequiredAuthority: "observational", Scope: model.PredicateScope{Target: &plan.Steps[0].Target}, Inputs: map[string]model.Value{"windowTitle": {Kind: model.StringValue, String: "Future destination title"}}}
+	result, err := g.Execute(ctx, p, plan.Steps[0], nil)
+	if err != nil || result.DispatchState != "dispatched" || result.VerificationState != "unknown" || f.keys != 1 {
+		t.Fatal("physical route altered", result, err)
+	}
+	if len(f.params) != 5 || f.params["windowId"] != float64(9625) || f.params["expectedApp"] != "fixture.app" || f.params["pid"] != float64(1) || f.params["processStartToken"] != "100:1" || f.params["key"] != "Escape" {
+		t.Fatal("future outcome contaminated physical input", f.params)
 	}
 }

@@ -2,6 +2,7 @@ package durable
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	manager "github.com/viant/endly/service/manager"
@@ -113,6 +114,24 @@ func TestEndlyDatlyIntentOutcomeAndRestartBarrier(t *testing.T) {
 			if calls.Load() != 1 || captured == nil {
 				t.Fatalf("dispatch calls %d", calls.Load())
 			}
+			var recordedTiming *integration.StepTiming
+			if verified {
+				metadata, _ := integration.ExecutionFromContext(captured)
+				state, e := builder.StateGet(ctx, p, metadata.RunID)
+				if e != nil || len(state.Progress) != 1 || state.Progress[0].EvidenceJson == nil {
+					t.Fatal("action event evidence missing", e)
+				}
+				var logged integration.StepResult
+				if json.Unmarshal([]byte(*state.Progress[0].EvidenceJson), &logged) != nil || logged.Timing == nil {
+					t.Fatal("action timing was not persisted")
+				}
+				recordedTiming = logged.Timing
+				start, se := time.Parse(time.RFC3339Nano, recordedTiming.StartedAt)
+				end, ee := time.Parse(time.RFC3339Nano, recordedTiming.FinishedAt)
+				if se != nil || ee != nil || end.Before(start) || recordedTiming.TotalMs < recordedTiming.PreparationMs+recordedTiming.ExecutionMs+recordedTiming.VerificationMs {
+					t.Fatal("invalid action event times")
+				}
+			}
 			if err = orchestration.Close(ctx, session.SessionID); err != nil {
 				t.Fatal(err)
 			}
@@ -128,6 +147,9 @@ func TestEndlyDatlyIntentOutcomeAndRestartBarrier(t *testing.T) {
 			result, replayErr := builder.Execute(context.WithoutCancel(captured), p, plan.Steps[0], map[string]model.Value{"binding.entity": {Kind: model.StringValue, String: "case-1"}})
 			if verified && (replayErr != nil || result.VerificationState != "verified") {
 				t.Fatalf("confirmed replay result %+v %v", result, replayErr)
+			}
+			if verified && (result.Timing == nil || *result.Timing != *recordedTiming) {
+				t.Fatal("replay fabricated a new action timestamp")
 			}
 			if !verified && !errors.Is(replayErr, ErrNeedsReconciliation) {
 				t.Fatalf("uncertain replay: %v", replayErr)

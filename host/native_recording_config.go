@@ -14,7 +14,7 @@ func (h *Host) configureNativeRecording(ctx context.Context, c Config, options H
 		copy := *options.NativeRecording
 		enrolled = &copy
 	} else if c.NativeLaunch != nil {
-		enrolled = &NativeRecordingOptions{HelperPath: c.NativeHelper, Requirement: c.NativeLaunch.HelperRequirement, ExpectedUID: c.NativeLaunch.ExpectedUID}
+		enrolled = &NativeRecordingOptions{ConsoleLaunch: c.consoleHelperLaunch(), HelperPath: c.NativeHelper, Requirement: c.NativeLaunch.HelperRequirement, ExpectedUID: c.NativeLaunch.ExpectedUID}
 	}
 	if enrolled == nil {
 		return nil

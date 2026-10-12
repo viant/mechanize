@@ -38,7 +38,7 @@ const (
 )
 
 type Scope struct {
-	Kind        string `json:"kind"`
+	Kind        string `json:"kind" choice:"origin" choice:"application" choice:"window" choice:"browser" choice:"desktop"`
 	BundleID    string `json:"bundleID,omitempty"`
 	WindowID    string `json:"windowID,omitempty"`
 	Origin      string `json:"origin,omitempty"`
@@ -56,6 +56,10 @@ func (s Scope) Validate() error {
 	case "desktop":
 		if s.BundleID != "" || s.WindowID != "" || s.Origin != "" {
 			return fmt.Errorf("desktop scope cannot carry application, window, or origin selectors")
+		}
+	case "browser":
+		if s.BundleID != "com.google.Chrome" || s.WindowID != "" || s.Origin != "" {
+			return fmt.Errorf("exact Chrome all-websites browser scope required")
 		}
 	case "application":
 		if s.BundleID == "" || s.WindowID != "" || s.Origin != "" {
@@ -157,15 +161,20 @@ type Lease struct {
 // checks principal + operator ceilings and current helper/TCC capability each time.
 // Missing callbacks fail closed; no default identity, admin or permission exists.
 type Options struct {
-	Namespace     string
-	Invoke        func(context.Context, exec.ComponentRequest) (any, error)
-	VerifyClient  func(context.Context) (Client, error)
-	VerifyActor   func(context.Context) (Actor, error)
+	Namespace    string
+	Invoke       func(context.Context, exec.ComponentRequest) (any, error)
+	VerifyClient func(context.Context) (Client, error)
+	VerifyActor  func(context.Context) (Actor, error)
+	// Optional host-owned saved-policy verifier; never a requester claim or human assertion.
+	VerifyPolicy  func(context.Context, Client) error
 	ResolveClient func(context.Context, string, string) (Client, error)
 	Policy        func(context.Context, Client, Scope, []Mode, int) error
-	Now           func() time.Time
-	RequestTTL    time.Duration
-	MaxDuration   time.Duration
+	// Host-owned, read-only lifecycle proof: confirm original executors have
+	// stopped and input is released. Tool arguments cannot supply this callback.
+	RecoverCleanup func(context.Context, Client, Scope) error
+	Now            func() time.Time
+	RequestTTL     time.Duration
+	MaxDuration    time.Duration
 }
 
 func validateInput(in RequestInput, max time.Duration) error {

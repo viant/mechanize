@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -28,9 +29,21 @@ type Target struct {
 }
 
 func (t Target) Validate() error {
+	if len(t.Origin) > 2048 {
+		return ErrScope
+	}
 	u, err := url.Parse(t.Origin)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery || u.Opaque != "" || u.Host != strings.ToLower(u.Host) || u.String() != t.Origin || strings.HasSuffix(u.Host, ":443") || strings.HasSuffix(u.Hostname(), ".") {
 		return ErrScope
+	}
+	if u.Hostname() == "" {
+		return ErrScope
+	}
+	if port := u.Port(); port != "" {
+		value, err := strconv.Atoi(port)
+		if err != nil || value < 1 || value > 65535 {
+			return ErrScope
+		}
 	}
 	if len(t.Account) < 1 || len(t.Account) > 128 {
 		return ErrScope

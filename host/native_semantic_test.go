@@ -35,12 +35,12 @@ func TestDevelopmentSemanticProfileDoesNotManufactureUnlockedOrInputAuthority(t 
 	if f.calls != 0 {
 		t.Fatal("raw helper reached")
 	}
-	for _, method := range []string{"elements.press", "elements.setValue", "elements.submit"} {
+	for _, method := range []string{"elements.press", "elements.showMenu", "elements.setValue", "elements.submit"} {
 		if _, err := f.caller().Call(f.ctx, native.Request{Method: method, Lease: &lease, Params: json.RawMessage(`{"expectedApp":"com.fixture.app"}`)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if f.calls != 3 {
+	if f.calls != 4 {
 		t.Fatal("semantic dispatch missing")
 	}
 	f.ready.SecureInputEnabled = true

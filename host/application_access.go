@@ -128,7 +128,7 @@ func policyAllowsScope(policy data.ApplicationPolicy, scope consent.Scope, mode 
 	switch scope.Kind {
 	case "application", "window":
 		return policy.Allows(scope.BundleID, string(mode))
-	case "origin":
+	case "browser", "origin":
 		return policy.Allows("com.google.Chrome", string(mode))
 	case "desktop":
 		if !policy.DesktopWide {

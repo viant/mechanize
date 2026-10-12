@@ -17,6 +17,7 @@ struct ScopedNativeRootRuntime {
 struct ScopedNativeRoot {
     let scope: NativeRootScope?
     let windowScope: NativeWindowScope?
+    let nativeMenu:String?
     let element: AXUIElement
     let application: AXUIElement
     let pid: pid_t
@@ -27,7 +28,7 @@ struct ScopedNativeRoot {
     private static func attributeName(_ scope: NativeRootScope) -> String {
         scope == .menuBar ? kAXMenuBarAttribute : kAXFocusedUIElementAttribute
     }
-    static func resolve(_ scope: NativeRootScope, application: AXUIElement, pid: pid_t, uid: uid_t, birth: String, bundle: String,
+    static func resolve(_ scope: NativeRootScope, application: AXUIElement, pid: pid_t, uid: uid_t, birth: String, bundle: String, nativeMenu:String?=nil,
                         check: () throws -> Void, runtime: ScopedNativeRootRuntime = .system) throws -> ScopedNativeRoot {
         try check()
         let (status, value) = runtime.attribute(application, attributeName(scope))
@@ -35,7 +36,7 @@ struct ScopedNativeRoot {
         guard status == .success, let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
             throw NativeFailure("rootUnavailable", "Requested application native root is unavailable")
         }
-        let element = value as! AXUIElement
+        var element = value as! AXUIElement
         AXUIElementSetMessagingTimeout(element, 0.1)
         try validateOwner(element, pid: pid, uid: uid, birth: birth, bundle: bundle, check: check, runtime: runtime)
         if scope == .menuBar {
@@ -45,7 +46,23 @@ struct ScopedNativeRoot {
                 throw NativeFailure("rootUnavailable", "Requested application root is not an AXMenuBar")
             }
         }
-        return ScopedNativeRoot(scope: scope, windowScope: nil, element: element, application: application, pid: pid, uid: uid, birth: birth, bundle: bundle)
+        if let name=nativeMenu {
+            guard scope == .menuBar,!name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,name.utf8.count<=256,name.rangeOfCharacter(from:.controlCharacters)==nil else{throw NativeFailure("invalidScope","Exact named menu requires menuBar")}
+            let (status,children)=runtime.attribute(element,kAXChildrenAttribute);try check()
+            guard status == .success,let candidates=children as? [AXUIElement],candidates.count<=128 else{throw NativeFailure("incompleteObservation","Complete bounded top-level menu census required")}
+            var match:AXUIElement?,seen:[AXUIElement]=[]
+            for candidate in candidates {
+                try check();guard !seen.contains(where:{CFEqual($0,candidate)}) else{throw NativeFailure("incompleteObservation","Duplicate top-level menu identity")};seen.append(candidate)
+                AXUIElementSetMessagingTimeout(candidate,0.1)
+                try validateOwner(candidate,pid:pid,uid:uid,birth:birth,bundle:bundle,check:check,runtime:runtime)
+                let (roleStatus,role)=runtime.attribute(candidate,kAXRoleAttribute);try check()
+                let (titleStatus,title)=runtime.attribute(candidate,kAXTitleAttribute);try check()
+                guard roleStatus == .success,role as? String==kAXMenuBarItemRole,titleStatus == .success,let title=title as? String,title.utf8.count<=256 else{throw NativeFailure("incompleteObservation","Top-level menu identity unavailable")}
+                if title==name {guard match==nil else{throw NativeFailure("ambiguousTarget","Named top-level menu is not unique")};match=candidate}
+            }
+            guard let match else{throw NativeFailure("targetNotFound","Named top-level menu unavailable")};element=match
+        }
+        return ScopedNativeRoot(scope: scope, windowScope: nil, nativeMenu:nativeMenu, element: element, application: application, pid: pid, uid: uid, birth: birth, bundle: bundle)
     }
     static func resolveWindow(_ requested: NativeWindowScope, application: AXUIElement, pid: pid_t, uid: uid_t, birth: String, bundle: String,
                               check: () throws -> Void, runtime: ScopedNativeRootRuntime = .system) throws -> ScopedNativeRoot {
@@ -62,12 +79,12 @@ struct ScopedNativeRoot {
             match = candidate
         }
         guard let element = match else { throw NativeFailure("targetNotFound", "Exact window title was not found") }
-        return ScopedNativeRoot(scope: nil, windowScope: requested, element: element, application: application, pid: pid, uid: uid, birth: birth, bundle: bundle)
+        return ScopedNativeRoot(scope: nil, windowScope: requested, nativeMenu:nil, element: element, application: application, pid: pid, uid: uid, birth: birth, bundle: bundle)
     }
     private func resolveCurrent(check: () throws -> Void, runtime: ScopedNativeRootRuntime) throws -> ScopedNativeRoot {
         if let windowScope { return try Self.resolveWindow(windowScope, application: application, pid: pid, uid: uid, birth: birth, bundle: bundle, check: check, runtime: runtime) }
         guard let scope else { throw NativeFailure("invalidScope", "Native scope unavailable") }
-        return try Self.resolve(scope, application: application, pid: pid, uid: uid, birth: birth, bundle: bundle, check: check, runtime: runtime)
+        return try Self.resolve(scope, application: application, pid: pid, uid: uid, birth: birth, bundle: bundle, nativeMenu:nativeMenu, check: check, runtime: runtime)
     }
     private static func validateOwner(_ element: AXUIElement, pid: pid_t, uid: uid_t, birth: String, bundle: String,
                                       check: () throws -> Void, runtime: ScopedNativeRootRuntime) throws {

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Build local ad-hoc signed artifacts without installing or granting access."""
+"""Build local signed artifacts without installing or granting access."""
+import argparse
 import hashlib
 import json
 import os
@@ -13,6 +14,8 @@ import sys
 import uuid
 
 import extension_package
+import development_signing
+import playwright_package
 
 
 def run(*args, env=None, capture=False):
@@ -22,8 +25,9 @@ def run(*args, env=None, capture=False):
 
 
 def pin(path, identifier):
-    run("codesign", "--force", "--sign", "-", "--identifier", identifier, str(path))
+    run("codesign", *development_signing.signing_arguments(signing_identity, identifier), str(path))
     run("codesign", "--verify", "--strict", str(path))
+    development_signing.verify_certificate(path, signing_identity)
     info = run("codesign", "--display", "--verbose=4", str(path), capture=True)
     match = re.search(r"^CDHash=([0-9a-fA-F]{40})$", info.stderr, re.MULTILINE)
     if not match:
@@ -36,8 +40,16 @@ def pin(path, identifier):
 ROOT = Path(__file__).resolve().parents[1]
 if sys.platform != "darwin":
     sys.exit("Local developer packaging requires macOS.")
-if len(sys.argv) != 1:
-    sys.exit("This script accepts no installation, credential, or trust overrides.")
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--signing-identity", metavar="CERTIFICATE_SHA1",
+                    help="Exact fingerprint of an existing valid code-signing certificate; default: ad-hoc")
+parser.add_argument("--playwright-node", type=Path,
+                    help="Explicit local Node executable for optional reviewed Playwright runtime; no download")
+arguments = parser.parse_args()
+try:
+    signing_identity = development_signing.select_identity(arguments.signing_identity)
+except ValueError as error:
+    sys.exit(str(error))
 for tool in ("go", "swift", "codesign"):
     if not shutil.which(tool):
         sys.exit(f"Missing build tool: {tool}")
@@ -69,6 +81,9 @@ with helper_plist.open("wb") as output:
                   "CFBundleVersion": "0.1.0",
                   "MechanizeBrokerRequirement": broker_requirement}, output)
 os.chmod(helper_plist, 0o600)
+robotgo_archive = ROOT / "native/macos/.build/robotgo/libmechanize_robotgo.a"
+robotgo_archive.parent.mkdir(parents=True, exist_ok=True)
+run("go", "build", "-buildmode=c-archive", "-o", str(robotgo_archive), "./native/robotgo-bridge", env=build_environment)
 run("swift", "build", "--package-path", "native/macos", "-c", "release",
     "-Xlinker", "-sectcreate", "-Xlinker", "__TEXT",
     "-Xlinker", "__info_plist", "-Xlinker", str(helper_plist))
@@ -87,6 +102,14 @@ if app.exists():
         sys.exit("Development app output is not a real directory.")
     shutil.rmtree(app)
 shutil.copytree(source_app, app)
+shutil.copytree(ROOT / "third_party", app / "Contents" / "Resources" / "ThirdParty", dirs_exist_ok=True)
+playwright_config = None
+if arguments.playwright_node is not None:
+    node = arguments.playwright_node.resolve(strict=True)
+    playwright_package.file_digest(node)
+    runtime = app / "Contents" / "Resources" / "Playwright"
+    run(str(node), str(ROOT / "browser/playwright/package-runtime.mjs"), str(runtime))
+    playwright_config = playwright_package.configuration(node, runtime)
 plist_path = app / "Contents" / "Info.plist"
 with plist_path.open("rb") as source:
     plist = plistlib.load(source)
@@ -102,6 +125,9 @@ extension = destination / "extension" / "chrome"
 extension_inventory = extension_package.build(ROOT / "extension" / "chrome", extension)
 manifest = {
     "schemaVersion": 1, "mode": "development", "productionQualified": False,
+    "websiteAccessModes": ["selected", "all"],
+    "signingMode": "ad-hoc" if signing_identity == "-" else "certificate",
+    "signingCertificateSHA1": None if signing_identity == "-" else signing_identity,
     "sourceRoot": str(ROOT), "broker": str(broker), "helper": str(helper), "console": str(app),
     "brokerRequirement": broker_requirement, "helperRequirement": helper_requirement,
     "nativeHost": str(native_host), "nativeHostRequirement": native_host_requirement,
@@ -121,6 +147,8 @@ manifest = {
     "installationPerformed": False, "credentialsProvisioned": False, "systemPermissionsGranted": False
 }
 manifest_path = destination / "manifest.json"
+if playwright_config is not None:
+    manifest["playwright"] = playwright_config
 with manifest_path.open("w", encoding="utf-8") as output:
     json.dump(manifest, output, indent=2)
     output.write("\n")

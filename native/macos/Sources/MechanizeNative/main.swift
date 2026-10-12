@@ -70,14 +70,22 @@ struct Reference {
             FileHandle.standardError.write(Data("mechanize-native: launch identity rejected\n".utf8))
             exit(78)
         }
+        // AppKit's public mouse-down hit test requires an application connection
+        // to WindowServer. No windows, activation or input are created here.
+        await MainActor.run {
+            let application = NSApplication.shared
+            _ = application.setActivationPolicy(.accessory)
+        }
         let helper = Helper(brokerAuthenticated: brokerAuthenticated)
         do {
-            while let data = try FrameCodec.read(.standardInput) {
+            let reader=FramedInputReader(.standardInput)
+            while let data = try await reader.read() {
                 guard let request = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw FramingError.invalid }
                 let reply = await helper.handle(request)
                 try FrameCodec.writeResponse(reply, to: .standardOutput, requestMethod: request["method"] as? String ?? "", brokerAuthenticated: brokerAuthenticated)
             }
         } catch { FileHandle.standardError.write(Data("mechanize-native: protocol terminated\n".utf8)) }
+        await MainActor.run {BrowserControlBadge.shared.releaseAll();AutomationPointer.stopControl()}
         helper.stopRecordingOnExit()
         _ = helper.inputs.inhibitAndRelease()
     }
@@ -152,6 +160,15 @@ final class RecordingConsentLease {
 final class Helper {
     let brokerAuthenticated: Bool
     let epoch = UUID().uuidString
+    var hierarchyObserver: HierarchyObserver?
+    var hierarchyRevision: UInt64 = 0
+    deinit { hierarchyObserver?.stop() }
+    func refreshHierarchyInvalidation() {
+        if let observer = hierarchyObserver, observer.signal.revision != hierarchyRevision {
+            hierarchyRevision = observer.signal.revision
+            generation += 1; refs.removeAll()
+        }
+    }
     var generation = 0
     var refs: [String: Reference] = [:]
     var lease: (String, Int)?
@@ -160,7 +177,7 @@ final class Helper {
     let inputs = InputSafety()
     let framePermits = WindowFramePermitStore()
     let frameImages = WindowFrameImageStore()
-    lazy var watchdog = Watchdog(inputs: inputs, beforeExit: { [weak self] in self?.clearWindowFrame(); self?.stopRecordingOnExit() })
+    lazy var watchdog: Watchdog? = brokerAuthenticated ? Watchdog(inputs: inputs, beforeExit: { [weak self] in self?.clearWindowFrame(); self?.stopRecordingOnExit(); self?.hierarchyObserver?.stop() }) : nil
     let recordingConsent = RecordingConsentLease()
     let recordingLock = NSLock()
     var nativeRecorder: NativeRecorder?
@@ -185,8 +202,18 @@ final class Helper {
     }
     var mutationsEnabled: Bool { brokerAuthenticated && ProcessInfo.processInfo.arguments.contains("--allow-mutations") && watchdog != nil && fenceLease() != nil }
     var semanticEnabled: Bool { brokerAuthenticated && ProcessInfo.processInfo.arguments.contains("--allow-semantic") && AXIsProcessTrusted() && !IsSecureEventInputEnabled() && watchdog?.live() == true && fenceLease() != nil }
-    var targetedKeyboardEnabled: Bool { semanticEnabled && ProcessInfo.processInfo.arguments.contains("--allow-targeted-keyboard") && CGPreflightPostEventAccess() && targetedKeyboardSessionAvailable() }
-    var sessionKeyboardEnabled:Bool {semanticEnabled && ProcessInfo.processInfo.arguments.contains("--allow-session-keyboard") && CGPreflightPostEventAccess() && targetedKeyboardSessionAvailable()}
+    var targetedKeyboardEnabled: Bool { targetedKeyboardEnabled(diagnostic: nil) }
+    func targetedKeyboardEnabled(diagnostic: ((ControlReadinessProbeResult) -> Void)?) -> Bool {
+        semanticEnabled && ProcessInfo.processInfo.arguments.contains("--allow-targeted-keyboard") && CGPreflightPostEventAccess() && targetedKeyboardSessionAvailable(diagnostic: diagnostic)
+    }
+    var sessionKeyboardEnabled: Bool { sessionKeyboardEnabled(diagnostic: nil) }
+    func sessionKeyboardEnabled(diagnostic: ((ControlReadinessProbeResult) -> Void)?) -> Bool {
+        semanticEnabled && ProcessInfo.processInfo.arguments.contains("--allow-session-keyboard") && CGPreflightPostEventAccess() && targetedKeyboardSessionAvailable(diagnostic: diagnostic)
+    }
+    var sessionTextEnabled: Bool { sessionTextEnabled(diagnostic: nil) }
+    func sessionTextEnabled(diagnostic: ((ControlReadinessProbeResult) -> Void)?) -> Bool {
+        semanticEnabled && ProcessInfo.processInfo.arguments.contains("--allow-session-text") && CGPreflightPostEventAccess() && targetedKeyboardSessionAvailable(diagnostic: diagnostic)
+    }
     var windowFrameClickEnabled: Bool { semanticEnabled && ProcessInfo.processInfo.arguments.contains("--allow-window-frame-click") && CGPreflightPostEventAccess() && CGPreflightScreenCaptureAccess() && sessionKeyReleaseAllowed() }
     var launchEnabled: Bool { brokerAuthenticated && (ProcessInfo.processInfo.arguments.contains("--allow-launch") || ProcessInfo.processInfo.arguments.contains("--allow-mutations") || ProcessInfo.processInfo.arguments.contains("--allow-semantic")) && watchdog?.live() == true && fenceLease() != nil }
     init(brokerAuthenticated: Bool) { self.brokerAuthenticated = brokerAuthenticated; _ = watchdog }
@@ -197,14 +224,61 @@ final class Helper {
         return formatter
     }()
     func handle(_ request: [String: Any]) async -> [String: Any] {
+        refreshHierarchyInvalidation()
         let id = request["requestId"] as? String ?? ""
         let method = request["method"] as? String ?? ""
         var reply: [String: Any] = ["protocolVersion": 1, "requestId": id, "helperEpoch": epoch]
-        let mutation = ["app.launch", "app.activate", "elements.press", "elements.setValue", "elements.submit", "elements.focus", "elements.pressKey", "elements.pressSessionKey", "windows.setPosition", "windows.pressSessionKey", "windows.clickFrame", "elements.replaceText", "input.key", "input.text", "input.pointer"].contains(method)
-        var reserved = false
+        let mutation = ["app.launch", "app.activate", "app.quit", "elements.press", "elements.showMenu", "elements.setValue", "elements.submit", "elements.focus", "elements.pressKey", "elements.pressSessionKey", "windows.setPosition", "windows.pressSessionKey", "windows.typeText", "windows.clickFrame", "elements.replaceText", "input.key", "input.text", "input.pointer"].contains(method)
+        var reserved = false,businessReserved=false
+        var foregroundRevalidate:(()throws->Void)?
+ var controlBadge:UInt64?
+ let presentationSession=request["presentationSession"] as? String
+ let badgeActionDeadline=ProcessInfo.processInfo.systemUptime + Double(max(1,min(30000,request["deadlineRemainingMs"] as? Int ?? 1)))/1000
+ defer {if let controlBadge {AutomationPointer.endControl(controlBadge)}}
+        let requestObserver = hierarchyObserver
+        var requestRevision = requestObserver?.signal.revision
+        let requestStructuralRevision=requestObserver?.signal.structuralRevision
+        func reserveMutation() throws {
+            try foregroundRevalidate?()
+            if let requestObserver, let originalRevision=requestRevision,
+               requestObserver.signal.revision != originalRevision {
+                if let revalidate=foregroundRevalidate,let structural=requestStructuralRevision,requestObserver.signal.structuralRevision==structural {
+                    requestRevision=try confirmNativeFocusTransition(requestObserver.signal,structural:structural,revalidate:revalidate)
+                } else {refreshHierarchyInvalidation();throw NativeFailure("staleReference", "Application hierarchy changed before dispatch; reobserve")}
+            }
+            guard !businessReserved else{throw NativeFailure("duplicateRequest","Business dispatch already reserved")}
+            if !reserved {try ledger.reserve(id)}
+            reserved = true;businessReserved=true
+            if !NativeControlBadgeRoutes.delayUntilDispatch(method) {startRequestBadge()}
+        }
+        func startRequestBadge() {
+            if controlBadge != nil {return}
+            let badgeParams = request["params"] as? [String: Any] ?? [:]
+            if let refID = badgeParams["elementRef"] as? String, let ref = refs[refID],
+               applicationProcessStartToken(ref.pid) == ref.startToken, applicationLoginUID(ref.pid) == getuid(),
+               let bounds = AutomationPointer.windowBounds(element: ref.element, pid: ref.pid) {
+                controlBadge = AutomationPointer.beginOwnedControl(pid:ref.pid,birth:ref.startToken,bundle:ref.bundleID,window:bounds,sessionToken:presentationSession,actionDeadline:badgeActionDeadline)
+            } else if ["windows.typeText", "windows.pressSessionKey"].contains(method),
+                      let pid = badgeParams["pid"] as? Int, let birth = badgeParams["processStartToken"] as? String,
+                      let bundle = badgeParams["expectedApp"] as? String, let windowID = badgeParams["windowId"] as? UInt32,
+                      let bounds = AutomationPointer.ownedWindowBounds(pid: pid_t(pid), birth: birth, bundle: bundle, windowID: windowID) {
+                controlBadge = AutomationPointer.beginOwnedControl(pid:pid_t(pid),birth:birth,bundle:bundle,window:bounds,sessionToken:presentationSession,actionDeadline:badgeActionDeadline)
+            } else if ["app.activate", "app.quit"].contains(method), let pid = badgeParams["pid"] as? Int,
+                      let birth = badgeParams["startToken"] as? String, let bundle = badgeParams["expectedApp"] as? String,
+                      applicationProcessStartToken(pid_t(pid)) == birth, applicationLoginUID(pid_t(pid)) == getuid(),
+                      NSRunningApplication(processIdentifier: pid_t(pid))?.bundleIdentifier == bundle {
+                let app = AXUIElementCreateApplication(pid_t(pid))
+                AXUIElementSetMessagingTimeout(app, 0.05)
+                if let focused = attribute(app, kAXFocusedWindowAttribute), CFGetTypeID(focused) == AXUIElementGetTypeID(),
+                   let bounds = AutomationPointer.windowBounds(element: focused as! AXUIElement, pid: pid_t(pid)) {
+                    controlBadge = AutomationPointer.beginOwnedControl(pid:pid_t(pid),birth:birth,bundle:bundle,window:bounds,sessionToken:presentationSession,actionDeadline:badgeActionDeadline)
+                }
+            }
+        }
         let started = iso.string(from: Date())
         do {
             guard request["protocolVersion"] as? Int == 1, !id.isEmpty, id.utf8.count <= 128 else { throw NativeFailure("invalidRequest", "Invalid version or request ID") }
+            if request["presentationSession"] != nil && (presentationSession==nil || !ControlBadgeScope.validToken(presentationSession!)) {throw NativeFailure("invalidRequest","Invalid presentation ownership") }
             let budget = try Budget(milliseconds: request["deadlineRemainingMs"] as? Int ?? 0)
             let params = request["params"] as? [String: Any] ?? [:]
             if method != "doctor" && method != "apps.list" {
@@ -213,8 +287,8 @@ final class Helper {
             if mutation {
                 if method != "windows.clickFrame" { clearWindowFrame() }
                 if let prior = ledger.reply(for: id) { return prior }
-                let semantic = ["app.activate", "elements.press", "elements.setValue", "elements.submit", "elements.focus", "windows.setPosition", "elements.replaceText"].contains(method)
-                guard method == "windows.clickFrame" ? windowFrameClickEnabled : (method == "elements.pressSessionKey" || method == "windows.pressSessionKey") ? sessionKeyboardEnabled : (method == "elements.pressKey" ? targetedKeyboardEnabled : (method == "app.launch" ? launchEnabled : (semantic ? semanticEnabled || mutationsEnabled : mutationsEnabled))) else { throw NativeFailure("mutationDisabled", "Signed helper requires explicit authority for this action route") }
+                let semantic = ["app.activate", "app.quit", "elements.press", "elements.showMenu", "elements.setValue", "elements.submit", "elements.focus", "windows.setPosition", "elements.replaceText"].contains(method)
+                guard method == "windows.typeText" ? sessionTextEnabled : method == "windows.clickFrame" ? windowFrameClickEnabled : (method == "elements.pressSessionKey" || method == "windows.pressSessionKey") ? sessionKeyboardEnabled : (method == "elements.pressKey" ? targetedKeyboardEnabled : (method == "app.launch" ? launchEnabled : (semantic ? semanticEnabled || mutationsEnabled : mutationsEnabled))) else { throw NativeFailure("mutationDisabled", "Signed helper requires explicit authority for this action route") }
                 guard watchdog?.live() == true, let persisted = fenceLease(), let offered = request["lease"] as? [String: Any], let lease,
                       persisted["id"] as? String == lease.0, persisted["generation"] as? Int == lease.1,
                       let scope = persisted["scope"] as? [String: Any],
@@ -222,17 +296,91 @@ final class Helper {
                       offered["id"] as? String == lease.0, offered["generation"] as? Int == lease.1 else { throw NativeFailure("staleLease", "Control lease is absent or stale") }
             }
             try budget.check()
+            let privateAdministration = ProcessInfo.processInfo.arguments.contains("--private-administration")
+            if privateAdministration && !["doctor","private.consoleWindows","private.managementProof"].contains(method) {
+                throw NativeFailure("privateProfileOnly", "Private profile rejects ordinary automation")
+            }
+            func acquisitionAuthority(_ bundle:String)throws {
+                try budget.check()
+                guard watchdog?.live()==true,let persisted=fenceLease(),let held=lease,let offered=request["lease"] as? [String:Any],persisted["id"] as? String==held.0,persisted["generation"] as? Int==held.1,offered["id"] as? String==held.0,offered["generation"] as? Int==held.1,let scope=persisted["scope"] as? [String:Any],fenceScopeAllows(scope,bundle) else{throw NativeFailure("staleLease","Foreground preparation authority changed")}
+                if let requestObserver,requestObserver.signal.structuralRevision != requestStructuralRevision {throw NativeFailure("staleReference","Application structure changed during foreground preparation")}
+            }
+            func acquire(_ target:NativeForegroundTarget)throws {
+                try target.acquire(budget,authorize:{try acquisitionAuthority(target.bundle)},reserve:{
+                    if !reserved {try ledger.reserve(id);reserved=true}
+                },publish:{state in reply["foregroundAcquisition"]=state.metadata;if state.activationRequested{startRequestBadge()}})
+                try acquisitionAuthority(target.bundle);try target.validate(budget)
+                foregroundRevalidate={
+                    try acquisitionAuthority(target.bundle);try target.validate(budget)
+                    guard try target.ready(budget) else{throw NativeFailure("foregroundChanged","Original foreground/window changed before input")}
+                    if let ref=target.reference,["elements.pressKey","elements.pressSessionKey","input.key","input.text"].contains(method){try validateTargetedFocus(ref,budget)}
+                    try acquisitionAuthority(target.bundle)
+                }
+                if let requestObserver,let structural=requestStructuralRevision,let revalidate=foregroundRevalidate {requestRevision=try confirmNativeFocusTransition(requestObserver.signal,structural:structural,revalidate:revalidate)}
+            }
+            if let target=try foregroundTarget(method:method,params:params,budget:budget){try acquire(target)}
             switch method {
+            case "controlBadge.begin", "controlBadge.renew", "controlBadge.end", "controlBadge.stop", "controlBadge.releaseSession":
+                guard brokerAuthenticated, method=="controlBadge.releaseSession" || watchdog?.live() == true else {throw NativeFailure("badgeUnavailable", "Authenticated presentation unavailable")}
+                try budget.check()
+                reply["result"] = try await MainActor.run { try BrowserControlBadge.shared.handle(method:method,params:params) }
+
+            case "private.consoleWindows", "private.managementProof":
+                guard privateAdministration, brokerAuthenticated, watchdog?.live() == true else { throw NativeFailure("privateProfileRequired", "Authenticated private profile required") }
+                reply["result"] = try privateAdministrationResult(method:method,params:params,budget:budget)
+
+            case "input.releasedState":
+                guard params.isEmpty, brokerAuthenticated, AXIsProcessTrusted(),
+                      CGPreflightListenEventAccess(), sessionKeyReleaseAllowed(), !IsSecureEventInputEnabled() else {
+                    throw NativeFailure("inputStateUnqualified", "Qualified nonsecure console input state required")
+                }
+                func releasedState() throws -> Bool {
+                    try budget.check()
+                    for key in 0..<128 {
+                        if CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(key)) { return false }
+                    }
+                    for button in [CGMouseButton.left, .right, .center] {
+                        if CGEventSource.buttonState(.combinedSessionState, button: button) { return false }
+                    }
+                    return true
+                }
+                let first = try releasedState()
+                try await Task.sleep(nanoseconds:20_000_000)
+                guard sessionKeyReleaseAllowed(), !IsSecureEventInputEnabled(), CGPreflightListenEventAccess() else {
+                    throw NativeFailure("inputStateUnqualified", "Console input qualification changed")
+                }
+                let second = try releasedState()
+                reply["result"] = ["released": first && second]
+
             case "doctor":
-                reply["result"] = ["osVersion": ProcessInfo.processInfo.operatingSystemVersionString, "helperVersion": "0.1.0-dev", "axTrusted": AXIsProcessTrusted(), "captureGranted": CGPreflightScreenCaptureAccess(), "listenGranted": CGPreflightListenEventAccess(), "eventPostGranted": CGPreflightPostEventAccess(), "secureInputEnabled": IsSecureEventInputEnabled(), "watchdogLive": watchdog?.live() ?? false, "physicalFenceEnrolled": fenceLease() != nil, "mutationEnabled": mutationsEnabled, "semanticEnabled": semanticEnabled, "targetedKeyboardEnabled": targetedKeyboardEnabled, "sessionKeyboardEnabled":sessionKeyboardEnabled, "developmentSemanticOnly": ProcessInfo.processInfo.arguments.contains("--allow-semantic") && !ProcessInfo.processInfo.arguments.contains("--allow-targeted-keyboard") && !ProcessInfo.processInfo.arguments.contains("--allow-session-keyboard"), "launchEnabled": launchEnabled,  "windowSession": windowSession(), "productionIdentityQualified": false, "brokerIdentityAuthenticated": brokerAuthenticated, "activeGraphicalSessionQualified": false, "displays": displays(), "nativeRootScopes": NativeRootScope.allCases.map { $0.rawValue }, "nativeWindowScopes": ["exactTitle"], "nativeWindowActions": ["setPosition", "pressSessionKey"], "nativeTextActions": ["replaceText"], "nativeTextReads": ["valueMatches"], "supportedMethods": ["doctor", "apps.list", "app.launch", "app.activate", "windows.list", "windows.setPosition", "windows.pressSessionKey", "elements.snapshot", "elements.read", "elements.replaceText", "elements.valueMatches", "elements.press", "elements.setValue", "elements.submit", "elements.focus", "elements.pressKey", "elements.pressSessionKey", "input.key", "input.text", "input.pointer", "input.releaseAll", "capture.image", "capture.windows", "lease.install", "lease.revoke", "record.start", "record.renew", "record.pause", "record.stop", "record.events"], "unsupported": [ "subscriptions", "ocr", "windowUpdate", "clipboard"]] as [String: Any]
+                let readinessLog = brokerAuthenticated && id == "launch-readiness" ? ManagedControlReadinessLog() : nil
+                let doctorArguments = ProcessInfo.processInfo.arguments
+                var requestedReadiness = Set<ControlReadinessRoute>()
+                if doctorArguments.contains("--allow-targeted-keyboard") { requestedReadiness.insert(.targetedKeyboard) }
+                if doctorArguments.contains("--allow-session-keyboard") { requestedReadiness.insert(.sessionKeyboard) }
+                if doctorArguments.contains("--allow-session-text") { requestedReadiness.insert(.sessionText) }
+                let doctorSemantic = semanticEnabled
+                let doctorEventPost = doctorSemantic && !requestedReadiness.isEmpty && CGPreflightPostEventAccess()
+                let inputReadiness = DoctorInputReadiness.evaluate(semantic: doctorSemantic,
+                    eventPost: doctorEventPost, requested: requestedReadiness) {
+                    var result: ControlReadinessProbeResult = .probeUnavailable
+                    let available = targetedKeyboardSessionAvailable(diagnostic: { result = $0 })
+                    return available ? .ready : result
+                }
+                for (route, result) in inputReadiness.probes { readinessLog?.record(route, result) }
+                reply["result"] = ["privateAdministrationVersion": privateAdministration ? 1 : 0, "osVersion": ProcessInfo.processInfo.operatingSystemVersionString, "helperVersion": "0.1.0-dev", "axTrusted": AXIsProcessTrusted(), "captureGranted": CGPreflightScreenCaptureAccess(), "listenGranted": CGPreflightListenEventAccess(), "eventPostGranted": CGPreflightPostEventAccess(), "secureInputEnabled": IsSecureEventInputEnabled(), "watchdogLive": watchdog?.live() ?? false, "physicalFenceEnrolled": fenceLease() != nil, "mutationEnabled": mutationsEnabled, "semanticEnabled": semanticEnabled, "targetedKeyboardEnabled": inputReadiness.enabled[.targetedKeyboard] == true, "sessionKeyboardEnabled": inputReadiness.enabled[.sessionKeyboard] == true, "sessionTextEnabled": inputReadiness.enabled[.sessionText] == true, "developmentSemanticOnly": ProcessInfo.processInfo.arguments.contains("--allow-semantic") && !ProcessInfo.processInfo.arguments.contains("--allow-targeted-keyboard") && !ProcessInfo.processInfo.arguments.contains("--allow-session-keyboard") && !ProcessInfo.processInfo.arguments.contains("--allow-session-text"), "launchEnabled": launchEnabled,  "windowSession": windowSession(), "productionIdentityQualified": false, "brokerIdentityAuthenticated": brokerAuthenticated, "activeGraphicalSessionQualified": false, "displays": displays(), "nativeRootScopes": NativeRootScope.allCases.map { $0.rawValue }, "nativeMenuScopeVersion": 1, "nativeWindowScopes": ["exactTitle"], "nativeWindowActions": ["setPosition", "pressSessionKey", "typeText", "captureFrame", "clickFrame"], "nativeTextActions": ["replaceText"], "nativeTextReads": ["valueMatches"], "nativeBooleanReads": ["checked"], "nativeForegroundAcquisitionVersion": 1, "controlBadgePresentationVersion": 2, "supportedMethods": ["controlBadge.begin", "controlBadge.renew", "controlBadge.end", "controlBadge.stop", "controlBadge.releaseSession", "doctor", "apps.list", "app.launch", "app.activate", "windows.list", "windows.setPosition", "windows.pressSessionKey", "windows.typeText", "elements.snapshot", "elements.read", "elements.replaceText", "elements.valueMatches", "elements.press", "elements.showMenu", "elements.setValue", "elements.submit", "elements.focus", "elements.pressKey", "elements.pressSessionKey", "input.key", "input.text", "input.pointer", "input.releaseAll", "capture.image", "capture.windows", "lease.install", "lease.revoke", "record.start", "record.renew", "record.pause", "record.stop", "record.events"], "unsupported": [ "subscriptions", "ocr", "windowUpdate", "clipboard"]] as [String: Any]
                 if var doctor = reply["result"] as? [String: Any] {
                     doctor["windowFrameClickEnabled"] = windowFrameClickEnabled
-                    doctor["nativeWindowActions"] = ["setPosition", "pressSessionKey", "captureFrame", "clickFrame"]
-                    doctor["supportedMethods"] = (doctor["supportedMethods"] as? [String] ?? []) + ["windows.captureFrame", "windows.clickFrame"]
+                    doctor["windowFrameClickBackend"] = "robotgo"
+                    doctor["windowFrameClickBackendVersion"] = "1.3.5"
+                    doctor["quitEnabled"] = semanticEnabled || mutationsEnabled
+                    doctor["nativeSemanticMenus"] = ["AXShowMenu"]
+                    doctor["supportedMethods"] = (doctor["supportedMethods"] as? [String] ?? []) + ["windows.captureFrame", "windows.clickFrame", "app.quit", "app.exitStatus"]
                     doctor["recordingEnabled"] = recordingEnabled
                     doctor["passiveRecordingOnly"] = ProcessInfo.processInfo.arguments.contains("--allow-recording")
                     reply["result"] = doctor
                 }
+                readinessLog?.emit(authenticated: brokerAuthenticated, requestID: id, doctor: reply["result"] as? [String: Any] ?? [:])
             case "record.start":
                 guard recordingEnabled else { throw NativeFailure("recordingDenied", "Signed recording-only profile and live watchdog required") }
                 let options = try recordingConsent.begin(params, expectedUID: getuid())
@@ -259,25 +407,47 @@ final class Helper {
             case "lease.install":
                 guard mutationsEnabled || launchEnabled || semanticEnabled || windowFrameClickEnabled, let leaseID = params["id"] as? String, !leaseID.isEmpty, let version = params["generation"] as? Int, version > (lease?.1 ?? 0) else { throw NativeFailure("invalidLease", "Requires enabled native action authority and increasing lease generation") }
                 guard let persisted = fenceLease(), persisted["id"] as? String == leaseID, persisted["generation"] as? Int == version, watchdog?.live() == true else { throw NativeFailure("staleLease", "Inherited physical fence differs or watchdog is inhibited") }
-                clearWindowFrame(); lease = (leaseID, version); if mutationsEnabled || targetedKeyboardEnabled || sessionKeyboardEnabled || windowFrameClickEnabled { inputs.enable() }; reply["result"] = ["installed": true]
+                clearWindowFrame(); lease = (leaseID, version); if mutationsEnabled || targetedKeyboardEnabled || sessionKeyboardEnabled || sessionTextEnabled || windowFrameClickEnabled { inputs.enable() }; reply["result"] = ["installed": true]
             case "lease.revoke", "input.releaseAll":
-                clearWindowFrame(); lease = nil; let released = inputs.cleanupOutcome(businessOutcomeUnknown: launchUncertain); reply["result"] = ["revoked": true, "releasesDispatched": released.releasesDispatched, "unknownReleases": released.unknownReleases, "businessOutcomeUnknown": released.businessOutcomeUnknown, "businessSuccess": false]
+                AutomationPointer.hide(); clearWindowFrame(); lease = nil; let released = inputs.cleanupOutcome(businessOutcomeUnknown: launchUncertain); reply["result"] = ["revoked": true, "releasesDispatched": released.releasesDispatched, "unknownReleases": released.unknownReleases, "businessOutcomeUnknown": released.businessOutcomeUnknown, "businessSuccess": false]
             case "apps.list":
                 reply["result"] = try applicationInventory(params)
-            case "app.activate":
-                let outcome = try activateApplication(params, budget) {
-                    try budget.check(); try ledger.reserve(id); reserved = true
+            case "app.exitStatus":
+                reply["result"] = try applicationExitStatus(params)
+            case "app.quit":
+                let outcome = try quitApplication(params, budget) {
+                    try budget.check()
+                    guard self.semanticEnabled || self.mutationsEnabled, self.watchdog?.live() == true,
+                          let held = self.lease, let persisted = self.fenceLease(),
+                          persisted["id"] as? String == held.0, persisted["generation"] as? Int == held.1,
+                          let scope = persisted["scope"] as? [String: Any],
+                          let bundle = params["expectedApp"] as? String, fenceScopeAllows(scope, bundle) else {
+                        throw NativeFailure("staleLease", "Quit authority changed before dispatch")
+                    }
+                    try reserveMutation()
+                    self.refs.removeAll(); self.generation += 1; self.clearWindowFrame()
                 }
                 launchUncertain = launchUncertain || outcome.dispatchState == "unknown"
+                if outcome.failure == nil,outcome.dispatchState == "dispatched",let pid=outcome.result["pid"] as? Int32,let birth=outcome.result["startToken"] as? String,let bundle=outcome.result["bundleID"] as? String {controlBadge=AutomationPointer.beginApplicationControl(pid:pid,birth:birth,bundle:bundle,sessionToken:presentationSession,actionDeadline:badgeActionDeadline)}
+                reply["result"] = outcome.result
+                reply["receipt"] = ["dispatchState": outcome.dispatchState, "startedAt": started, "returnedAt": iso.string(from: Date()), "businessSuccess": false]
+                if let failure = outcome.failure { reply["error"] = ["code": failure.code, "message": failure.message, "stage": "native", "retryableRead": false, "dispatchState": outcome.dispatchState] }
+            case "app.activate":
+                let outcome = try activateApplication(params, budget) {
+                    try budget.check(); try reserveMutation()
+                }
+                launchUncertain = launchUncertain || outcome.dispatchState == "unknown"
+                if outcome.failure == nil,outcome.dispatchState == "dispatched",let pid=outcome.result["pid"] as? Int32,let birth=outcome.result["startToken"] as? String,let bundle=outcome.result["bundleID"] as? String {controlBadge=AutomationPointer.beginApplicationControl(pid:pid,birth:birth,bundle:bundle,sessionToken:presentationSession,actionDeadline:badgeActionDeadline)}
                 reply["result"] = outcome.result
                 reply["receipt"] = ["dispatchState": outcome.dispatchState, "startedAt": started, "returnedAt": iso.string(from: Date()), "businessSuccess": false]
                 if let failure = outcome.failure { reply["error"] = ["code": failure.code, "message": failure.message, "stage": "native", "retryableRead": false, "dispatchState": "unknown"] }
                 refs.removeAll(); generation += 1
             case "app.launch":
                 let outcome = try await launchApplication(params, budget) {
-                    try budget.check(); try ledger.reserve(id); reserved = true
+                    try budget.check(); try reserveMutation()
                 }
                 launchUncertain = launchUncertain || outcome.dispatchState == "unknown"
+                if outcome.failure == nil,outcome.dispatchState == "dispatched",let pid=outcome.result["pid"] as? Int32,let birth=outcome.result["startToken"] as? String,let bundle=outcome.result["bundleID"] as? String {controlBadge=AutomationPointer.beginApplicationControl(pid:pid,birth:birth,bundle:bundle,sessionToken:presentationSession,actionDeadline:badgeActionDeadline)}
                 reply["result"] = outcome.result
                 reply["receipt"] = ["dispatchState": outcome.dispatchState, "startedAt": started, "returnedAt": iso.string(from: Date()), "businessSuccess": false]
                 if let failure = outcome.failure {
@@ -288,13 +458,22 @@ final class Helper {
                 let (app, root) = try scopedApp(params, budget)
                 guard let processStartToken = applicationProcessStartToken(app.processIdentifier) else { throw NativeFailure("staleReference", "Process identity disappeared before snapshot") }
                 if let expected = params["processStartToken"] as? String, expected != processStartToken { throw NativeFailure("staleReference", "Process identity changed before snapshot") }
+                if ProcessInfo.processInfo.arguments.contains("--allow-ax-observer-invalidation") {
+                    if hierarchyObserver?.pid != app.processIdentifier || hierarchyObserver?.birth != processStartToken {
+                        hierarchyObserver?.stop()
+                        let observer = HierarchyObserver(pid: app.processIdentifier, birth: processStartToken)
+                        if observer.start() { hierarchyObserver = observer } else { hierarchyObserver = nil }
+                    }
+                    refreshHierarchyInvalidation()
+                }
+                let observationRevision = hierarchyObserver?.signal.revision
                 generation += 1; refs.removeAll()
                 let roots: [AXUIElement]
                 let rootScope = try NativeRootScope.requested(in: params, method: method)
                 let windowScope = try NativeWindowScope.requested(in: params, method: method)
                 let scopedRoot: ScopedNativeRoot?
                 if let rootScope {
-                    scopedRoot = try ScopedNativeRoot.resolve(rootScope, application: root, pid: app.processIdentifier, uid: getuid(), birth: processStartToken, bundle: app.bundleIdentifier!, check: { try budget.check() })
+                    scopedRoot = try ScopedNativeRoot.resolve(rootScope, application: root, pid: app.processIdentifier, uid: getuid(), birth: processStartToken, bundle: app.bundleIdentifier!, nativeMenu:params["nativeMenu"] as? String, check: { try budget.check() })
                     roots = [scopedRoot!.element]
                 } else if let windowScope {
                     scopedRoot = try ScopedNativeRoot.resolveWindow(windowScope, application: root, pid: app.processIdentifier, uid: getuid(), birth: processStartToken, bundle: app.bundleIdentifier!, check: { try budget.check() })
@@ -309,6 +488,7 @@ final class Helper {
                 let maxNodes = min(max(params["maxNodes"] as? Int ?? 200, 1), 1000)
                 let maxDepth = min(max(params["maxDepth"] as? Int ?? 6, 0), 20)
                 var queue = roots.map { ($0, 0, "") }; var nodes: [[String: Any]] = []; var partial = false
+                var selfChildEdges = 0; var duplicateChildEdges = 0
                 while !queue.isEmpty, nodes.count < maxNodes {
                     try budget.check(); let (element, depth, parent) = queue.removeFirst()
                     AXUIElementSetMessagingTimeout(element, min(0.2, budget.remainingSeconds))
@@ -317,13 +497,18 @@ final class Helper {
                     try budget.check()
                     if scopedRoot != nil && (owner.pid != app.processIdentifier || owner.uid != getuid() || owner.birth != processStartToken || owner.bundle != app.bundleIdentifier) { partial = true }
                     refs[ref] = Reference(owner:owner,element: element, pid: app.processIdentifier, bundleID: app.bundleIdentifier!, startToken: processStartToken, generation: generation, observedAt: DispatchTime.now().uptimeNanoseconds, scopedRoot: scopedRoot)
-                    var node: [String: Any] = ["ref": ref, "parentRef": parent, "depth": depth, "generation": generation, "nativeRole": String((attribute(element, kAXRoleAttribute) as? String ?? "").prefix(256)), "unavailable": [String]()]
+                    let roleAttribute = readAXAttribute(element, kAXRoleAttribute)
+                    let roleRead = typedAXString(roleAttribute.0, roleAttribute.1)
+                    var node: [String: Any] = ["ref": ref, "parentRef": parent, "depth": depth, "generation": generation, "nativeRole": roleRead.resolved ?? "", "unavailable": [String]()]
+                    if roleRead.failed { partial = true }
                     let ownerFields=owner.metadata(root:app.processIdentifier)
                     for (key,value) in ownerFields where key != "unavailable" {node[key]=value}
                     node["unavailable"] = ownerFields["unavailable"] as? [String] ?? []
                     for (key, attr) in [("name", kAXTitleAttribute), ("identifier", kAXIdentifierAttribute), ("subrole", kAXSubroleAttribute), ("enabled", kAXEnabledAttribute)] {
                         var copied: CFTypeRef?
-                        let code = AXUIElementCopyAttributeValue(element, attr as CFString, &copied)
+                        let code: AXError
+                        if key == "name" { (code, copied) = accessibleName(element) }
+                        else { code = AXUIElementCopyAttributeValue(element, attr as CFString, &copied) }
                         if code == .success, let value = copied {
                             node[key] = (value as? String).map { String($0.prefix(256)) } ?? value
                             if let text = value as? String, text.count > 256 { node["truncatedAttributes"] = (node["truncatedAttributes"] as? [String] ?? []) + [key] }
@@ -342,7 +527,10 @@ final class Helper {
                     }
                     var focusSettable: DarwinBoolean = false
                     node["focusSettable"] = AXUIElementIsAttributeSettable(element, kAXFocusedAttribute as CFString, &focusSettable) == .success && focusSettable.boolValue
-                    if let focused = attribute(element, kAXFocusedAttribute) as? Bool { node["focused"] = focused }
+                    let focusedAttribute = readAXAttribute(element, kAXFocusedAttribute)
+                    let focusedRead = typedAXBoolean(focusedAttribute.0, focusedAttribute.1)
+                    if let focused = focusedRead.resolved { node["focused"] = focused }
+                    if focusedRead.failed { partial = true }
                     node["valueUnavailable"] = "withheldByPolicy"
                     if let position = attribute(element, kAXPositionAttribute), CFGetTypeID(position) == AXValueGetTypeID(), let size = attribute(element, kAXSizeAttribute), CFGetTypeID(size) == AXValueGetTypeID() {
                         var point = CGPoint.zero; var dimensions = CGSize.zero
@@ -351,22 +539,32 @@ final class Helper {
                         }
                     }
                     nodes.append(node)
-                    var childrenValue: CFTypeRef?
-                    let childCode = method == "elements.snapshot" ? AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenValue) : .noValue
-                    if childCode != .success && childCode != .noValue && childCode != .attributeUnsupported { partial = true }
-                    if method == "elements.snapshot", let children = childrenValue as? [AXUIElement] {
+                    if method == "elements.snapshot" {
+                        let childRead = try boundedSnapshotChildren(element, check: { try budget.check() })
+                        partial = partial || !childRead.complete
+                        let normalized = snapshotChildren(childRead.elements, of: element)
+                        let children = normalized.elements
+                        partial = partial || normalized.truncated
+                        selfChildEdges += normalized.selfEdges; duplicateChildEdges += normalized.duplicateEdges
                         if depth < maxDepth { let available = max(0, maxNodes - nodes.count - queue.count)
                             queue.append(contentsOf: children.prefix(available).map { ($0, depth + 1, ref) })
                             partial = partial || children.count > available } else if !children.isEmpty { partial = true }
                     }
                 }
                 partial = partial || !queue.isEmpty
+                if let observationRevision, hierarchyObserver?.signal.revision != observationRevision {
+                    refreshHierarchyInvalidation()
+                    throw NativeFailure("staleReference", "Application hierarchy changed during snapshot; reobserve")
+                }
                 guard applicationProcessStartToken(app.processIdentifier) == processStartToken else { refs.removeAll(); throw NativeFailure("staleReference", "Target process fingerprint changed during snapshot") }
                 if let scopedRoot {
                     do { try scopedRoot.validate(check: { try budget.check() }) } catch { refs.removeAll(); throw error }
                 }
                 var snapshot: [String: Any] = ["observationId": UUID().uuidString, "generation": generation, "startedAt": started, "returnedAt": iso.string(from: Date()), "bundleID": app.bundleIdentifier!, "pid": app.processIdentifier, "nodes": nodes, "complete": !partial, "truncated": partial]
                 if let rootScope { snapshot["rootScope"] = rootScope.rawValue }
+                if let nativeMenu=scopedRoot?.nativeMenu {snapshot["nativeMenu"]=nativeMenu}
+                snapshot["selfChildEdges"] = selfChildEdges
+                snapshot["duplicateChildEdges"] = duplicateChildEdges
                 if let windowScope { snapshot["windowScope"] = windowScope.metadata }
                 if method == "windows.list" { snapshot["windowRootsOnly"] = true }
                 reply["result"] = snapshot
@@ -381,7 +579,7 @@ final class Helper {
                 AXUIElementSetMessagingTimeout(ref.element, min(0.2, budget.remainingSeconds))
                 if method != "input.pointer", attribute(ref.element, kAXFocusedAttribute) as? Bool != true { throw NativeFailure("staleFocus", "Keyboard target is not focused") }
                 if attribute(ref.element, kAXSubroleAttribute) as? String == kAXSecureTextFieldSubrole { throw NativeFailure("secureInput", "Secure target input is not supported") }
-                try budget.check(); try ref.validateInputScope(budget); try ledger.reserve(id); reserved = true
+                try budget.check(); try ref.validateInputScope(budget); try reserveMutation()
                 var inputAttempted = false
                 do {
                     if method == "elements.pressKey" || method == "elements.pressSessionKey" {
@@ -393,14 +591,14 @@ final class Helper {
                         typed["modifiers"] = chord.modifiers.map { $0.lowercased() }
                         let delivery:KeyboardDelivery = method == "elements.pressSessionKey" ? .session:.process
                         if delivery == .session {try validateSessionKeyboardWindow(ref,budget)}
-                        try dispatchInput("input.key", typed, ref, budget, delivery:delivery,preflight: {
+                        try await dispatchInput("input.key", typed, ref, budget, delivery:delivery,preflight: {
                             guard (delivery == .session ? self.sessionKeyboardEnabled:self.targetedKeyboardEnabled), self.watchdog?.live() == true, let current = self.lease, let persisted = self.fenceLease(), persisted["id"] as? String == current.0, persisted["generation"] as? Int == current.1, let currentScope = persisted["scope"] as? [String:Any], fenceScopeAllows(currentScope,ref.bundleID) else { throw NativeFailure("staleLease", "Targeted keyboard lease revoked") }
                             try budget.check()
                             guard try targetedKeyCode(chord.key) == resolvedKeyCode else { throw NativeFailure("keyboardLayoutChanged", "Named key mapping changed before dispatch") }
                             try validateTargetedFocus(ref,budget)
                             if delivery == .session {try validateSessionKeyboardWindow(ref,budget)}
-                        }, willPost: { inputAttempted = true })
-                    } else { try dispatchInput(method, params, ref, budget, willPost: { inputAttempted = true }) }
+                        }, willPost: { inputAttempted = true;startRequestBadge() })
+                    } else { try await dispatchInput(method, params, ref, budget, preflight:{try foregroundRevalidate?()}, willPost: { inputAttempted = true;startRequestBadge() }) }
                     reply["receipt"] = ["dispatchState": "dispatched", "startedAt": started, "returnedAt": iso.string(from: Date()), "targetRef": refID, "businessSuccess": false]
                 } catch {
                     let failure = error as? NativeFailure ?? NativeFailure("inputDispatchUnknown", "Input dispatch failed")
@@ -426,9 +624,26 @@ final class Helper {
                     let native: String
                     switch name {
                     case "role": native = kAXRoleAttribute
-                    case "name": native = kAXTitleAttribute
+                    case "name":
+                        let (status, value) = accessibleName(ref.element)
+                        guard status == .success, let text = value as? String, text.utf8.count <= 65_536 else {
+                            throw NativeFailure("attributeUnavailable", "Accessible name unavailable")
+                        }
+                        try ref.validateInputScope(budget)
+                        values[name] = text
+                        continue
                     case "identifier": native = kAXIdentifierAttribute
                     case "enabled": native = kAXEnabledAttribute
+                    case "checked":
+                        func readStateAttribute(_ attributeName: String) -> (AXError, Any?) {
+                            var raw: CFTypeRef?
+                            let status = AXUIElementCopyAttributeValue(ref.element, attributeName as CFString, &raw)
+                            return (status, raw)
+                        }
+                        values[name] = try readCheckedState(role: attribute(ref.element, kAXRoleAttribute) as? String,
+                            value: { readStateAttribute(kAXValueAttribute) }, selected: { readStateAttribute(kAXSelectedAttribute) })
+                        try ref.validateInputScope(budget)
+                        continue
                     case "focused":
                         do {values[name]=try observedTargetedFocus(ref,budget)} catch let failure as NativeFailure {
                             let diagnostics=focusFailureDiagnostics(ref,budget)
@@ -449,12 +664,19 @@ final class Helper {
                         values[name] = try StaticTextRead.bounded(attribute(ref.element, kAXValueAttribute) as? String)
                         continue
                     case "value":
-                        guard params["allowValueRead"] as? Bool == true,
-                              let identifier = params["expectedIdentifier"] as? String, !identifier.isEmpty,
-                              attribute(ref.element, kAXIdentifierAttribute) as? String == identifier,
-                              let role = attribute(ref.element, kAXRoleAttribute) as? String, [kAXTextFieldRole, kAXTextAreaRole].contains(role),
-                              let subrole = attribute(ref.element, kAXSubroleAttribute) as? String, subrole != kAXSecureTextFieldSubrole else { throw NativeFailure("valueReadDenied", "Value requires explicit nonsecure text field identifier policy") }
-                        native = kAXValueAttribute
+                        var subroleValue: CFTypeRef?
+                        let subroleCode = AXUIElementCopyAttributeValue(ref.element, kAXSubroleAttribute as CFString, &subroleValue)
+                        let subroleKnown = (subroleCode == .success && subroleValue is String) ||
+                            ((subroleCode == .noValue || subroleCode == .attributeUnsupported) && subroleValue == nil)
+                        guard TextValueRead.permitted(allowed: params["allowValueRead"] as? Bool == true,
+                            expectedIdentifier: params["expectedIdentifier"] as? String,
+                            identifier: attribute(ref.element, kAXIdentifierAttribute) as? String,
+                            role: attribute(ref.element, kAXRoleAttribute) as? String,
+                            subrole: subroleValue as? String, subroleKnown: subroleKnown) else {
+                            throw NativeFailure("valueReadDenied", "Value requires explicit nonsecure text field identifier policy")
+                        }
+                        values[name] = try readNativeTextValue(ref.element) { try ref.validateInputScope(budget) }
+                        continue
                     default: throw NativeFailure("unsupportedAttribute", "Read attribute not supported")
                     }
                     if name == "enabled", let value = attribute(ref.element, native) as? Bool { values[name] = value }
@@ -463,6 +685,18 @@ final class Helper {
                 }
                 try ref.validateInputScope(budget)
                 reply["result"] = ["values": values, "unavailable": unavailable, "generation": generation, "returnedAt": iso.string(from: Date())]
+            case "windows.typeText":
+                let outcome = try typeWindowText(params, budget: budget,present:{startRequestBadge()}) { try budget.check(); try reserveMutation() }
+                var result = outcome.result
+                result["requestId"] = id; result["observedAt"] = preciseISO.string(from: Date())
+                reply["result"] = result
+                reply["receipt"] = ["dispatchState": outcome.dispatchState, "startedAt": started,
+                    "returnedAt": iso.string(from: Date()), "targetRef": "window:\(params["windowId"]!)", "businessSuccess": false]
+                if let failure = outcome.failure {
+                    reply["error"] = ["code": failure.code, "message": failure.message, "stage": "native",
+                                      "dispatchState": outcome.dispatchState, "retryableRead": false]
+                }
+                refs.removeAll(); generation += 1
             case "windows.pressSessionKey":
                 guard Set(params.keys) == Set(["expectedApp", "pid", "processStartToken", "windowId", "key"]),
                       let bundle = params["expectedApp"] as? String, concreteApplicationBundle(bundle),
@@ -474,24 +708,23 @@ final class Helper {
                 let pid = Int32(rawPID), windowID = UInt32(rawWindowID)
                 let chord = try TargetedKeyChord(key)
                 let keyCode = try targetedKeyCode(chord.key)
+                var namedEvents: (CGEvent, CGEvent)?
                 let validate = {
                     try qualifyWindowSessionKey(pid: pid, uid: getuid(), birth: birth, bundle: bundle, windowID: windowID, check: { try budget.check() })
                     guard self.sessionKeyboardEnabled, self.watchdog?.live() == true, let held = self.lease, let persisted = self.fenceLease(),
                           persisted["id"] as? String == held.0, persisted["generation"] as? Int == held.1, let scope = persisted["scope"] as? [String: Any], fenceScopeAllows(scope, bundle) else { throw NativeFailure("staleLease", "Explicit session-window keyboard authority changed") }
                     guard try targetedKeyCode(chord.key) == keyCode else { throw NativeFailure("keyboardLayoutChanged", "Named chord mapping changed") }
+                    if let events = namedEvents { try validateNamedWindowKeyText(events.0, key: chord.key, keyCode: keyCode, modifiers: chord.modifiers) }
                     try budget.check()
                 }
                 try validate()
-                guard let down = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true), let up = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) else { throw NativeFailure("eventUnavailable", "Named session chord unavailable") }
-                var flags: CGEventFlags = []
-                for modifier in chord.modifiers { switch modifier { case "Command": flags.insert(.maskCommand); case "Shift": flags.insert(.maskShift); case "Option": flags.insert(.maskAlternate); case "Control": flags.insert(.maskControl); default: throw NativeFailure("invalidModifier", "Unsupported named modifier") } }
-                down.flags = flags; up.flags = []
-                down.setIntegerValueField(.eventSourceUserData, value: 0x4d454348); up.setIntegerValueField(.eventSourceUserData, value: 0x4d454348)
-                try ledger.reserve(id); reserved = true
+                let (down, up) = try namedWindowKeyEvents(key: chord.key, keyCode: keyCode, modifiers: chord.modifiers)
+                namedEvents = (down, up)
+                try reserveMutation()
                 var attempted = false
                 do {
                     try KeyboardPosting.press(inputs: inputs, token: "key:\(keyCode)", delivery: .session, preflight: validate,
-                        down: { _ in attempted = true; down.post(tap: .cgSessionEventTap); return true },
+                        down: { _ in attempted = true;startRequestBadge(); down.post(tap: .cgSessionEventTap); return true },
                         up: { _ in guard sessionKeyReleaseAllowed() else { return false }; up.post(tap: .cgSessionEventTap); return true })
                     reply["result"] = ["pid": pid, "startToken": birth, "bundleID": bundle, "windowId": windowID, "identity": "window:\(windowID)", "key": key, "requestId": id, "observedAt": preciseISO.string(from: Date()), "businessSuccess": false]
                     reply["receipt"] = ["dispatchState": "dispatched", "startedAt": started, "returnedAt": iso.string(from: Date()), "targetRef": "window:\(windowID)", "businessSuccess": false]
@@ -530,7 +763,7 @@ final class Helper {
                 var result: [String: Any] = ["pid": ref.pid, "startToken": ref.startToken, "bundleID": ref.bundleID, "targetRef": refID, "generation": ref.generation, "requestId": id]
                 if replace {
                     let outcome = try replaceNativeText(ref.element, expected: expected, verify: params["verifyReplacement"] as? Bool == true,
-                        revalidate: validate, willMutate: { try budget.check(); try ledger.reserve(id); reserved = true })
+                        revalidate: validate, willMutate: { try budget.check(); try reserveMutation() })
                     if outcome.matches == true { result["replacementMatches"] = true }
                     result["observedAt"] = iso.string(from: Date())
                     reply["result"] = result
@@ -561,15 +794,16 @@ final class Helper {
                               let scope = persisted["scope"] as? [String: Any], fenceScopeAllows(scope, ref.bundleID) else {
                             throw NativeFailure("staleLease", "Window position authority changed")
                         }
-                    }, willSet: { try budget.check(); try ledger.reserve(id); reserved = true })
+                    }, willSet: { try budget.check(); try reserveMutation() })
                 var result: [String: Any] = ["positionVerified": outcome.verified, "pid": ref.pid, "startToken": ref.startToken,
                     "bundleID": ref.bundleID, "targetRef": refID, "generation": ref.generation, "requestId": id, "observedAt": iso.string(from: Date())]
                 if let actual = outcome.positionFields(requested: position) { result["position"] = actual }
+                if outcome.verified,let badge=controlBadge,let bounds=AutomationPointer.windowBounds(element:ref.element,pid:ref.pid) {AutomationPointer.repositionControl(badge,window:bounds)}
                 reply["result"] = result
                 reply["receipt"] = ["dispatchState": outcome.dispatchState, "startedAt": started, "returnedAt": iso.string(from: Date()), "targetRef": refID, "nativeCode": outcome.nativeCode, "businessSuccess": false]
                 if let failure = outcome.failure { reply["error"] = ["code": failure.code, "message": failure.message, "stage": "native", "dispatchState": "unknown", "retryableRead": false] }
                 refs.removeAll(); generation += 1
-            case "elements.focus", "elements.press", "elements.setValue", "elements.submit":
+            case "elements.focus", "elements.press", "elements.showMenu", "elements.setValue", "elements.submit":
                 guard AXIsProcessTrusted() else { throw NativeFailure("permissionDenied", "Accessibility permission absent") }
                 if let refID = params["elementRef"] as? String, let ref = refs[refID], applicationProcessStartToken(ref.pid) != ref.startToken { throw NativeFailure("staleReference", "Target process fingerprint changed") }
                 guard let refID = params["elementRef"] as? String, let ref = refs[refID], ref.generation == generation, DispatchTime.now().uptimeNanoseconds - ref.observedAt < 5_000_000_000, params["generation"] as? Int == generation,
@@ -583,7 +817,7 @@ final class Helper {
                     try freshTargetedForeground(ref,budget)
                     var settable: DarwinBoolean = false
                     guard AXUIElementIsAttributeSettable(ref.element, kAXFocusedAttribute as CFString, &settable) == .success, settable.boolValue else { throw NativeFailure("focusUnsupported", "Target does not independently support setting AXFocused") }
-                    try budget.check(); try ref.validateInputScope(budget); try ledger.reserve(id); reserved = true
+                    try budget.check(); try ref.validateInputScope(budget); try reserveMutation()
                     code = AXUIElementSetAttributeValue(ref.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
                     if code == .success { do { try settleTargetedFocus(ref,budget) } catch {
                         reply["receipt"] = ["dispatchState": "unknown", "startedAt": started, "returnedAt": iso.string(from: Date()), "targetRef": refID, "businessSuccess": false]
@@ -591,21 +825,35 @@ final class Helper {
                         reply["error"] = ["code":"focusUnconfirmed", "message":"Focus write returned; observational verification failed: \(detail?.code ?? "focusProbeFailed"). \(detail?.message ?? "Exact focus proof unavailable")", "reasonCode":detail?.code ?? "focusProbeFailed", "dispatchState":"unknown", "stage":"native"]
                         refs.removeAll(); generation += 1; ledger.finish(id, reply:reply); return reply
                     } }
-                } else if method == "elements.press" || method == "elements.submit" {
-                    let action = method == "elements.submit" ? kAXConfirmAction : kAXPressAction
-                    var actions: CFArray?; guard AXUIElementCopyActionNames(ref.element, &actions) == .success, (actions as? [String] ?? []).contains(action) else { throw NativeFailure("unsupported", "Target does not advertise the exact semantic AX action") }
-                    try budget.check(); try ref.validateInputScope(budget); try ledger.reserve(id); reserved = true
-                    code = AXUIElementPerformAction(ref.element, action as CFString)
+                } else if method == "elements.press" || method == "elements.submit" || method == "elements.showMenu" {
+                    var actions: CFArray?
+                    guard AXUIElementCopyActionNames(ref.element, &actions) == .success,
+                          let advertised = actions as? [String] else {
+                        throw NativeFailure("unsupported", "Exact semantic action metadata unavailable")
+                    }
+                    let role = attribute(ref.element, kAXRoleAttribute) as? String ?? ""
+                    if method == "elements.showMenu" {
+                        guard Set(params.keys) == Set(["elementRef", "generation", "expectedApp"]),
+                              let enabled = attribute(ref.element, kAXEnabledAttribute), CFGetTypeID(enabled) == CFBooleanGetTypeID(), enabled as? Bool == true else {
+                            throw NativeFailure("menuUnqualified", "Exact enabled menu control required")
+                        }
+                    }
+                    let action = try qualifiedSemanticAXAction(method: method, role: role, advertised: advertised)
+                    let cuePoint = AutomationPointer.center(of:ref.element)
+                    code = try dispatchSemanticAXAction(ref.element, action: action, budget: budget,
+                        revalidate: { try ref.validateInputScope(budget) }, reserve: reserveMutation)
+                    if let cuePoint {AutomationPointer.show(at:cuePoint)}
                 } else {
                     guard let value = params["value"] as? String, value.utf8.count <= 65_536 else { throw NativeFailure("invalidValue", "Value must be a bounded string") }
                     var settable: DarwinBoolean = false
                     guard AXUIElementIsAttributeSettable(ref.element, kAXValueAttribute as CFString, &settable) == .success, settable.boolValue else { throw NativeFailure("unsupported", "Target value is not settable") }
-                    try budget.check(); try ref.validateInputScope(budget); try ledger.reserve(id); reserved = true
+                    try budget.check(); try ref.validateInputScope(budget); try reserveMutation()
                     var setterCode:AXError = .failure
                     let permitted = params["verifyReplacement"] as? Bool == true && replacementClassification(ref)
                     let matched = try ReplacementProof.perform(expected:value,permitted:permitted,set:{
                         try budget.check();try ref.validateInputScope(budget)
                         guard self.semanticEnabled || self.mutationsEnabled, self.watchdog?.live() == true, let held=self.lease, let persisted=self.fenceLease(), persisted["id"] as? String == held.0, persisted["generation"] as? Int == held.1, let scope=persisted["scope"] as? [String:Any], fenceScopeAllows(scope,ref.bundleID) else {throw NativeFailure("staleLease","Replacement write authority changed")}
+                        startRequestBadge()
                         setterCode=AXUIElementSetAttributeValue(ref.element,kAXValueAttribute as CFString,value as CFString)
                         return setterCode == .success
                     },read:{
@@ -634,14 +882,16 @@ final class Helper {
             case "windows.captureFrame":
                 reply["result"] = try await captureWindowFrame(request, params, budget)
             case "windows.clickFrame":
-                let (permit, point) = try await prepareWindowFrameClick(request, params, budget)
-                try budget.check(); try ledger.reserve(id); reserved = true
+                let (permit, point) = try await prepareWindowFrameClick(request, params, budget, acquire:{target in try acquire(target)})
+                try budget.check(); try reserveMutation()
                 var attempted = false
                 do {
-                    try postWindowFrameClick(inputs: inputs, point: point, preflight: { try self.validateWindowFrameClick(request, permit, point, budget) }, willPost: { attempted = true })
+                    try postWindowFrameClick(inputs: inputs, point: point, preflight: { try self.validateWindowFrameClick(request, permit, point, budget) }, willPost: { attempted = true; controlBadge = AutomationPointer.beginOwnedControl(pid:permit.pid,birth:permit.processStartToken,bundle:permit.bundleId,window:permit.bounds,sessionToken:presentationSession,actionDeadline:badgeActionDeadline); AutomationPointer.show(at: point) })
+                    AutomationPointer.show(at:point)
                     reply["result"] = ["permitId": permit.id, "owner": permit.owner.metadata, "pid": permit.pid, "startToken": permit.processStartToken, "bundleID": permit.bundleId, "windowId": permit.windowId, "identity": "window:\(permit.windowId)", "point": ["x": params["x"]!, "y": params["y"]!], "requestId": id, "observedAt": preciseISO.string(from: Date()), "businessSuccess": false]
                     reply["receipt"] = ["dispatchState": "dispatched", "startedAt": started, "returnedAt": iso.string(from: Date()), "targetRef": "window:\(permit.windowId)", "businessSuccess": false]
                 } catch {
+                    AutomationPointer.hide()
                     let failure = error as? NativeFailure ?? NativeFailure("windowClickUnknown", "Window click outcome unknown")
                     let state = attempted ? "unknown" : "notDispatched"
                     reply["error"] = ["code": failure.code, "message": failure.message, "stage": "native", "dispatchState": state, "retryableRead": false]
@@ -657,6 +907,7 @@ final class Helper {
             default: throw NativeFailure("unsupported", "Method is not implemented")
             }
         } catch {
+            if mutation { AutomationPointer.hide() }
             if method == "windows.clickFrame" || method == "windows.captureFrame" { clearWindowFrame() }
             let failure = error as? NativeFailure ?? NativeFailure("nativeFailure", "Native operation failed")
             reply["error"] = ["code": failure.code, "message": failure.message, "stage": "native", "retryableRead": !mutation, "dispatchState": "notDispatched"]
@@ -674,7 +925,7 @@ final class Helper {
         guard let helper = record["helper"] as? [String: Any], helper["pid"] as? Int32 == getpid(), helper["uid"] as? UInt32 == getuid(), let start = helper["startToken"] as? String, !start.isEmpty else { return nil }
         return record["lease"] as? [String: Any]
     }
-    func dispatchInput(_ method: String, _ params: [String: Any], _ ref: Reference, _ budget: Budget, delivery:KeyboardDelivery = .process,preflight: () throws -> Void = {}, willPost: () -> Void) throws {
+    func dispatchInput(_ method: String, _ params: [String: Any], _ ref: Reference, _ budget: Budget, delivery:KeyboardDelivery = .process,preflight: () throws -> Void = {}, willPost: () -> Void) async throws {
         let marker: Int64 = 0x4d454348
         try ref.validateInputScope(budget)
         guard !IsSecureEventInputEnabled() else { throw NativeFailure("secureInput", "Secure event input inhibits synthetic input") }
@@ -691,7 +942,8 @@ final class Helper {
             guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left), let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else { throw NativeFailure("eventUnavailable", "Mouse events could not be constructed") }
             down.setIntegerValueField(.eventSourceUserData, value: marker); up.setIntegerValueField(.eventSourceUserData, value: marker)
             try budget.check(); try ref.validateInputScope(budget)
-            try inputs.press(token: "mouse:left", down: { willPost(); down.post(tap: .cghidEventTap); return true }, up: { up.post(tap: .cghidEventTap); return true })
+            try inputs.press(token: "mouse:left", preflight:{try preflight();try ref.validateInputScope(budget);try budget.check()}, down: { willPost(); down.post(tap: .cghidEventTap); return true }, up: { up.post(tap: .cghidEventTap); return true })
+            AutomationPointer.show(at:point)
             return
         }
         guard CGPreflightPostEventAccess() else { throw NativeFailure("permissionDenied", "Event posting permission absent") }

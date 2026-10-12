@@ -3,7 +3,9 @@ package nativepeer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/viant/mechanize/session"
+	"strings"
 	"testing"
 )
 
@@ -84,6 +86,73 @@ func TestChromeAncestryRejectsMutationReuseMissingAndSignatureFailures(t *testin
 			})
 			if err == nil {
 				t.Fatal("unqualified ancestry admitted")
+			}
+		})
+	}
+}
+
+func TestChromeProcessFailureStagesPreserveChecksAndHideCause(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stage error
+	}{
+		{"inspect", ErrNativeHostProcessUnavailable}, {"UID", ErrNativeHostUIDUnavailable}, {"image", ErrRunningImageMismatch}, {"hostSignature", ErrNativeHostDynamicSignatureUnavailable}, {"ancestor", ErrChromeAncestryUnavailable}, {"parent", ErrChromeParentUnavailable}, {"chromeSignature", ErrChromeSignatureUnavailable}, {"changed", ErrAncestryChanged}, {"bound", ErrChromeAncestryUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, nodes := ancestryFixture()
+			p.MaximumAncestors = 1
+			cause := errors.New("private-path-and-token-canary")
+			reads := map[int]int{}
+			switch tc.name {
+			case "UID":
+				n := nodes[10]
+				n.identity.UID++
+				nodes[10] = n
+			case "image":
+				n := nodes[10]
+				n.identity.Executable = "/private-canary"
+				nodes[10] = n
+			case "parent":
+				n := nodes[20]
+				n.identity.UID++
+				nodes[20] = n
+			case "bound":
+				n := nodes[20]
+				n.identity.Executable = "/intermediary"
+				n.parentPID = 30
+				nodes[20] = n
+			}
+			_, err := verifyChromeProcess(context.Background(), 10, p, func(pid int) (processParent, error) {
+				reads[pid]++
+				if tc.name == "inspect" && pid == 10 || tc.name == "ancestor" && pid == 20 {
+					return processParent{}, cause
+				}
+				n := nodes[pid]
+				if tc.name == "changed" && reads[pid] > 1 {
+					n.identity.StartToken = "replacement"
+				}
+				return n, nil
+			}, func(pid int, _ string) error {
+				if tc.name == "hostSignature" && pid == 10 || tc.name == "chromeSignature" && pid == 20 {
+					return cause
+				}
+				return nil
+			})
+			if !errors.Is(err, tc.stage) {
+				t.Fatalf("stage mismatch: %v", err)
+			}
+			if tc.name == "inspect" || tc.name == "ancestor" || tc.name == "hostSignature" || tc.name == "chromeSignature" {
+				if !errors.Is(err, cause) {
+					t.Fatal("internal cause identity lost")
+				}
+			}
+			for _, format := range []string{"%v", "%+v", "%#v"} {
+				if strings.Contains(fmt.Sprintf(format, err), "canary") {
+					t.Fatal("private cause exposed")
+				}
+			}
+			if p.MaximumAncestors != 1 || p.ExpectedUID != 501 {
+				t.Fatal("policy relaxed")
 			}
 		})
 	}

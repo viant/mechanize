@@ -96,7 +96,7 @@ func (a *WebAdapter) Evaluate(ctx context.Context, p auth.Principal, name string
 	if a == nil || a.read == nil || name != "valueEquals" {
 		return Result{}, errors.New("qualified web.valueEquals predicate required")
 	}
-	allowed := map[string]bool{"profileChannel": true, "browserInstance": true, "origin": true, "tabId": true, "frameId": true, "documentId": true, "documentGeneration": true, "extensionOrigin": true, "brokerEpoch": true, "channelEpoch": true, "scopeHash": true, "strategy": true, "selector": true, "name": true, "attribute": true, "expected": true}
+	allowed := map[string]bool{"profileChannel": true, "browserInstance": true, "origin": true, "tabId": true, "frameId": true, "documentId": true, "documentGeneration": true, "extensionOrigin": true, "brokerEpoch": true, "channelEpoch": true, "scopeHash": true, "strategy": true, "selector": true, "name": true, "attribute": true, "expected": true, "index": true, "order": true}
 	for key := range inputs {
 		if !allowed[key] {
 			return Result{}, errors.New("unsupported web predicate input")
@@ -219,6 +219,21 @@ func (a *WebAdapter) Evaluate(ctx context.Context, p auth.Principal, name string
 			return Result{}, errors.New("web role name requires a role selector")
 		}
 		target.Locator.Name = &model.Value{Kind: model.StringValue, String: roleName}
+	}
+	indexValue, hasIndex := inputs["index"]
+	orderValue, hasOrder := inputs["order"]
+	if hasIndex != hasOrder {
+		return Result{}, errors.New("web indexed predicate requires index and document order together")
+	}
+	if hasIndex {
+		order, orderErr := webBounded(orderValue, 16, false)
+		if indexValue.Kind != model.NumberValue || indexValue.Validate() != nil || indexValue.Number < 0 || indexValue.Number > 999 || orderErr != nil || order != "document" {
+			return Result{}, errors.New("web indexed predicate requires index0..999 in document order")
+		}
+		index := int(indexValue.Number)
+		target.Cardinality = "nth"
+		target.Index = &index
+		target.Order = order
 	}
 	if err := target.Validate(); err != nil {
 		return Result{}, err

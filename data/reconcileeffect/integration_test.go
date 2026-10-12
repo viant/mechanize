@@ -2,7 +2,6 @@ package reconcileeffect_test
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -23,6 +22,7 @@ import (
 	"github.com/viant/mechanize/data/loadrun"
 	"github.com/viant/mechanize/data/reconcileeffect"
 	integration "github.com/viant/mechanize/integration/endly"
+	"github.com/viant/mechanize/internal/datlytest"
 	"github.com/viant/mechanize/model"
 	"github.com/viant/mechanize/objective"
 	"github.com/viant/xdatly/handler"
@@ -33,7 +33,7 @@ func ptr[T any](v T) *T { return &v }
 type fixture struct {
 	ctx       context.Context
 	server    *standalone.Server
-	db        *sql.DB
+	fixtures  *standalone.Server
 	principal auth.Principal
 }
 
@@ -52,7 +52,7 @@ func openFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite3", cfg.DSN)
+	fixtures, err := datlytest.Open(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,8 +65,8 @@ func openFixture(t *testing.T) *fixture {
 	if err = server.Reload(ctx, 1); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = server.Shutdown(context.Background()); _ = db.Close() })
-	return &fixture{ctx: ctx, server: server, db: db, principal: p}
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()); _ = fixtures.Shutdown(context.Background()) })
+	return &fixture{ctx: ctx, server: server, fixtures: fixtures, principal: p}
 }
 func (f *fixture) seed(t *testing.T, name string, resumedOperation ...string) (data.ReconcileEffectAuthority, context.Context) {
 	t.Helper()
@@ -91,22 +91,15 @@ func (f *fixture) seed(t *testing.T, name string, resumedOperation ...string) (d
 	original := integration.StepResult{DispatchState: "dispatched", VerificationState: "unknown", Value: &model.Value{Kind: model.StringValue, String: "original-bound-output"}}
 	originalRaw, _ := json.Marshal(original)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	// Direct SQL here provisions/inspects an isolated fixture only. Behavioral mutation is the real generated component.
-	statements := []struct {
-		query string
-		args  []any
-	}{
-		{"INSERT INTO plan_revisions(namespace,id,objective_id,content_hash,content_json,created_at) VALUES(?,?,?,?,?,?)", []any{ns, planID, runID, hash, string(raw), now}},
-		{"INSERT INTO runs(namespace,id,plan_id,status,revision,endly_session_id,endly_operation_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)", []any{ns, runID, planID, "running", 3, "owned-session", "owned-operation", now, now}},
-		{"INSERT INTO attempts(namespace,id,run_id,step_id,plan_id,lease_epoch,state,created_at) VALUES(?,?,?,?,?,?,?,?)", []any{ns, attempt, runID, step.ID, planID, 1, "intent", now}},
-		{"INSERT INTO effects(namespace,id,attempt_id,run_id,business_key,state,revision,evidence_json) VALUES(?,?,?,?,?,?,?,?)", []any{ns, effect, attempt, runID, "original-business-key", "unknown", 2, string(originalRaw)}},
-		{"INSERT INTO events(namespace,id,run_id,attempt_id,sequence,kind,payload_json,created_at) VALUES(?,?,?,?,?,?,?,?)", []any{ns, data.ReconcileEffectKey("intent-event", attempt), runID, attempt, 1, "intent", "{}", now}},
-		{"INSERT INTO events(namespace,id,run_id,attempt_id,sequence,kind,payload_json,created_at) VALUES(?,?,?,?,?,?,?,?)", []any{ns, data.ReconcileEffectKey("outcome-event", attempt), runID, attempt, 2, "outcome", string(originalRaw), now}},
+	graph := &datlytest.Graph{
+		Plan:     &datlytest.Plan{Namespace: ns, ID: planID, ObjectiveID: runID, ContentHash: hash, ContentJSON: string(raw), CreatedAt: now},
+		Run:      &datlytest.Run{Namespace: ns, ID: runID, PlanID: planID, Status: "running", Revision: 3, SessionID: ptr("owned-session"), OperationID: ptr("owned-operation"), CreatedAt: now, UpdatedAt: now},
+		Attempts: []datlytest.Attempt{{Namespace: ns, ID: attempt, RunID: runID, StepID: step.ID, PlanID: planID, LeaseEpoch: 1, State: "intent", CreatedAt: now}},
+		Effects:  []datlytest.Effect{{Namespace: ns, ID: effect, AttemptID: attempt, RunID: runID, BusinessKey: "original-business-key", State: "unknown", Revision: 2, EvidenceJSON: string(originalRaw)}},
+		Events:   []datlytest.Event{{Namespace: ns, ID: data.ReconcileEffectKey("intent-event", attempt), RunID: runID, AttemptID: &attempt, Sequence: 1, Kind: "intent", PayloadJSON: "{}", CreatedAt: now}, {Namespace: ns, ID: data.ReconcileEffectKey("outcome-event", attempt), RunID: runID, AttemptID: &attempt, Sequence: 2, Kind: "outcome", PayloadJSON: string(originalRaw), CreatedAt: now}},
 	}
-	for _, s := range statements {
-		if _, err = f.db.ExecContext(f.ctx, s.query, s.args...); err != nil {
-			t.Fatal(err)
-		}
+	if err = datlytest.Apply(f.ctx, f.fixtures, datlytest.Input{Namespace: ns, Mode: "graph", Graph: graph}); err != nil {
+		t.Fatal(err)
 	}
 	result := objective.Result{Truth: objective.True, Authority: objective.Observational, ObservedAt: time.Now(), Evidence: []objective.Evidence{{Kind: "nativeUIRead", Reference: "owned-fresh-native-reference"}}}
 	verified := original
@@ -184,11 +177,7 @@ func TestGeneratedReconciliationAtomicGraphAndReadback(t *testing.T) {
 	a, guard := f.seed(t, "success")
 	// Keep a second unknown effect: confirmation of one action never clears another.
 	other := data.ReconcileEffectKey("other-attempt", a.RunID)
-	_, err := f.db.Exec("INSERT INTO attempts(namespace,id,run_id,step_id,plan_id,lease_epoch,state,created_at) VALUES(?,?,?,?,?,?,?,?)", a.Namespace, other, a.RunID, "other-step", a.PlanID, 1, "intent", a.Now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = f.db.Exec("INSERT INTO effects(namespace,id,attempt_id,run_id,business_key,state,revision,evidence_json) VALUES(?,?,?,?,?,?,?,?)", a.Namespace, data.ReconcileEffectKey("effect", other), other, a.RunID, "other-business-key", "unknown", 1, "{}")
+	err := datlytest.Apply(f.ctx, f.fixtures, datlytest.Input{Namespace: a.Namespace, Mode: "graph", Graph: &datlytest.Graph{Attempts: []datlytest.Attempt{{Namespace: a.Namespace, ID: other, RunID: a.RunID, StepID: "other-step", PlanID: a.PlanID, LeaseEpoch: 1, State: "intent", CreatedAt: a.Now}}, Effects: []datlytest.Effect{{Namespace: a.Namespace, ID: data.ReconcileEffectKey("effect", other), AttemptID: other, RunID: a.RunID, BusinessKey: "other-business-key", State: "unknown", Revision: 1, EvidenceJSON: "{}"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +280,7 @@ func TestGeneratedReconciliationRequiresPersistedResumeCorrelation(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			a, guard := f.seed(t, tc.name, tc.operation)
 			if tc.clearSession {
-				if _, err := f.db.Exec("UPDATE runs SET endly_session_id=NULL WHERE namespace=? AND id=?", a.Namespace, a.RunID); err != nil {
+				if err := datlytest.Apply(f.ctx, f.fixtures, datlytest.Input{Namespace: a.Namespace, Mode: "missingSession", RunID: a.RunID}); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -31,12 +31,13 @@ type NativeRecordingHelper interface {
 	WaitStopped(context.Context) error
 }
 type NativeRecordingOptions struct {
-	Owner       context.Context
-	HelperPath  string
-	Requirement string
-	ExpectedUID *uint32
-	Factory     func(context.Context, native.Options) (NativeRecordingHelper, error)
-	Revalidate  func(context.Context, auth.Principal) error
+	ConsoleLaunch *native.ConsoleLaunchOptions
+	Owner         context.Context
+	HelperPath    string
+	Requirement   string
+	ExpectedUID   *uint32
+	Factory       func(context.Context, native.Options) (NativeRecordingHelper, error)
+	Revalidate    func(context.Context, auth.Principal) error
 }
 type NativeRecordingManager struct {
 	options NativeRecordingOptions
@@ -133,7 +134,7 @@ func (m *NativeRecordingManager) Start(ctx context.Context, p auth.Principal, bi
 	go m.watch(e)
 	e.mu.Lock()
 	owner := native.RecordingOwner{Namespace: p.Namespace, ClientID: p.ClientID, SessionID: binding.SessionID}
-	helper, err := m.options.Factory(helperCtx, native.Options{HelperPath: m.options.HelperPath, Requirement: m.options.Requirement, ExpectedUID: m.options.ExpectedUID, AllowRecording: true, RecordingOwner: &owner})
+	helper, err := m.options.Factory(helperCtx, native.Options{Console: m.options.ConsoleLaunch, HelperPath: m.options.HelperPath, Requirement: m.options.Requirement, ExpectedUID: m.options.ExpectedUID, AllowRecording: true, RecordingOwner: &owner})
 	e.helper = helper
 	if err == nil && helper == nil {
 		err = errors.New("passive helper factory returned no helper")

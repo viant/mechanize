@@ -3,6 +3,20 @@ import ApplicationServices
 import Carbon
 import MechanizeNativeCore
 
+func uniquePrintableKeyCode(_ key: String, mappings: [(CGKeyCode, String)]) throws -> CGKeyCode {
+    guard key.utf8.count == 1, key.utf8.allSatisfy({ (65...90).contains($0) || (48...57).contains($0) }) else {
+        throw NativeFailure("invalidKey", "One closed printable named key required")
+    }
+    let digit = key.utf8.allSatisfy({ (48...57).contains($0) })
+    // Digit chords refer to the main keyboard, never a numeric-keypad alias.
+    // These are candidate positions, not a fixed character-to-key mapping.
+    let matches = mappings.filter { (!digit || $0.0 <= 50) && $0.1.uppercased() == key }
+    guard matches.count == 1 else {
+        throw NativeFailure("keyboardLayoutUnqualified", "Printable key requires one verified layout mapping")
+    }
+    return matches[0].0
+}
+
 func targetedKeyCode(_ key: String) throws -> CGKeyCode {
     let fixed: [String: CGKeyCode] = ["Space":49,"Tab":48,"Return":36,"Escape":53,"ArrowLeft":123,"ArrowRight":124,"ArrowUp":126,"ArrowDown":125,"Home":115,"End":119,"PageUp":116,"PageDown":121,"Backspace":51,"Delete":117]
     if let code = fixed[key] { return code }
@@ -18,16 +32,15 @@ func targetedKeyCode(_ key: String) throws -> CGKeyCode {
     let data = unsafeBitCast(property, to: CFData.self)
     guard let bytes = CFDataGetBytePtr(data) else { throw NativeFailure("keyboardLayoutUnqualified", "Keyboard layout data unavailable") }
     let layout = UnsafeRawPointer(bytes).assumingMemoryBound(to: UCKeyboardLayout.self)
-    var matches: [CGKeyCode] = []
+    var mappings: [(CGKeyCode, String)] = []
     for code in UInt16(0)...UInt16(127) {
         var dead: UInt32 = 0
         var count: Int = 0
         var chars = [UniChar](repeating: 0, count: 4)
         let status = UCKeyTranslate(layout, code, UInt16(kUCKeyActionDown), 0, UInt32(LMGetKbdType()), OptionBits(kUCKeyTranslateNoDeadKeysMask), &dead, 4, &count, &chars)
-        if status == noErr, count == 1, String(utf16CodeUnits: chars, count: 1).uppercased() == key { matches.append(code) }
+        if status == noErr, count == 1, dead == 0 { mappings.append((code, String(utf16CodeUnits: chars, count: 1))) }
     }
-    guard matches.count == 1 else { throw NativeFailure("keyboardLayoutUnqualified", "Letter requires one verified layout mapping") }
-    return matches[0]
+    return try uniquePrintableKeyCode(key, mappings: mappings)
 }
 private func keyboardAttributeResult(_ element:AXUIElement,_ name:String)->(AXError,CFTypeRef?) {
     var result:CFTypeRef?
@@ -79,10 +92,26 @@ func settleTargetedFocus(_ ref:Reference,_ budget:Budget) throws {
     },refresh:{},pause:{Thread.sleep(forTimeInterval:0.02)})
 }
 
-func targetedKeyboardSessionAvailable() -> Bool {
-    let state=windowSession()
-    guard state["available"] as? Bool == true,state["onConsole"] as? Bool == true,state["loginDone"] as? Bool == true,state["uid"] as? UInt32 == getuid(),!IsSecureEventInputEnabled(),(try? qualifiedForeground(nil,Budget(milliseconds:1000))) != nil else {return false}
-    return true
+struct TargetedKeyboardSessionRuntime {
+    let session: () -> [String: Any]
+    let secureInput: () -> Bool
+    let foreground: () throws -> Void
+    static let system = TargetedKeyboardSessionRuntime(session: windowSession, secureInput: { IsSecureEventInputEnabled() }, foreground: {
+        _ = try qualifiedForeground(nil, Budget(milliseconds:1000))
+    })
+}
+func targetedKeyboardSessionAvailable(diagnostic: ((ControlReadinessProbeResult) -> Void)? = nil,
+                                     runtime: TargetedKeyboardSessionRuntime = .system) -> Bool {
+    let state=runtime.session()
+    guard state["available"] as? Bool == true,state["onConsole"] as? Bool == true,state["loginDone"] as? Bool == true,state["uid"] as? UInt32 == getuid(),!runtime.secureInput() else {
+        diagnostic?(.sessionUnqualified); return false
+    }
+    do {
+        try runtime.foreground()
+        diagnostic?(.ready); return true
+    } catch {
+        diagnostic?(ControlReadinessProbeResult.failure(error)); return false
+    }
 }
 func observedTargetedFocus(_ ref:Reference,_ budget:Budget) throws -> Bool {
     try FocusProof.read {try validateTargetedFocus(ref,budget)}

@@ -27,6 +27,12 @@ business key and immutable, independently observable postcondition as described
 in the parent skill. Do not copy fixture selectors into another app without
 observing them there.
 
+For `typeWindowText`, `focusRole` is the observed raw AX role, such as
+`AXTextArea` or `AXTextField`, not the normalized locator role `textbox`.
+Supply the observed exact `focusName` or `focusIdentifier` and physical window
+identity. The helper verifies current focus before sending text; a complete
+focused-root observation does not by itself qualify a physical keyboard route.
+
 ## Choose one route before dispatch
 
 For a file chooser whose list view is focused, a session-key chord can open the

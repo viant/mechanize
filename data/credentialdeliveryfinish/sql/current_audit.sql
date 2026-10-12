@@ -1,0 +1,1 @@
+SELECT r.namespace, r.client_id, r.attempt_id, r.revision, r.dispatch_state, r.protection_state, r.created_at FROM (SELECT * FROM (SELECT a.* FROM credential_delivery_audit a) audit) r WHERE $criteria.CompositeIn("r", $Unsafe.ProjectCurrentAuditParentKeys($CurrentCredentialDeliveryFinish))

@@ -56,7 +56,7 @@ func NewChromePeerVerifier(policy ChromeProcessPolicy) (*ChromePeerVerifier, err
 	if err = VerifyExecutable(policy.NativeHostExecutable, Options{ExpectedUID: policy.ExpectedUID, DesignatedRequirement: policy.NativeHostRequirement}); err != nil {
 		return nil, err
 	}
-	if err = VerifyExecutable(policy.ChromeExecutable, Options{ExpectedUID: policy.ExpectedUID, DesignatedRequirement: policy.ChromeRequirement}); err != nil {
+	if err = VerifyChromeExecutable(policy.ChromeExecutable, Options{ExpectedUID: policy.ExpectedUID, DesignatedRequirement: policy.ChromeRequirement}); err != nil {
 		return nil, err
 	}
 	return &ChromePeerVerifier{policy: policy, peer: peer}, nil
@@ -69,22 +69,22 @@ func (v *ChromePeerVerifier) Verify(ctx context.Context, conn *net.UnixConn) (Ch
 		return ChromeProcessEvidence{}, errors.Join(ctx.Err(), errors.New("Chrome peer verifier unavailable"))
 	}
 	if err := v.peer(conn); err != nil {
-		return ChromeProcessEvidence{}, err
+		return ChromeProcessEvidence{}, errors.Join(ErrNativePeerAuthentication, err)
 	}
 	pid, err := AuditPID(conn)
 	if err != nil {
-		return ChromeProcessEvidence{}, err
+		return ChromeProcessEvidence{}, errors.Join(ErrNativePeerAudit, err)
 	}
 	evidence, err := VerifyChromeProcess(ctx, pid, v.policy)
 	if err != nil {
 		return evidence, err
 	}
 	if err = v.peer(conn); err != nil {
-		return ChromeProcessEvidence{}, err
+		return ChromeProcessEvidence{}, errors.Join(ErrNativePeerAuthentication, err)
 	}
 	current, err := AuditPID(conn)
 	if err != nil || current != pid {
-		return ChromeProcessEvidence{}, errors.Join(err, errors.New("native-host audit peer changed"))
+		return ChromeProcessEvidence{}, errors.Join(ErrNativePeerAudit, err)
 	}
 	evidence.KernelPeerQualified = true
 	return evidence, ctx.Err()
@@ -97,22 +97,30 @@ func VerifyChromeProcess(ctx context.Context, pid int, policy ChromeProcessPolic
 	if err := validateChromePolicy(policy); err != nil {
 		return ChromeProcessEvidence{}, err
 	}
-	return verifyChromeProcess(ctx, pid, policy, inspectProcessParent, verifyDynamicProcess)
+	return verifyChromeProcess(ctx, pid, policy, inspectProcessParent, verifyDynamicProcess, func(actual string) (func() error, error) {
+		return verifyChromeImage(policy.ChromeExecutable, actual, Options{ExpectedUID: policy.ExpectedUID, DesignatedRequirement: policy.ChromeRequirement}, verifyExecutable)
+	})
 }
-func verifyChromeProcess(ctx context.Context, pid int, policy ChromeProcessPolicy, inspect func(int) (processParent, error), verify func(int, string) error) (ChromeProcessEvidence, error) {
+func verifyChromeProcess(ctx context.Context, pid int, policy ChromeProcessPolicy, inspect func(int) (processParent, error), verify func(int, string) error, imageCheck ...func(string) (func() error, error)) (ChromeProcessEvidence, error) {
 	var evidence ChromeProcessEvidence
 	if err := ctx.Err(); err != nil {
-		return evidence, err
+		return evidence, ProcessFailure(ErrNativeHostProcessUnavailable, err)
 	}
 	leaf, err := inspect(pid)
 	if err != nil {
-		return evidence, err
+		return evidence, ProcessFailure(ErrNativeHostProcessUnavailable, err)
 	}
-	if leaf.identity.PID != pid || leaf.identity.UID != policy.ExpectedUID || leaf.identity.StartToken == "" || leaf.identity.Executable != policy.NativeHostExecutable {
-		return evidence, errors.New("native-host process does not match enrolled image and UID")
+	if leaf.identity.UID != policy.ExpectedUID {
+		return evidence, ProcessFailure(ErrNativeHostUIDUnavailable, nil)
+	}
+	if leaf.identity.PID != pid || leaf.identity.StartToken == "" {
+		return evidence, ProcessFailure(ErrNativeHostProcessUnavailable, nil)
+	}
+	if leaf.identity.Executable != policy.NativeHostExecutable {
+		return evidence, ProcessFailure(ErrRunningImageMismatch, nil)
 	}
 	if err = verify(pid, policy.NativeHostRequirement); err != nil {
-		return evidence, err
+		return evidence, ProcessFailure(ErrNativeHostDynamicSignatureUnavailable, err)
 	}
 	evidence.NativeHost = leaf.identity
 	nodes := []processParent{leaf}
@@ -123,26 +131,40 @@ func verifyChromeProcess(ctx context.Context, pid int, policy ChromeProcessPolic
 	}
 	next := leaf.parentPID
 	found := false
+	var recheckImage func() error
 	for depth := 0; depth < limit; depth++ {
 		if err = ctx.Err(); err != nil {
-			return ChromeProcessEvidence{}, err
+			return ChromeProcessEvidence{}, ProcessFailure(ErrChromeAncestryUnavailable, err)
 		}
 		if next <= 1 || seen[next] {
-			return ChromeProcessEvidence{}, errors.New("enrolled Chrome ancestor unavailable")
+			return ChromeProcessEvidence{}, ProcessFailure(ErrChromeAncestryUnavailable, nil)
 		}
 		seen[next] = true
 		ancestor, e := inspect(next)
 		if e != nil {
-			return ChromeProcessEvidence{}, e
+			return ChromeProcessEvidence{}, ProcessFailure(ErrChromeAncestryUnavailable, e)
 		}
 		if ancestor.identity.PID != next || ancestor.identity.UID != policy.ExpectedUID || ancestor.identity.StartToken == "" {
-			return ChromeProcessEvidence{}, errors.New("Chrome ancestry identity or UID mismatch")
+			return ChromeProcessEvidence{}, ProcessFailure(ErrChromeParentUnavailable, nil)
 		}
 		nodes = append(nodes, ancestor)
 		evidence.Ancestors = append(evidence.Ancestors, ancestor.identity)
-		if ancestor.identity.Executable == policy.ChromeExecutable {
+		matches := ancestor.identity.Executable == policy.ChromeExecutable
+		if len(imageCheck) == 1 {
+			check, imageErr := imageCheck[0](ancestor.identity.Executable)
+			matches = imageErr == nil && check != nil
+			if matches {
+				recheckImage = check
+			}
+		}
+		if matches {
 			if e = verify(next, policy.ChromeRequirement); e != nil {
-				return ChromeProcessEvidence{}, e
+				return ChromeProcessEvidence{}, ProcessFailure(ErrChromeSignatureUnavailable, e)
+			}
+			if recheckImage != nil {
+				if e = recheckImage(); e != nil {
+					return ChromeProcessEvidence{}, ProcessFailure(ErrAncestryChanged, e)
+				}
 			}
 			evidence.ChromeParent = ancestor.identity
 			found = true
@@ -151,18 +173,28 @@ func verifyChromeProcess(ctx context.Context, pid int, policy ChromeProcessPolic
 		next = ancestor.parentPID
 	}
 	if !found {
-		return ChromeProcessEvidence{}, errors.New("signed Chrome ancestor not found within enrolled bound")
+		return ChromeProcessEvidence{}, ProcessFailure(ErrChromeAncestryUnavailable, nil)
+	}
+	if recheckImage != nil {
+		if err = recheckImage(); err != nil {
+			return ChromeProcessEvidence{}, ProcessFailure(ErrAncestryChanged, err)
+		}
 	}
 	// Public libproc identity/start and parent links must remain unchanged across
 	// the Security dynamic code checks. A PID-only socket fallback never occurs.
 	for _, node := range nodes {
 		current, e := inspect(node.identity.PID)
 		if e != nil || current != node {
-			return ChromeProcessEvidence{}, errors.Join(e, errors.New("Chrome ancestry changed during verification"))
+			return ChromeProcessEvidence{}, ProcessFailure(ErrAncestryChanged, e)
+		}
+	}
+	if recheckImage != nil {
+		if err = recheckImage(); err != nil {
+			return ChromeProcessEvidence{}, ProcessFailure(ErrAncestryChanged, err)
 		}
 	}
 	if err = ctx.Err(); err != nil {
-		return ChromeProcessEvidence{}, err
+		return ChromeProcessEvidence{}, ProcessFailure(ErrChromeAncestryUnavailable, err)
 	}
 	evidence.VerifiedAt = time.Now()
 	// No profile or old-renderer quiescence proof exists in this layer.

@@ -33,10 +33,12 @@ func TestHumanRevocationCancelsSharedDatlyEndlyExecutionWithoutLockInversion(t *
 	var service *consent.Service
 	var operation consent.Operation
 	started := make(chan struct{})
+	warmed := make(chan struct{})
 	released := make(chan struct{})
 	nestedDenied := make(chan bool, 1)
 	builder, err := durable.New(durable.Options{SourceRoot: source, StorageRoot: t.TempDir(), LeaseEpoch: func(context.Context, auth.Principal) (int, error) { return 1, nil }}, func(ctx context.Context, principal auth.Principal, step model.Step, values map[string]model.Value) (automation.StepResult, error) {
 		if step.ID == "materialize-nondispatched-outcome" {
+			close(warmed)
 			return automation.StepResult{DispatchState: "notDispatched", VerificationState: "unknown"}, errors.New("fixture preloads generated outcome; no input")
 		}
 		lease, err := service.Authorize(ctx, operation)
@@ -56,7 +58,13 @@ func TestHumanRevocationCancelsSharedDatlyEndlyExecutionWithoutLockInversion(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	scheduler, err := automation.NewWithOptions(builder.Execute, automation.Options{PreparePlan: builder.PreparePlan})
+	scheduler, err := automation.NewWithOptions(builder.Execute, automation.Options{
+		PreparePlan: builder.PreparePlan,
+		AttachInitialOperation: func(ctx context.Context, p auth.Principal, runID string, revision int, sessionID, operationID string) error {
+			_, err := builder.AttachOperation(ctx, p, runID, revision, sessionID, operationID)
+			return err
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +118,11 @@ func TestHumanRevocationCancelsSharedDatlyEndlyExecutionWithoutLockInversion(t *
 	warmCancel()
 	if err != nil || warmFinished.Status != "failed" {
 		t.Fatalf("generatedoutcomeprewarm %+v %v", warmFinished, err)
+	}
+	select {
+	case <-warmed:
+	default:
+		t.Fatalf("prewarm failed before reaching the action executor: %+v", warmFinished)
 	}
 	warmRequest, err := service.CreateRequest(actor, session.SessionID, in)
 	if err != nil {

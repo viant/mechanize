@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -54,6 +55,12 @@ func TestHelperProcess(t *testing.T) {
 				reply.Result = nil
 				reply.Error = &NativeError{Code: "fixtureFailure", Stage: "native", Message: strings.Repeat("x", MaximumFrameBytes)}
 			}
+		}
+		if request.Method == "fixture.nativeDiagnostic" {
+			var params struct{ Code, State, Stage string }
+			_ = json.Unmarshal(request.Params, &params)
+			reply.Error = &NativeError{Code: params.Code, Message: "PRIVATE_CANARY https://private.test/?secret=fixture", Stage: params.Stage, DispatchState: params.State}
+			reply.Receipt = &Receipt{DispatchState: params.State}
 		}
 		if request.Method == "input.releaseAll" {
 			reply.Result = json.RawMessage(`{"revoked":true,"unknownReleases":0,"businessOutcomeUnknown":true}`)
@@ -144,5 +151,48 @@ func TestStopAfterTransportDeathUsesImmutableRawAuthority(t *testing.T) {
 		if (raw && err == nil) || (!raw && err != nil) || report.UnknownInputs != raw || !report.BusinessOutcomeUnknown || !report.HelperStopped {
 			t.Fatalf("missing acknowledgement invented authority or success: raw=%t %+v %v", raw, report, err)
 		}
+	}
+}
+
+func TestNativeExecutionDiagnosticRequiresCorrelatedHelperMetadata(t *testing.T) {
+	client := fixtureClient(t)
+	for i, tc := range []struct {
+		code, state, stage, epoch string
+		want                      bool
+	}{
+		{"foregroundWindowMissing", "notDispatched", "native", "fixture-epoch", true},
+		{"foregroundAXWindowUnavailable", "notDispatched", "native", "fixture-epoch", true},
+		{"foregroundAXOwnerMismatch", "notDispatched", "native", "fixture-epoch", true},
+		{"foregroundGeometryAmbiguous", "unknown", "native", "fixture-epoch", true},
+		{"foregroundRaiseWindowInvisible", "unknown", "native", "fixture-epoch", true},
+		{"foregroundWindowAmbiguous", "notDispatched", "native", "other-epoch", false},
+		{"foregroundWindowMissing", "notDispatched", "foreign", "fixture-epoch", false},
+		{"PRIVATE_CANARY", "notDispatched", "native", "fixture-epoch", false},
+		{"permissionDenied", "notDispatched", "native", "fixture-epoch", false},
+		{"foregroundWindowMissing", "invented", "native", "fixture-epoch", false},
+	} {
+		params, _ := json.Marshal(map[string]string{"code": tc.code, "state": tc.state, "stage": tc.stage})
+		reply, err := client.Call(context.Background(), Request{RequestID: fmt.Sprint("diagnostic-", i), HelperEpoch: tc.epoch, Method: "fixture.nativeDiagnostic", Params: params, DeadlineRemainingMS: 1000})
+		var native *NativeError
+		if !errors.As(err, &native) {
+			t.Fatal("native error missing", err)
+		}
+		code, state, ok := native.NativeExecutionFailure()
+		if ok != tc.want {
+			t.Fatal("provenance classification", i, ok)
+		}
+		if ok && (code != tc.code || state != tc.state || reply.Receipt.DispatchState != state) {
+			t.Fatal("receipt metadata changed")
+		}
+	}
+	unqualified := &NativeError{Code: "foregroundWindowMissing", Stage: "native", DispatchState: "notDispatched"}
+	if _, _, ok := unqualified.NativeExecutionFailure(); ok {
+		t.Fatal("constructed error gained transport provenance")
+	}
+	wire, _ := json.Marshal(unqualified)
+	var decoded NativeError
+	_ = json.Unmarshal(wire, &decoded)
+	if _, _, ok := decoded.NativeExecutionFailure(); ok {
+		t.Fatal("JSON minted provenance")
 	}
 }

@@ -270,8 +270,19 @@ func (c *compiler) eval(e *Expression) (typed, *model.Step, error) {
 			if v.kind != "app" || v.selector.Surface.Kind != "native" || v.selector.Locator != nil || v.selector.Ancestor != nil || v.selector.Scope.NativeRoot != "" || len(v.selector.Scope.Window) != 0 || len(v.selector.Scope.Frame) != 0 {
 				return v, nil, c.err(call.Position, "native root requires an unscoped app receiver")
 			}
-			if _, _, err := c.args(call, 0, map[string]model.ValueKind{}); err != nil {
+			allowed := map[string]model.ValueKind{}
+			if call.Name == "menuBar" {
+				allowed["name"] = model.StringValue
+			}
+			_, opts, err := c.args(call, 0, allowed)
+			if err != nil {
 				return v, nil, err
+			}
+			if name, present := opts["name"]; present {
+				if name.Kind != model.StringValue || !model.ValidNativeMenuName(name.String) {
+					return v, nil, c.err(call.Position, "bounded literal menu name required")
+				}
+				v.selector.Scope.NativeMenu = name.String
 			}
 			v.selector.Scope.NativeRoot = call.Name
 		case "window", "frame":
@@ -408,6 +419,37 @@ func (c *compiler) eval(e *Expression) (typed, *model.Step, error) {
 				step.TimeoutMs = timeout.Number
 			}
 			return typed{kind: "void"}, step, nil
+		case "typeWindowText":
+			if v.kind != "app" || idx != len(e.Calls)-1 {
+				return v, nil, c.err(call.Position, "window text requires terminating app action")
+			}
+			_, options, err := c.args(call, 0, map[string]model.ValueKind{"windowId": model.NumberValue, "text": model.StringValue, "focusRole": model.StringValue, "focusIdentifier": model.StringValue, "focusName": model.StringValue, "timeout": model.DurationValue})
+			if err != nil {
+				return v, nil, err
+			}
+			fields := map[string]model.Value{}
+			for _, name := range []string{"windowId", "text", "focusRole"} {
+				value, ok := options[name]
+				if !ok {
+					return v, nil, c.err(call.Position, "windowId, text and focusRole required")
+				}
+				fields[name] = value
+			}
+			for _, name := range []string{"focusIdentifier", "focusName"} {
+				value, ok := options[name]
+				if !ok {
+					value = model.Value{Kind: model.StringValue, String: ""}
+				}
+				fields[name] = value
+			}
+			step := &model.Step{Action: "window.typeText", Target: v.selector, Arguments: map[string]model.Value{"windowText": {Kind: model.ObjectValue, Object: fields}}, TimeoutMs: 15000, Effect: model.Effect{Class: model.ExternalNonIdempotent}}
+			if timeout, ok := options["timeout"]; ok {
+				if timeout.Kind != model.DurationValue {
+					return v, nil, c.err(call.Position, "timeout requires duration literal")
+				}
+				step.TimeoutMs = timeout.Number
+			}
+			return typed{kind: "void"}, step, nil
 		case "pressWindowKey":
 			if v.kind != "app" || idx != len(e.Calls)-1 {
 				return v, nil, c.err(call.Position, "window key requires app receiver and must terminate chain")
@@ -429,8 +471,8 @@ func (c *compiler) eval(e *Expression) (typed, *model.Step, error) {
 				step.TimeoutMs = timeout.Number
 			}
 			return typed{kind: "void"}, step, nil
-		case "open", "activate", "focus", "click", "submit", "fill", "read", "check", "uncheck", "select", "pressKey", "pressSessionKey", "moveTo", "replaceText":
-			validReceiver := v.kind == "locator" && call.Name != "open" && call.Name != "activate" || v.kind == "app" && (call.Name == "open" || call.Name == "activate")
+		case "openOrigin", "navigate", "activateTab", "open", "activate", "quit", "focus", "click", "showMenu", "submit", "fill", "read", "check", "uncheck", "select", "pressKey", "pressSessionKey", "moveTo", "replaceText":
+			validReceiver := v.kind == "page" && (call.Name == "openOrigin" || call.Name == "navigate" || call.Name == "activateTab") || v.kind == "locator" && call.Name != "openOrigin" && call.Name != "navigate" && call.Name != "activateTab" && call.Name != "open" && call.Name != "activate" && call.Name != "quit" || v.kind == "app" && (call.Name == "open" || call.Name == "activate" || call.Name == "quit")
 			if !validReceiver || idx != len(e.Calls)-1 {
 				return v, nil, c.err(call.Position, "action requires its registered receiver and must terminate chain")
 			}
@@ -444,7 +486,11 @@ func (c *compiler) eval(e *Expression) (typed, *model.Step, error) {
 				return v, nil, err
 			}
 			step := &model.Step{Action: definition.Action, Target: v.selector, Arguments: map[string]model.Value{}, TimeoutMs: 15000, Effect: model.Effect{Class: model.ExternalNonIdempotent}}
-			if call.Name == "activate" {
+			if call.Name == "openOrigin" {
+				step.Effect.BusinessKey = map[string]model.Value{"origin": {Kind: model.StringValue, String: step.Target.Surface.Origin}, "operation": {Kind: model.StringValue, String: "openBackgroundTab"}}
+				step.TimeoutMs = 3000
+			}
+			if call.Name == "activate" || call.Name == "quit" {
 				step.Effect.BusinessKey = map[string]model.Value{"bundleID": {Kind: model.StringValue, String: step.Target.Surface.BundleID}}
 			}
 			if x, ok := o["timeout"]; ok {
@@ -465,6 +511,10 @@ func (c *compiler) eval(e *Expression) (typed, *model.Step, error) {
 			v.kind = "void"
 			if definition.ReadOnly {
 				step.Effect.Class = model.ReadOnly
+			}
+			if call.Name == "openOrigin" {
+				step.ResultType = model.StringValue
+				v = typed{kind: "value", value: model.Value{Kind: model.ReferenceValue, Expected: model.StringValue, Ref: fmt.Sprintf("step.step-%d.result", len(c.plan.Steps)+1)}}
 			}
 			if call.Name == "read" {
 				attr, err := c.text(a[0], call.Position)

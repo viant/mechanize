@@ -1,5 +1,24 @@
 # Disposable Chrome development enrollment
 
+## Extending an existing website scope
+
+`scripts/extend-chrome-origins.py` previews an additive change to one exactly
+owned existing extension channel. It verifies the frozen broker/native-host
+images, current Chrome image, and actual Scy-authenticated development principal.
+Only exact canonical HTTPS origins inside the existing user ceiling are accepted.
+It preserves every other configuration field, credential resource and binary.
+Apply requires the owned runtime to be stopped, compares the original bytes and
+retains a private backup before atomic publication. Configuration stays `0600`.
+
+This updates broker enrollment only. Chrome's website permission and connection
+are separate. Existing renderer fences, receipts and unknown effects are retained;
+a changed scope/epoch can require the qualified retirement/reconnect path. Never
+clear extension storage or make a new profile to disguise an existing unresolved
+channel. The script does not attest renderer quiescence, grant consent, qualify
+credential delivery or establish that a real website is ready for automation.
+If reconnect is unavailable, the broader enrollment remains inactive and must
+not be described as working website access.
+
 `scripts/enroll-chrome.py` prepares one exact disposable Chrome channel. It defaults
 to preflight and never starts/restarts Chrome, the broker or native host, posts
 input, edits a database, or grants consent. Enrollment is not production
@@ -170,3 +189,58 @@ unknown-command inhibition/reconciliation, and cleanup. Successful configuration
 provisioning alone establishes none of those runtime qualification gates.
 
 Verification command: `python3 scripts/enroll-chrome.py --self-test`. Synthetic fixtures exercise configuration preservation, private path/atomic CAS protections, and the actual Scy/auth verifier accepting a signed local token while rejecting expired/invalid tokens. They generate no live enrollment credential and touch no live configuration.
+
+## First-use setup diagnostics
+
+The host's `mechanize_browser_status` response now includes static `setup.state`
+and `setup.nextAction` guidance, derived only from authenticated owned channel
+metadata. No Chrome profile files, page values or credentials are read by this
+diagnostic. States distinguish enrollment required, connection required,
+qualification required, an approved page required, ready, operation pending, and
+recovery required. Unknown effects take priority over reconnection advice. A ready
+state indicates that at least one owned channel has a qualified document, not that
+every profile or page is controllable. Normal scope and consent still apply.
+
+With no channel, Mechanize cannot distinguish a missing extension from an already
+loaded but unenrolled extension. It must guide the human to the Chrome-reported
+ID rather than claim installation failure or invent an ID. The extension's local
+options screen now explains the ID, native-host enrollment, channel/browser IDs
+and exact-origin permission steps. It does not request website credentials.
+
+Loading an unpacked extension is per Chrome profile. Native-host registration is
+per user-data directory. Automatic detection/guidance does not yet install an
+extension or qualify a silent installer; Chrome's installation and origin
+approvals remain explicit. These diagnostics are source changes, not evidence of
+a connected live host.
+
+## Native Browsers tab (source, not installed)
+
+The console has a Browsers tab backed by a read-only browserStatus call over the
+existing signed-peer and Scy-authenticated native console channel. It displays
+owned connection metadata, separates broker connectivity from browser readiness,
+and prioritizes unknown effects and pending operations. Fixture-only or
+unqualified transports cannot appear ready. It does not read profile files, page
+content, credentials or enrollment secret resources.
+
+This first view provides diagnostics and refresh only. Native setup/reconnect,
+approved-website management and site-skill controls still require implementation;
+no inactive buttons pretend those operations exist. Source console tests pass,
+but no installed UI/live acceptance is claimed. No third-party code was copied
+for this view.
+
+## Process verification failure at startup
+
+A failed signed native-host/Chrome process verifier leaves the host in a fixed
+degraded state. The browser bridge creates no socket, loads no Chrome enrollment
+secret, and exposes no web-control, credential-delivery or Chrome-retirement
+provider. `mechanize_browser_status` reports `available:false` and the bounded
+`chromeProcessUnqualified` attention code. The native console shows verification
+instructions instead of suggesting that enrollment is missing.
+
+Native administration, Vault providers and separately authorized native app
+access remain available under their existing permission and private-exposure
+guards. The host does not replace pins, rewrite configuration, reload secrets,
+retry on status reads or restore execution around unknown effects. The extension may reconnect its authenticated metadata transport automatically, but this cannot enable a degraded host, publish protected documents or bypass unresolved receipts. A new explicitly
+reviewed enrollment/configuration startup must pass the full verifier before the
+browser bridge and its secret loader can run. Other startup errors remain fatal;
+this degradation applies only to the closed pre-secret process-verifier failure.

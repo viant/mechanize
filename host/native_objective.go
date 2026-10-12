@@ -25,6 +25,10 @@ func nativePredicateError(err error) error {
 	switch helper.Code {
 	case "incompleteObservation", "targetNotFound", "attributeUnavailable":
 		return errors.Join(err, &model.MechanizeError{Code: helper.Code, Message: helper.Message, Stage: helper.Stage, RetryableRead: helper.RetryableRead, DispatchState: helper.DispatchState})
+	case "valueComparisonDenied", "valueComparisonUnavailable":
+		// Preserve only a fixed read diagnostic; never forward helper text or
+		// make these failures retryable or eligible for dispatch.
+		return errors.Join(err, &model.MechanizeError{Code: helper.Code, Stage: "native", DispatchState: "notDispatched"})
 	default:
 		return err
 	}
@@ -38,6 +42,15 @@ func (h *Host) nativeObjective(c Config) (*objective.Evaluator, error) {
 			return nil, err
 		}
 		enrolled["native"] = adapter.Enrollment()
+		for _, contract := range c.NativeEffectReconciliation {
+			if contract == nativeQuitContract {
+				process, err := objective.NewNativeProcessExit(h.readNativeProcessExit)
+				if err != nil {
+					return nil, err
+				}
+				enrolled["nativeProcess"] = process.Enrollment()
+			}
+		}
 	}
 	if h.chrome != nil && h.webControl != nil {
 		adapter, err := objective.NewWebWithOptions(objective.WebOptions{Read: h.readWebPredicate, ResolveIdentity: h.resolveWebPostconditionIdentity})

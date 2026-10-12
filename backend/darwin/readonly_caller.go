@@ -93,7 +93,7 @@ func (r *ReadOnlyCaller) prepare(ctx context.Context) (uint64, error) {
 }
 func readonlyMethod(method string) bool {
 	switch method {
-	case "doctor", "apps.list", "windows.list", "elements.snapshot", "elements.read", "elements.valueMatches":
+	case "controlBadge.begin", "controlBadge.renew", "controlBadge.end", "controlBadge.stop", "controlBadge.releaseSession", "input.releasedState", "doctor", "apps.list", "app.exitStatus", "windows.list", "elements.snapshot", "elements.read", "elements.valueMatches":
 		return true
 	}
 	return false
@@ -106,6 +106,14 @@ func (r *ReadOnlyCaller) Call(ctx context.Context, request Request) (Reply, erro
 		return Reply{}, err
 	}
 	defer r.leave()
+	if request.Method == "controlBadge.releaseSession" {
+		r.mu.Lock()
+		invalid := r.invalid || r.closed
+		r.mu.Unlock()
+		if invalid {
+			return Reply{}, nativeError("badgeUnavailable", "Original presentation connection unavailable")
+		}
+	}
 	if _, err := r.prepare(ctx); err != nil {
 		return Reply{}, err
 	}

@@ -23,13 +23,17 @@ type Lease struct {
 	Generation uint64 `json:"generation"`
 }
 type GatewayOptions struct {
-	Lease func(context.Context, auth.Principal) (Lease, error)
+	ControllerPolicies ControllerPolicyStore
+	Lease              func(context.Context, auth.Principal) (Lease, error)
 }
 type Gateway struct {
+	controllerMu      sync.Mutex
+	privacyMu         sync.Mutex
 	admissionLane     chan struct{}
 	controlMu         sync.Mutex
 	control           *ControlAuthority
 	controlRetiring   bool
+	navigationRetired *ControlAuthority
 	controlGeneration uint64
 	broker            *Broker
 	options           GatewayOptions
@@ -42,6 +46,7 @@ func NewGateway(broker *Broker, options GatewayOptions) (*Gateway, error) {
 	if broker == nil {
 		return nil, errors.New("Chrome broker required")
 	}
+
 	return &Gateway{admissionLane: make(chan struct{}, 1), broker: broker, options: options, observations: map[string]model.Observation{}}, nil
 }
 func (g *Gateway) Close() error { return g.broker.Close() }
@@ -113,6 +118,67 @@ func (g *Gateway) CapabilitiesFor(ctx context.Context, p auth.Principal) ([]mode
 	for _, name := range []string{"element.press", "element.fill", "browser.navigate", "browser.activate", "recording", "nameLocator", "textLocator", "cssLocator", "frameScope", "windowScope", "ancestorScope", "orderedQuery", "checkedObservation", "trustedInput", "fileSelection"} {
 		capabilities = append(capabilities, model.Capability{Name: name, Surface: "web", Supported: false})
 	}
+	playwrightReady := false
+	if ready && g.broker.playwright != nil {
+		g.broker.mu.Lock()
+		for _, c := range g.broker.channels {
+			if c.grant.Principal.Namespace == p.Namespace && c.conn != nil && c.playwrightRelayVersion == 1 && !c.fixtureOnly && c.executorQualified && channelScopeQualified(c) {
+				playwrightReady = true
+			}
+		}
+		g.broker.mu.Unlock()
+	}
+	indexedReady := false
+	if playwrightReady {
+		g.broker.mu.Lock()
+		for _, c := range g.broker.channels {
+			if c.grant.Principal.Namespace == p.Namespace && c.conn != nil && g.broker.playwrightReady(c) && c.playwrightLocatorVersion == 1 && channelScopeQualified(c) && c.executorQualified {
+				indexedReady = true
+			}
+		}
+		g.broker.mu.Unlock()
+	}
+	capabilities = append(capabilities, model.Capability{Name: "indexedQuery", Surface: "web", Supported: indexedReady, Reason: "Qualified local Playwright exact nth locator in document order; plural all reads remain unavailable"})
+	capabilities = append(capabilities, model.Capability{Name: "localPlaywright", Surface: "web", Supported: playwrightReady, Reason: "Hash-qualified local Node runtime and enrolled extension relay; exact typed actions only"})
+	openReady := false
+	if g != nil && g.broker != nil {
+		b := g.broker
+		b.mu.Lock()
+		candidates := []*channel{}
+		for _, c := range b.channels {
+			if c.grant.Principal.Namespace == p.Namespace && c.openOriginVersion == 1 && openOriginIdle(c) {
+				candidates = append(candidates, c)
+			}
+		}
+		b.mu.Unlock()
+		if p.HasScope("desktop:control") && actual.HasScope("desktop:control") {
+			for _, c := range candidates {
+				if b.checkChannelProcess(ctx, c, false) == nil {
+					openReady = true
+					break
+				}
+			}
+		}
+	}
+	activateReady := false
+	if g != nil && g.broker != nil && p.HasScope("desktop:control") && actual.HasScope("desktop:control") {
+		g.broker.mu.Lock()
+		var candidates []*channel
+		for _, c := range g.broker.channels {
+			if c.grant.Principal.Namespace == p.Namespace && c.tabMetadataVersion == 1 && openOriginIdle(c) {
+				candidates = append(candidates, c)
+			}
+		}
+		g.broker.mu.Unlock()
+		for _, c := range candidates {
+			if g.broker.checkChannelProcess(ctx, c, false) == nil {
+				activateReady = true
+				break
+			}
+		}
+	}
+	capabilities = append(capabilities, model.Capability{Name: "browser.activateTab", Surface: "web", Supported: activateReady, Reason: "Exact owned tab visibility only; protected content remains unavailable"})
+	capabilities = append(capabilities, model.Capability{Name: "browser.openOrigin", Surface: "web", Supported: openReady, Reason: "Approved origin in one new background tab; no source document or foreground required"})
 	return capabilities, nil
 }
 func authorize(ctx context.Context, p auth.Principal, mutation bool) error {
@@ -159,7 +225,7 @@ func (b *Broker) selectDocument(p auth.Principal, surface model.Surface) (*chann
 			continue
 		}
 		for _, d := range c.documents {
-			if d.FrameID != 0 || (surface.Origin != "" && d.Origin != surface.Origin) || (surface.Title != "" && (d.TitleTruncated || d.Title != surface.Title)) || (surface.TabID != "" && strconv.Itoa(d.TabID) != surface.TabID && d.QualifiedTabID() != surface.TabID) {
+			if !allowedOrigin(c.grant, d.Origin) || d.FrameID != 0 || (surface.Origin != "" && d.Origin != surface.Origin) || (surface.Title != "" && (d.TitleTruncated || d.Title != surface.Title)) || (surface.TabID != "" && strconv.Itoa(d.TabID) != surface.TabID && d.QualifiedTabID() != surface.TabID) {
 				continue
 			}
 			selected, document = c, d
@@ -193,14 +259,33 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 	if c == nil {
 		return Reply{}, browserError("channelUnqualified", "Exact enrolled channel required", "notDispatched")
 	}
+	if command.Locator != nil && command.Locator.Index != nil {
+		b.mu.Lock()
+		qualified := b.playwrightReady(c) && c.playwrightLocatorVersion == 1
+		b.mu.Unlock()
+		if !qualified {
+			return Reply{}, browserError("orderedLocatorUnqualified", "Local Playwright ordered locator negotiation unavailable", "notDispatched")
+		}
+	}
 	if err := ctx.Err(); err != nil {
-		return Reply{}, err
+		return Reply{}, dispatchGateFailure(err)
+	}
+	if command.PublicRead {
+		b.mu.Lock()
+		valid := publicReadPermitLocked(ctx, c, command, mutation) != nil
+		b.mu.Unlock()
+		if !valid {
+			return Reply{}, browserError("privateDOMUnavailable", "Explicit public read requires its current server-owned permit", "notDispatched")
+		}
+	}
+	if err := b.guardPrivacyCommand(ctx, c, command, mutation); err != nil {
+		return Reply{}, browserError("privateDOMUnavailable", "Private document qualification rejected the command before transport write", "notDispatched")
 	}
 	if err := b.verifyChannelProcess(ctx, c); err != nil {
 		return Reply{}, browserError("channelUnqualified", "Signed native-host/Chrome channel proof unavailable", "notDispatched")
 	}
 	b.mu.Lock()
-	scopeQualified := channelScopeQualified(c) && c.executorQualified
+	scopeQualified := channelScopeQualified(c) && c.executorQualified && (publicReadPermitLocked(ctx, c, command, mutation) != nil || scopeDisjointLocked(c, command.Identity) || c.privateInspection == nil && c.privateFlow == nil && c.privateCredential == nil && c.privateAdvance == nil)
 	b.mu.Unlock()
 	if !scopeQualified {
 		return Reply{}, browserError("profileUnqualified", "Profile enrollment and executor quiescence are not qualified", "notDispatched")
@@ -213,12 +298,12 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 		case b.lane <- struct{}{}:
 			defer func() { <-b.lane }()
 		case <-ctx.Done():
-			return Reply{}, ctx.Err()
+			return Reply{}, dispatchGateFailure(ctx.Err())
 		}
 	}
 	for _, check := range beforeSend {
 		if err := check(); err != nil {
-			return Reply{}, err
+			return Reply{}, dispatchGateFailure(err)
 		}
 	}
 	command.RequestID = newID()
@@ -230,6 +315,9 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 	deadline := time.Now().Add(30 * time.Second)
 	if value, ok := ctx.Deadline(); ok && value.Before(deadline) {
 		deadline = value
+	}
+	if permit, _ := ctx.Value(credentialPublicReadKey{}).(*credentialPublicReadPermit); permit != nil && permit.expires.Before(deadline) {
+		deadline = permit.expires
 	}
 	command.DeadlineUnixMS = deadline.UnixMilli()
 	if seal != nil {
@@ -259,15 +347,30 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 			return Reply{}, browserError("bindingUnconfirmed", "Exact mutation binding commit/readback is unconfirmed", "notDispatched")
 		}
 		if err = ctx.Err(); err != nil {
-			return Reply{}, err
+			return Reply{}, dispatchGateFailure(err)
 		}
 		for _, check := range beforeSend {
 			if err = check(); err != nil {
-				return Reply{}, err
+				return Reply{}, dispatchGateFailure(err)
 			}
 		}
 	}
 
+	// Classified public reads use the existing semantic renderer read path;
+	// this context never enables a CDP relay or mutation authority.
+	b.mu.Lock()
+	semanticPublicRead := publicReadPermitLocked(ctx, c, command, mutation) != nil
+	command.PublicRead = semanticPublicRead && c.credentialPublicReadVersion == 2
+	b.mu.Unlock()
+	if ctx.Value(credentialPublicReadKey{}) != nil && !semanticPublicRead {
+		return Reply{}, browserError("privateDOMUnavailable", "Public read permit expired or changed before transport", "notDispatched")
+	}
+	if b.playwright != nil && playwrightSupported(command) && !semanticPublicRead {
+		return b.callPlaywright(ctx, c, command, mutation, seal != nil, beforeSend...)
+	}
+	var endBadge func()
+	ctx, endBadge = b.beginControlBadge(ctx, c, command.Identity)
+	defer endBadge()
 	b.mu.Lock()
 	if c.lifecycleInhibited {
 		b.mu.Unlock()
@@ -293,7 +396,7 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 		b.mu.Unlock()
 		return Reply{}, browserError("requestCapacity", "Too many pending Chrome commands", "notDispatched")
 	}
-	p := &pending{command: command, mutation: mutation, done: make(chan Reply, 1)}
+	p := &pending{command: command, mutation: mutation, done: make(chan Reply, 1), publicReadContext: ctx}
 	c.pending[command.RequestID] = p
 	if mutation {
 		retained := command
@@ -328,6 +431,14 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 				err = browserError("bindingUnconfirmed", "Prepared logical mutation binding changed", "notDispatched")
 			}
 		}
+		if err == nil && ctx.Value(credentialPublicReadKey{}) != nil {
+			b.mu.Lock()
+			current := publicReadPermitLocked(ctx, c, command, mutation) != nil
+			b.mu.Unlock()
+			if !current {
+				err = scopeFailure("scopeChanged")
+			}
+		}
 		attempted := err == nil
 		if attempted {
 			err = WriteFrame(conn, command)
@@ -347,7 +458,7 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 				delete(c.unknown, command.AttemptID)
 			}
 			b.mu.Unlock()
-			return Reply{}, browserError("dispatchGateClosed", "Pinned authority or signed channel changed before transport write", "notDispatched")
+			return Reply{}, dispatchGateFailure(err)
 		}
 	case <-ctx.Done():
 		conn.Close()
@@ -376,8 +487,33 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 		return Reply{}, browserError("deadlineExceeded", "Chrome receipt deadline exceeded; never replay mutation", uncertain(mutation))
 	}
 }
+
+// Dispatch failures before a write have known absence of input. Report only
+// closed local categories, never a peer/provider error message or page data.
+func dispatchGateFailure(err error) *model.MechanizeError {
+	code := "dispatchGateClosed"
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		code = "dispatchGateExpired"
+	case errors.Is(err, context.Canceled):
+		code = "dispatchGateCancelled"
+	case errors.Is(err, auth.ErrUnauthorized):
+		code = "dispatchGateUnauthorized"
+	default:
+		var detail *model.MechanizeError
+		if errors.As(err, &detail) && detail.Code == "staleAuthority" {
+			code = "dispatchAuthorityChanged"
+			if detail.Message == "Pinned document changed" {
+				code = "dispatchDocumentChanged"
+			} else if detail.Message == "Connected channel evidence changed" {
+				code = "dispatchChannelChanged"
+			}
+		}
+	}
+	return browserError(code, "Dispatch admission failed before transport write", "notDispatched")
+}
 func (g *Gateway) observe(ctx context.Context, p auth.Principal, surface model.Surface) (model.Observation, *channel, Document, error) {
-	c, d, err := g.broker.selectDocument(p, surface)
+	c, d, err := g.broker.selectReadDocument(ctx, p, surface)
 	if err != nil {
 		return model.Observation{}, nil, Document{}, err
 	}
@@ -422,7 +558,7 @@ func compileLocator(selector model.Selector, bindings map[string]model.Value) (*
 	if selector.Ancestor != nil || len(selector.Scope.Frame) > 0 || len(selector.Scope.Window) > 0 {
 		return nil, browserError("unsupportedScope", "Only enrolled root document scope is qualified", "notDispatched")
 	}
-	if selector.Locator == nil || !selector.Locator.Exact || selector.Cardinality != "one" {
+	if selector.Locator == nil || !selector.Locator.Exact || selector.Cardinality != "one" && selector.Cardinality != "nth" {
 		return nil, browserError("unsupportedLocator", "Exact cardinality-one locator required", "notDispatched")
 	}
 	l := selector.Locator
@@ -434,6 +570,17 @@ func compileLocator(selector model.Selector, bindings map[string]model.Value) (*
 		return nil, browserError("invalidLocator", "Locator must resolve to string", "notDispatched")
 	}
 	out := &Locator{Strategy: l.Strategy, Value: value.String, Exact: true}
+	if selector.Cardinality == "nth" {
+		if selector.Index == nil || *selector.Index < 0 || *selector.Index > 999 || selector.Order != "document" {
+			return nil, browserError("unsupportedOrdering", "Web nth requires bounded document ordering", "notDispatched")
+		}
+		index := *selector.Index
+		out.Index = &index
+		out.Order = selector.Order
+	} else if selector.Index != nil || selector.Order != "" {
+		return nil, browserError("unsupportedOrdering", "Strict unique selector cannot carry ordering", "notDispatched")
+	}
+
 	if l.Name != nil {
 		name, e := model.ResolveValue(*l.Name, bindings)
 		if e != nil || name.Kind != model.StringValue {
@@ -628,6 +775,9 @@ func (b *Broker) QueryReceipt(ctx context.Context, p auth.Principal, attemptID s
 // Called only with b.mu held. History is checked both before the commit callback
 // and after it so persistence cannot erase original receipts or uncertainty.
 func (b *Broker) mutationHistoryLocked(c *channel, command Command) (*Reply, error) {
+	if c.visibilityUnknown[command.AttemptID] != nil {
+		return nil, browserError("attemptConflict", "Attempt belongs to a retained browser visibility operation", "notDispatched")
+	}
 	if previous, exists := c.attempts[command.AttemptID]; exists {
 		if previous.FingerprintVersion != command.FingerprintVersion || previous.FingerprintVersion == 2 && previous.FingerprintSHA256 != command.FingerprintSHA256 || previous.FingerprintVersion != 2 && (previous.Action != command.Action || !reflect.DeepEqual(previous.Locator, command.Locator) || !reflect.DeepEqual(previous.Args, command.Args)) {
 			return nil, browserError("attemptConflict", "Attempt already bound to different mutation arguments", "unknown")
@@ -641,7 +791,7 @@ func (b *Broker) mutationHistoryLocked(c *channel, command Command) (*Reply, err
 		return nil, browserError("unknownEffect", "Attempt already dispatched without a receipt; query/reconcile, never replay", "unknown")
 	}
 	for _, other := range b.channels {
-		if len(other.unknown) > 0 {
+		if domUnknownBlockedLocked(other) {
 			return nil, browserError("unknownEffect", "Prior browser mutation has unknown outcome; reconcile it first", "unknown")
 		}
 	}

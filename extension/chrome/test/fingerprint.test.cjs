@@ -49,3 +49,10 @@ test('v2 is packaged for injection and exposes only digest API',()=>{
   assert.equal(worker.includes('fingerprint.js'),true);
   assert.equal(content.includes('JSON.stringify({...command, requestId:null, deadlineUnixMs:null})'),true);
 });
+test('indexed exact locator binds document order and index without changing unindexed golden hashes',async()=>{
+ const original=structuredClone(vectors.cases[0].command);const baseline=await fingerprint(original);
+ const zero=structuredClone(original);zero.locator.index=0;zero.locator.order='document';const one=structuredClone(zero);one.locator.index=1;
+ assert.notEqual((await fingerprint(zero)).sha256,baseline.sha256);assert.notEqual((await fingerprint(one)).sha256,(await fingerprint(zero)).sha256);
+ for(const patch of [{index:0},{order:'document'},{index:-1,order:'document'},{index:1000,order:'document'},{index:0,order:'visual'},{index:0.5,order:'document'}]){const c=structuredClone(original);Object.assign(c.locator,patch);await assert.rejects(()=>fingerprint(c));}
+ assert.equal((await fingerprint(original)).sha256,baseline.sha256);
+});

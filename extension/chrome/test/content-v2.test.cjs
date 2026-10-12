@@ -9,7 +9,7 @@ function fixture(version=2){
  const dom=new JSDOM('<button id="save">Save</button><input id="field">',{url:'https://fixture.test',runScripts:'outside-only'}),w=dom.window,listeners=[];
  w.TextEncoder=TextEncoder;Object.defineProperty(w,'crypto',{value:webcrypto,configurable:true});w.HTMLElement.prototype.getClientRects=()=>[{width:100,height:20}];
  w.chrome={runtime:{id:'fixture',onMessage:{addListener:f=>listeners.push(f)}}};
- for(const file of ['protocol.js','fingerprint.js','dom.js','recorder.js','content.js'])w.eval(fs.readFileSync(path.join(__dirname,'..',file),'utf8'));
+ for(const file of ['protocol.js','fingerprint.js','accessibility-provider.js','dom.js','recorder.js','content.js'])w.eval(fs.readFileSync(path.join(__dirname,'..',file),'utf8'));
  const binding={identity,brokerEpoch:'broker1',channelEpoch:'channel1',scopeHash:'a'.repeat(64),leaseRequired:true,mutationFingerprintVersion:version};
  const send=message=>new Promise(resolve=>listeners[0](message,{id:'fixture'},resolve));
  const command=(action,extra={})=>({requestId:'request1',action,identity,brokerEpoch:binding.brokerEpoch,channelEpoch:binding.channelEpoch,scopeHash:binding.scopeHash,deadlineUnixMs:Date.now()+5000,...extra});
@@ -24,6 +24,19 @@ test('negotiated v2 press/fill retain exact digest receipts and execute once',as
  const queried=await f.send(f.command('receipt.query',{attemptId:cmd.attemptId}));assert.equal(queried.fingerprintVersion,2);assert.equal(queried.fingerprintSHA256,cmd.fingerprintSHA256);
  const filled=await f.mutation('element.fill',{attemptId:'b'.repeat(64),args:{value:'nonsecret "literal" <&>\u2028'}});const result=await f.send(filled);assert.equal(result.dispatchState,'dispatched');assert.equal(f.w.document.querySelector('#field').value,filled.args.value);
  const exported=await f.send(f.command('executor.receipts',{args:{offset:0,limit:64}}));assert.equal(exported.version,2);assert.equal(exported.receipts[0].fingerprintVersion,2);assert.equal(exported.receipts[0].fingerprintSHA256,cmd.fingerprintSHA256);assert.equal(JSON.stringify(exported).includes(filled.args.value),false);
+});
+
+test('pointer failures expose only closed reason codes without page or provider details',async t=>{
+ for(const mode of ['geometry','transport','untrusted']) {
+  const f=fixture();t.after(f.close);await f.ready();let forwarded=0;
+  f.w.chrome.runtime.getManifest=()=>({permissions:['debugger']});
+  f.w.MechanizeDOM.protocolClickPoint=async()=>{if(mode==='geometry')throw {code:'targetNotActionable',message:'PRIVATE-CANARY'};return {x:1,y:1};};
+  f.w.chrome.runtime.sendMessage=async()=>{forwarded++;return {dispatchState:'notDispatched',effectState:'none',errorCode:mode==='untrusted'?'PRIVATE-CANARY':'browserInputDenied',message:'PRIVATE-CANARY'};};
+  const result=await f.send(await f.mutation());
+  assert.equal(result.error.code,mode==='geometry'?'targetNotActionable':mode==='transport'?'browserInputDenied':'dispatchFailure');
+  assert.equal(result.error.dispatchState,'notDispatched');assert.equal(forwarded,mode==='geometry'?0:1);
+  assert.equal(JSON.stringify(result).includes('CANARY'),false);
+ }
 });
 test('v2 payload substitution or legacy mutation cannot act on negotiated executor',async t=>{
  const f=fixture();t.after(f.close);await f.ready();let clicks=0;f.w.document.querySelector('#save').addEventListener('click',()=>clicks++);

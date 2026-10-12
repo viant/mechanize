@@ -16,6 +16,7 @@ import (
 // channel. Capture before mutation; a retired mutation lease cannot erase it.
 // No wire field can construct this binding or turn it into dispatch authority.
 type ReadBinding struct {
+	allWebsites                                                            bool
 	broker                                                                 *Broker
 	channel                                                                *channel
 	owner, clientID, extensionOrigin, brokerEpoch, channelEpoch, scopeHash string
@@ -74,10 +75,13 @@ func (g *Gateway) captureReadBinding(ctx context.Context, p auth.Principal, c *c
 			matches++
 		}
 	}
+	if permit := publicReadPermitLocked(ctx, c, Command{Action: "read", Identity: d.Identity}, false); permit != nil {
+		matches = 1
+	}
 	if matches != 1 {
 		return ReadBinding{}, browserError("staleIdentity", "Exact original document unavailable", "notDispatched")
 	}
-	return ReadBinding{trustScope: c.grant.TrustScope, scopeQualified: channelScopeQualified(c), broker: g.broker, channel: c, owner: p.Namespace, clientID: p.ClientID, extensionOrigin: c.grant.ExtensionOrigin, brokerEpoch: g.broker.epoch, channelEpoch: c.epoch, scopeHash: c.scopeHash, document: d, nativeHost: c.processEvidence.NativeHost, chromeParent: c.processEvidence.ChromeParent}, nil
+	return ReadBinding{allWebsites: c.grant.AllWebsites, trustScope: c.grant.TrustScope, scopeQualified: channelScopeQualified(c), broker: g.broker, channel: c, owner: p.Namespace, clientID: p.ClientID, extensionOrigin: c.grant.ExtensionOrigin, brokerEpoch: g.broker.epoch, channelEpoch: c.epoch, scopeHash: c.scopeHash, document: d, nativeHost: c.processEvidence.NativeHost, chromeParent: c.processEvidence.ChromeParent}, nil
 }
 
 // PinReadDocument selects once for a standalone read. For a mutation's later
@@ -86,7 +90,7 @@ func (g *Gateway) PinReadDocument(ctx context.Context, p auth.Principal, surface
 	if err := authorize(ctx, p, false); err != nil {
 		return ReadBinding{}, err
 	}
-	c, d, err := g.broker.selectDocument(p, surface)
+	c, d, err := g.broker.selectReadDocument(ctx, p, surface)
 	if err != nil {
 		return ReadBinding{}, err
 	}
@@ -116,7 +120,7 @@ func (g *Gateway) checkReadBinding(ctx context.Context, p auth.Principal, pin Re
 	g.broker.mu.Lock()
 	defer g.broker.mu.Unlock()
 	c := pin.channel
-	if c.fixtureOnly || c.conn == nil || g.broker.closed || c.processEvidence == nil || !c.processEvidence.KernelPeerQualified || !channelScopeQualified(c) || !pin.scopeQualified || pin.trustScope != c.grant.TrustScope || !c.executorQualified || !c.inventoryComplete || c.grant.Principal.Namespace != pin.owner || g.broker.epoch != pin.brokerEpoch || c.epoch != pin.channelEpoch || c.scopeHash != pin.scopeHash || c.grant.ExtensionOrigin != pin.extensionOrigin || c.processEvidence.NativeHost != pin.nativeHost || c.processEvidence.ChromeParent != pin.chromeParent {
+	if c.grant.AllWebsites != pin.allWebsites || !allowedOrigin(c.grant, pin.document.Origin) || c.fixtureOnly || c.conn == nil || g.broker.closed || c.processEvidence == nil || !c.processEvidence.KernelPeerQualified || !channelScopeQualified(c) || !pin.scopeQualified || pin.trustScope != c.grant.TrustScope || !c.executorQualified || !c.inventoryComplete || c.grant.Principal.Namespace != pin.owner || g.broker.epoch != pin.brokerEpoch || c.epoch != pin.channelEpoch || c.scopeHash != pin.scopeHash || c.grant.ExtensionOrigin != pin.extensionOrigin || c.processEvidence.NativeHost != pin.nativeHost || c.processEvidence.ChromeParent != pin.chromeParent {
 		return Document{}, browserError("staleIdentity", "Original signed document channel changed", "notDispatched")
 	}
 	var found Document
@@ -126,6 +130,10 @@ func (g *Gateway) checkReadBinding(ctx context.Context, p auth.Principal, pin Re
 			found = d
 			matches++
 		}
+	}
+	if permit := publicReadPermitLocked(ctx, c, Command{Action: "read", Identity: pin.document.Identity}, false); permit != nil {
+		matches = 1
+		found = permit.document
 	}
 	if matches != 1 {
 		return Document{}, browserError("staleIdentity", "Original root document replaced or unavailable", "notDispatched")
@@ -159,7 +167,14 @@ func (g *Gateway) ReadPinned(ctx context.Context, p auth.Principal, pin ReadBind
 	if surface.Title != "" && (d.TitleTruncated || surface.Title != d.Title) {
 		return failure(browserError("staleIdentity", "Pinned document title constraint changed", "notDispatched"))
 	}
+	// The original read pin remains the authority. Only an active private local
+	// semantic execution receives this context-aware recheck; ordinary reads keep
+	// full verification and callers cannot construct the pin or context key.
+	ctx = context.WithValue(ctx, playwrightControlCheckKey{}, func(checkCtx context.Context) error { _, e := g.checkReadBinding(checkCtx, p, pin); return e })
 	check := func() error { _, err := g.checkReadBinding(ctx, p, pin); return err }
+	var endBadge func()
+	ctx, endBadge = g.broker.beginControlBadge(ctx, pin.channel, d.Identity)
+	defer endBadge()
 	observed, err := g.broker.call(ctx, pin.channel, Command{Action: "observe", Identity: d.Identity, Args: map[string]any{"limit": 1}}, false, check)
 	if err != nil {
 		return failure(err)
@@ -185,9 +200,14 @@ func (g *Gateway) ReadPinned(ctx context.Context, p auth.Principal, pin ReadBind
 	if reply.Value == nil || *reply.Value == "[redacted]" {
 		return failure(browserError("attributeUnavailable", "Protected web read unavailable or redacted", "notDispatched"))
 	}
-	// The current DOM protocol normalizes whitespace and slices strings at 256
-	// UTF-16 units without a truncation flag. Never confirm equality at that boundary.
-	if len(utf16.Encode([]rune(*reply.Value))) >= 256 {
+	// Only the exact-value renderer protocol certifies complete, unnormalized
+	// strings. The signal is received on the same authenticated, identity-bound
+	// exchange above; old renderers retain their conservative truncation guard.
+	if reply.ValueReadVersion != 0 || reply.ValueReadBytes != nil {
+		if attribute != "value" || reply.ValueReadVersion != 1 || reply.ValueReadBytes == nil || *reply.ValueReadBytes != len(*reply.Value) || len(*reply.Value) > 32768 {
+			return failure(browserError("readCoverageUnknown", "Exact value read completeness could not be verified", "notDispatched"))
+		}
+	} else if len(utf16.Encode([]rune(*reply.Value))) >= 256 {
 		return failure(browserError("readCoverageUnknown", "Web read reached its unqualified truncation boundary", "notDispatched"))
 	}
 	proof := pin.Identity()

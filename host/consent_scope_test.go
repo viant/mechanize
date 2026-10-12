@@ -102,7 +102,7 @@ func TestRealConsentLeasePreservesWebRendererAuthorityAndRevocation(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	decision, _ := json.Marshal(map[string]any{"requestID": request.ID, "decision": consent.AllowSession})
+	decision, _ := json.Marshal(map[string]any{"requestID": request.ID, "decision": consent.AllowUntilRevoked})
 	value, err := h.consent.NativeRPC(human, "decide", decision)
 	if err != nil {
 		t.Fatal(err)
@@ -119,8 +119,23 @@ func TestRealConsentLeasePreservesWebRendererAuthorityAndRevocation(t *testing.T
 	f.manager.options.Authorize = func(ctx context.Context, p auth.Principal, s model.Surface) (*consent.Lease, error) {
 		return h.AuthorizeOperation(ctx, p, s, true, consent.Control)
 	}
+	h.webControl = f.manager
+	unbound := binding
+	unbound.GrantID = ""
+	f.ctx = auth.WithConsentBinding(f.ctx, unbound)
 	withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
-		prepared := prepareWeb(t, f, ctx, p, step)
+		prepared, epoch, err := h.prepareStepExecutor(ctx, p, step)
+		if err != nil || epoch != int(f.ready.Authority.Generation) {
+			t.Fatal("permanent web preparation", epoch, err)
+		}
+		selected, ok := auth.ConsentBindingFromContext(prepared)
+		if !ok || selected != binding {
+			t.Fatal("reusable grant not pinned before intent")
+		}
+		prepared, err = data.WithScope(prepared, data.Scope{Namespace: p.Namespace, LeaseEpoch: epoch})
+		if err != nil {
+			t.Fatal(err)
+		}
 		meta, ok := automation.ExecutionFromContext(prepared)
 		if !ok {
 			t.Fatal("Endly metadata absent")

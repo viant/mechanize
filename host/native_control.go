@@ -37,6 +37,7 @@ type NativeControlReadiness struct {
 	SemanticQualified         bool
 	TargetedKeyboardQualified bool
 	SessionKeyboardQualified  bool
+	SessionTextQualified      bool
 	WindowFrameClickQualified bool
 	SecureInputEnabled        bool
 	QualifiedBundles          []string
@@ -44,12 +45,16 @@ type NativeControlReadiness struct {
 	ValidUntil                time.Time
 }
 type NativeControlOptions struct {
+	// Trusted read-only native proof; never a caller-provided cleanup assertion.
+	ReleasedInputProof func(context.Context, auth.Principal) error
+	ConsoleLaunch      *native.ConsoleLaunchOptions
 	// LaunchOnly grants no AX, keyboard, pointer or activation authority.
 	LaunchOnly bool
 	// SemanticOnly is a development AX-only route, with no Quartz input authority.
 	SemanticOnly     bool
 	TargetedKeyboard bool
 	SessionKeyboard  bool
+	SessionText      bool
 	WindowFrameClick bool
 	// One fixed shared login-desktop path, never derived from principal namespace.
 	LockPath   string
@@ -98,7 +103,7 @@ type NativeControlManager struct {
 }
 
 func NewNativeControlManager(options NativeControlOptions) (*NativeControlManager, error) {
-	if (options.TargetedKeyboard || options.SessionKeyboard || options.WindowFrameClick) && (!options.SemanticOnly || options.LaunchOnly) {
+	if (options.TargetedKeyboard || options.SessionKeyboard || options.SessionText || options.WindowFrameClick) && (!options.SemanticOnly || options.LaunchOnly) {
 		return nil, errors.New("native input routes require semantic composite enrollment")
 	}
 	if options.LaunchOnly && options.SemanticOnly {
@@ -114,6 +119,7 @@ func NewNativeControlManager(options NativeControlOptions) (*NativeControlManage
 		uid := *options.ExpectedUID
 		options.ExpectedUID = &uid
 		options.HelperFactory = func(ctx context.Context, opts native.Options) (NativeControlHelper, error) {
+			opts.Console = options.ConsoleLaunch
 			opts.Requirement = options.HelperRequirement
 			opts.ExpectedUID = options.ExpectedUID
 			return native.NewClient(ctx, opts)
@@ -219,6 +225,15 @@ func (m *NativeControlManager) AdmitScope(ctx context.Context, requested auth.Pr
 		return NativeControlAdmission{Gateway: m.held.gateway, Epoch: int(lease.Generation)}, nil
 	}
 	lease, err := m.supervisor.Acquire(bounded, actual, scope)
+	if errors.Is(err, session.ErrCleanupUnknown) && m.options.ReleasedInputProof != nil {
+		_, recoveryErr := m.supervisor.ReconcileReleasedInput(bounded, actual, func(proofCtx context.Context, _ session.Lease, _ session.ProcessIdentity) error {
+			return m.options.ReleasedInputProof(proofCtx, actual)
+		})
+		if recoveryErr != nil {
+			return NativeControlAdmission{}, errors.Join(err, recoveryErr)
+		}
+		lease, err = m.supervisor.Acquire(bounded, actual, scope)
+	}
 	if err != nil {
 		return NativeControlAdmission{}, err
 	}
@@ -231,7 +246,7 @@ func (m *NativeControlManager) AdmitScope(ctx context.Context, requested auth.Pr
 	// helper ahead of the manager's independent cleanup/reap deadline. Keep
 	// identity/context values while giving process teardown its own lifetime.
 	life, lifeCancel := context.WithCancel(context.WithoutCancel(m.options.Owner))
-	helper, err := m.options.HelperFactory(life, native.Options{HelperPath: m.options.HelperPath, AllowMutations: !m.options.LaunchOnly && !m.options.SemanticOnly, AllowLaunch: m.options.LaunchOnly, AllowSemantic: m.options.SemanticOnly, AllowTargetedKeyboard: m.options.TargetedKeyboard, AllowSessionKeyboard: m.options.SessionKeyboard, AllowWindowFrameClick: m.options.WindowFrameClick, Fence: fence, Stderr: m.options.Stderr})
+	helper, err := m.options.HelperFactory(life, native.Options{HelperPath: m.options.HelperPath, AllowMutations: !m.options.LaunchOnly && !m.options.SemanticOnly, AllowLaunch: m.options.LaunchOnly, AllowSemantic: m.options.SemanticOnly, AllowTargetedKeyboard: m.options.TargetedKeyboard, AllowSessionKeyboard: m.options.SessionKeyboard, AllowSessionText: m.options.SessionText, AllowWindowFrameClick: m.options.WindowFrameClick, Fence: fence, Stderr: m.options.Stderr})
 	if err != nil && helper == nil {
 		lifeCancel()
 		_, cleanupErr := m.supervisor.Close(context.Background())
@@ -259,7 +274,7 @@ func (m *NativeControlManager) AdmitScope(ctx context.Context, requested auth.Pr
 	// Public process identity and exact executable/UID are independently checked
 	// by Supervisor before its inherited record can enable native dispatch.
 	profile := session.InputProfileRaw
-	if m.options.SemanticOnly && !m.options.TargetedKeyboard && !m.options.SessionKeyboard && !m.options.WindowFrameClick {
+	if m.options.SemanticOnly && !m.options.TargetedKeyboard && !m.options.SessionKeyboard && !m.options.SessionText && !m.options.WindowFrameClick {
 		profile = session.InputProfileSemantic
 	}
 	if m.options.LaunchOnly {
@@ -316,7 +331,7 @@ func (m *NativeControlManager) qualify(ctx context.Context, p auth.Principal, he
 			return ErrNativeControlUnqualified
 		}
 	} else if m.options.SemanticOnly {
-		if !ready.SemanticQualified || !ready.Accessibility || ready.SecureInputEnabled || (m.options.TargetedKeyboard && (!ready.TargetedKeyboardQualified || !ready.EventPost) || m.options.SessionKeyboard && (!ready.SessionKeyboardQualified || !ready.EventPost) || m.options.WindowFrameClick && (!ready.WindowFrameClickQualified || !ready.EventPost)) {
+		if !ready.SemanticQualified || !ready.Accessibility || ready.SecureInputEnabled || (m.options.TargetedKeyboard && (!ready.TargetedKeyboardQualified || !ready.EventPost) || m.options.SessionKeyboard && (!ready.SessionKeyboardQualified || !ready.EventPost) || m.options.SessionText && (!ready.SessionTextQualified || !ready.EventPost) || m.options.WindowFrameClick && (!ready.WindowFrameClickQualified || !ready.EventPost)) {
 			return ErrNativeControlUnqualified
 		}
 	} else if !ready.Unlocked || !ready.Accessibility || !ready.EventPost || !ready.MutationQualified {
@@ -480,7 +495,7 @@ func (c *nativeControlCaller) Call(ctx context.Context, request native.Request) 
 	}
 	switch request.Method {
 	case "doctor", "apps.list":
-	case "windows.captureFrame", "windows.clickFrame", "windows.list", "windows.setPosition", "windows.pressSessionKey", "elements.snapshot", "elements.read", "elements.valueMatches", "elements.replaceText", "elements.focus", "elements.pressKey", "elements.pressSessionKey", "elements.press", "elements.setValue", "elements.submit", "app.launch", "app.activate":
+	case "windows.captureFrame", "windows.clickFrame", "windows.list", "windows.setPosition", "windows.pressSessionKey", "windows.typeText", "elements.snapshot", "elements.read", "elements.valueMatches", "elements.replaceText", "elements.focus", "elements.pressKey", "elements.pressSessionKey", "elements.press", "elements.showMenu", "elements.setValue", "elements.submit", "app.launch", "app.activate", "app.quit", "app.exitStatus":
 		var scope struct {
 			BundleID    string `json:"bundleID"`
 			ExpectedApp string `json:"expectedApp"`
@@ -494,6 +509,9 @@ func (c *nativeControlCaller) Call(ctx context.Context, request native.Request) 
 		}
 		allowed := c.held.scope.AllowsBundle(bundle)
 		if !allowed {
+			return native.Reply{}, auth.ErrUnauthorized
+		}
+		if request.Method == "windows.typeText" && !m.options.SessionText {
 			return native.Reply{}, auth.ErrUnauthorized
 		}
 		if (request.Method == "elements.pressSessionKey" || request.Method == "windows.pressSessionKey") && !m.options.SessionKeyboard {
@@ -511,7 +529,7 @@ func (c *nativeControlCaller) Call(ctx context.Context, request native.Request) 
 				return native.Reply{}, auth.ErrUnauthorized
 			}
 		}
-		if request.Method == "windows.captureFrame" || request.Method == "windows.clickFrame" || request.Method == "windows.pressSessionKey" || request.Method == "elements.replaceText" || request.Method == "windows.setPosition" || request.Method == "elements.focus" || request.Method == "elements.pressSessionKey" || request.Method == "elements.pressKey" || request.Method == "elements.press" || request.Method == "elements.setValue" || request.Method == "elements.submit" || request.Method == "app.launch" || request.Method == "app.activate" {
+		if request.Method == "windows.captureFrame" || request.Method == "windows.clickFrame" || request.Method == "windows.pressSessionKey" || request.Method == "windows.typeText" || request.Method == "elements.replaceText" || request.Method == "windows.setPosition" || request.Method == "elements.focus" || request.Method == "elements.pressSessionKey" || request.Method == "elements.pressKey" || request.Method == "elements.press" || request.Method == "elements.showMenu" || request.Method == "elements.setValue" || request.Method == "elements.submit" || request.Method == "app.launch" || request.Method == "app.activate" || request.Method == "app.quit" {
 			if request.Lease == nil || *request.Lease != expected {
 				return native.Reply{}, session.ErrNoLease
 			}
@@ -531,8 +549,8 @@ func (c *nativeControlCaller) Call(ctx context.Context, request native.Request) 
 	reply, callErr := c.held.helper.Call(ctx, request)
 	var transport *native.TransportError
 	var applicationFailure *native.NativeError
-	unknownReplacement := (request.Method == "elements.replaceText" || request.Method == "windows.clickFrame") && errors.As(callErr, &applicationFailure) && applicationFailure.DispatchState == "unknown"
-	if unknownReplacement || ctx.Err() != nil || errors.As(callErr, &transport) && transport.DispatchState == "unknown" || reply.Receipt != nil && reply.Receipt.DispatchState == "unknown" {
+	unknownMutation := (request.Method == "elements.replaceText" || request.Method == "windows.clickFrame" || request.Method == "app.quit") && errors.As(callErr, &applicationFailure) && applicationFailure.DispatchState == "unknown"
+	if unknownMutation || ctx.Err() != nil || errors.As(callErr, &transport) && transport.DispatchState == "unknown" || reply.Receipt != nil && reply.Receipt.DispatchState == "unknown" {
 		c.held.inhibited = true
 		report := session.CleanupReport{InputInhibited: true, UnknownInputs: true, Reason: "native dispatch interrupted; held inputs require reconciliation"}
 		barrierErr := m.supervisor.RetainUnknown(auth.WithPrincipal(context.Background(), actual), actual, report)

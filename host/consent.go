@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/viant/datly/exec"
 	"github.com/viant/mechanize/auth"
@@ -15,23 +16,27 @@ import (
 // ConsentBroker composes private generated components; its immutable service
 // instances never share connector namespaces. No caller can select storage.
 type ConsentBroker struct {
-	options  ConsentBrokerOptions
-	mu       sync.Mutex
-	services map[string]*consent.Service
-	clients  map[string]auth.Principal
+	options      ConsentBrokerOptions
+	mu           sync.Mutex
+	services     map[string]*consent.Service
+	clients      map[string]auth.Principal
+	policyLane   chan struct{}
+	policyGrants map[string]*consent.Grant
 }
 type ConsentBrokerOptions struct {
-	Invoke       func(context.Context, auth.Principal, exec.ComponentRequest) (any, error)
-	Enrolled     func(context.Context, auth.Principal) (User, error)
-	SessionOwned func(context.Context, auth.Principal, string) error
-	Policy       func(context.Context, auth.Principal, consent.Scope, []consent.Mode, int) error
+	ControllerPolicy func(context.Context, auth.Principal) (context.Context, time.Time, func(), error)
+	Invoke           func(context.Context, auth.Principal, exec.ComponentRequest) (any, error)
+	Enrolled         func(context.Context, auth.Principal) (User, error)
+	SessionOwned     func(context.Context, auth.Principal, string) error
+	Policy           func(context.Context, auth.Principal, consent.Scope, []consent.Mode, int) error
+	RecoverCleanup   func(context.Context, auth.Principal, consent.Scope) error
 }
 
 func NewConsentBroker(o ConsentBrokerOptions) (*ConsentBroker, error) {
 	if o.Invoke == nil || o.Enrolled == nil || o.SessionOwned == nil || o.Policy == nil {
 		return nil, errors.New("complete consent identity, policy and private Datly bindings required")
 	}
-	return &ConsentBroker{options: o, services: map[string]*consent.Service{}, clients: map[string]auth.Principal{}}, nil
+	return &ConsentBroker{options: o, services: map[string]*consent.Service{}, clients: map[string]auth.Principal{}, policyLane: make(chan struct{}, 1), policyGrants: map[string]*consent.Grant{}}, nil
 }
 func (b *ConsentBroker) bound(ctx context.Context, p auth.Principal) (context.Context, *consent.Service, error) {
 	actual, err := auth.FromContext(ctx)
@@ -61,6 +66,13 @@ func (b *ConsentBroker) bound(ctx context.Context, p auth.Principal) (context.Co
 	}
 	namespace := actual.Namespace
 	s, err := consent.New(consent.Options{Namespace: namespace,
+		RecoverCleanup: func(ctx context.Context, c consent.Client, scope consent.Scope) error {
+			p, err := auth.FromContext(ctx)
+			if err != nil || p.Namespace != namespace || p.ClientID != c.ID || b.options.RecoverCleanup == nil {
+				return consent.ErrCleanupUnconfirmed
+			}
+			return b.options.RecoverCleanup(ctx, p, scope)
+		},
 		Invoke: func(ctx context.Context, req exec.ComponentRequest) (any, error) {
 			p, e := auth.FromContext(ctx)
 			if e != nil || p.Namespace != namespace {
@@ -69,6 +81,17 @@ func (b *ConsentBroker) bound(ctx context.Context, p auth.Principal) (context.Co
 			return b.options.Invoke(ctx, p, req)
 		},
 		VerifyClient: func(ctx context.Context) (consent.Client, error) { return b.client(ctx, namespace) },
+		VerifyPolicy: func(ctx context.Context, c consent.Client) error {
+			p, e := auth.FromContext(ctx)
+			if e != nil || p.ClientID != c.ID || b.options.ControllerPolicy == nil {
+				return auth.ErrUnauthorized
+			}
+			_, _, release, e := b.options.ControllerPolicy(ctx, p)
+			if release != nil {
+				release()
+			}
+			return e
+		},
 		VerifyActor: func(ctx context.Context) (consent.Actor, error) {
 			p, e := auth.FromContext(ctx)
 			if e != nil || p.Namespace != namespace || !auth.NativeHuman(ctx) {
@@ -121,6 +144,17 @@ func (b *ConsentBroker) Request(ctx context.Context, p auth.Principal, session s
 	return s.CreateRequest(ctx, session, in)
 }
 func (b *ConsentBroker) Authorize(ctx context.Context, p auth.Principal, op consent.Operation) (*consent.Lease, error) {
+	bound, releasePolicy, err := b.controllerPolicyContext(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	retained := false
+	defer func() {
+		if !retained && releasePolicy != nil {
+			releasePolicy()
+		}
+	}()
+	ctx = bound
 	binding, ok := ConsentBindingFromContext(ctx)
 	if !ok || op.SessionID != binding.SessionID || op.GrantID != binding.GrantID || op.Purpose != binding.Purpose {
 		return nil, auth.ErrUnauthorized
@@ -129,7 +163,14 @@ func (b *ConsentBroker) Authorize(ctx context.Context, p auth.Principal, op cons
 	if e != nil {
 		return nil, e
 	}
-	return s.Authorize(ctx, op)
+	lease, err := s.Authorize(ctx, op)
+	if err != nil {
+		return nil, err
+	}
+	previous := lease.Release
+	lease.Release = func() { defer releasePolicy(); previous() }
+	retained = true
+	return lease, nil
 }
 
 // FindPermanentGrant only searches grants owned by the current verified client.
@@ -140,6 +181,24 @@ func (b *ConsentBroker) FindPermanentGrant(ctx context.Context, p auth.Principal
 		return nil, err
 	}
 	return service.FindPermanentGrant(ctx, op)
+}
+
+func (b *ConsentBroker) authorizeCleanupQuit(ctx context.Context, p auth.Principal) (*consent.Lease, error) {
+	binding, ok := auth.ConsentBindingFromContext(ctx)
+	if !ok || binding.Purpose == "" {
+		return nil, auth.ErrUnauthorized
+	}
+	ctx, service, err := b.bound(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	lease, grantID, err := service.AuthorizeCleanupQuit(ctx, consent.Operation{GrantID: binding.GrantID, SessionID: binding.SessionID, Purpose: binding.Purpose, Scope: consent.Scope{Kind: "application", BundleID: "com.google.Chrome"}, Mode: consent.Control})
+	if err != nil {
+		return nil, err
+	}
+	binding.GrantID = grantID
+	lease.Context = auth.WithConsentBinding(lease.Context, binding)
+	return lease, nil
 }
 
 // NativeRPC is reachable only through the signed local console transport.

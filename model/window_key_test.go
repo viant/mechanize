@@ -87,3 +87,18 @@ func TestKeyboardChordFunctionKeysAreClosedAndKeepModifiers(t *testing.T) {
 		}
 	}
 }
+
+func TestKeyboardDigitChordsAreSingleClosedKeys(t *testing.T) {
+	for i := 0; i <= 9; i++ {
+		for _, prefix := range []string{"", "Cmd+", "Control+Shift+"} {
+			if err := ValidateKeyboardChord(prefix + strconv.Itoa(i)); err != nil {
+				t.Fatalf("digit chord rejected: %s%d: %v", prefix, i, err)
+			}
+		}
+	}
+	for _, key := range []string{"Cmd+01", "Cmd+10", "Cmd+١", "Cmd+１", "Cmd+1+2", "Cmd+Command+1", "0x1", "Cmd+-1"} {
+		if err := ValidateKeyboardChord(key); err == nil {
+			t.Errorf("invalid digit/raw/sequence key accepted: %q", key)
+		}
+	}
+}

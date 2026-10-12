@@ -147,7 +147,13 @@ func TestDesktopChromeHelloRequiresExplicitEnrollmentAndProcessProof(t *testing.
 			raw, err := ReadFrame(conn)
 			if scenario != "desktop" {
 				if err == nil {
-					t.Fatalf("unqualified desktop hello acknowledged: %s", raw)
+					var rejection map[string]any
+					if json.Unmarshal(raw, &rejection) != nil || len(rejection) != 2 || rejection["type"] != "nativeHostError" {
+						t.Fatalf("unqualified desktop hello acknowledged: %s", raw)
+					}
+					if _, err = ReadFrame(conn); err == nil {
+						t.Fatal("rejected desktop connection remained usable")
+					}
 				}
 				return
 			}

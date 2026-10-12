@@ -9,12 +9,14 @@ import (
 )
 
 type activationFixture struct {
-	calls      []Request
-	active     bool
-	disabled   bool
-	incomplete bool
-	duplicate  bool
-	changed    bool
+	calls               []Request
+	active              bool
+	disabled            bool
+	incomplete          bool
+	duplicate           bool
+	missingConfirmation bool
+	wrongConfirmation   bool
+	changed             bool
 }
 
 func (f *activationFixture) Close() error { return nil }
@@ -40,6 +42,13 @@ func (f *activationFixture) Call(_ context.Context, request Request) (Reply, err
 		}
 		reply.Result, _ = json.Marshal(map[string]any{"complete": !f.incomplete, "apps": apps})
 	case "app.activate":
+		if !f.missingConfirmation {
+			token := "start"
+			if f.wrongConfirmation {
+				token = "reused"
+			}
+			reply.Result, _ = json.Marshal(map[string]any{"bundleID": "com.apple.mail", "pid": 42, "launchTime": "launch", "startToken": token, "active": true, "foregroundConfirmed": true})
+		}
 		reply.Receipt = &Receipt{DispatchState: "dispatched"}
 	}
 	return reply, nil
@@ -50,7 +59,7 @@ func TestActivationRequiresIndependentActiveIdentity(t *testing.T) {
 		fixture  activationFixture
 		verified bool
 	}{
-		{"active", activationFixture{active: true}, true}, {"inactive", activationFixture{}, false}, {"reused", activationFixture{active: true, changed: true}, false}, {"unknown target", activationFixture{incomplete: true}, false}, {"duplicates", activationFixture{duplicate: true}, false}, {"launch only", activationFixture{disabled: true}, false},
+		{"missing foreground proof", activationFixture{active: true, missingConfirmation: true}, false}, {"mismatched foreground proof", activationFixture{active: true, wrongConfirmation: true}, false}, {"active", activationFixture{active: true}, true}, {"inactive", activationFixture{}, false}, {"reused", activationFixture{active: true, changed: true}, false}, {"unknown target", activationFixture{incomplete: true}, false}, {"duplicates", activationFixture{duplicate: true}, false}, {"launch only", activationFixture{disabled: true}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, p := nativeActor(t)
@@ -75,6 +84,9 @@ func TestActivationRequiresIndependentActiveIdentity(t *testing.T) {
 				if call.Method == "app.activate" {
 					dispatches++
 				}
+			}
+			if dispatches == 1 && !test.verified && result.DispatchState != "unknown" {
+				t.Fatalf("unconfirmed activation lost uncertainty: %+v", result)
 			}
 			if dispatches > 1 || (fixture.disabled || fixture.incomplete || fixture.duplicate) && dispatches != 0 {
 				t.Fatalf("unexpected activation dispatch count %d", dispatches)

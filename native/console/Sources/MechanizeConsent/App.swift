@@ -5,14 +5,65 @@ import Security
 
 @main struct MechanizeConsentApp: App {
     @StateObject private var model: ConsoleModel
+    private let helperLauncher: ConsoleHelperLaunchService?
 
     init() {
-        _model = StateObject(wrappedValue: ConsoleModel(broker: Self.provisionedBroker()))
+        if CommandLine.arguments.dropFirst().contains("--trust-localhost-controllers") {
+            let args = Array(CommandLine.arguments.dropFirst())
+            let report: BrowserControllerLocalhostReport
+            if args != BrowserControllerLocalhostCLI.arguments {
+                report = .init(stage: "setup", errorCode: "invalidArguments")
+            } else if SecKeychainSetUserInteractionAllowed(false) != errSecSuccess {
+                report = .init(stage: "connection", errorCode: "interactionPolicyUnavailable")
+            } else if let configuration = Self.provisionedConfiguration() {
+                report = BrowserControllerLocalhostCLI.runFromExplicitCLI(arguments: args, transport: configuration.transport, credentials: configuration.credentials)
+            } else {
+                report = .init(stage: "setup", errorCode: "setupUnavailable")
+            }
+            var output = report.json(); output.append(10)
+            try? FileHandle.standardOutput.write(contentsOf: output)
+            exit(report.succeeded ? 0 : 1)
+        }
+        if CommandLine.arguments.dropFirst().contains("--check-runtime-upgrade") {
+            let report = MigrationRuntimeUpgradeDiagnostics.runCLI(arguments: Array(CommandLine.arguments.dropFirst()))
+            var output = report.json(); output.append(10)
+            try? FileHandle.standardOutput.write(contentsOf: output)
+            exit(report.qualified ? 0 : 1)
+        }
+        let launcher = CommandLine.arguments.count == 1 ? (try? ConsoleHelperLaunchService.startEnrolled()) : nil
+        helperLauncher = launcher
+        let launchUnavailable = CommandLine.arguments.count == 1 && Bundle.main.object(forInfoDictionaryKey: "MechanizeHelperLaunchTransport") != nil && launcher == nil
+        let configuration = Self.provisionedConfiguration()
+        let broker: any ConsentHostAdapter = configuration.map { SocketConsentBroker(transport: $0.transport, credentials: $0.credentials) } ?? DisconnectedHostAdapter()
+        let upgrade = MigrationUpgradeSelection(source: MigrationSignedPackageSource.enrolled(),
+            credentials: configuration?.credentials)
+        _model = StateObject(wrappedValue: ConsoleModel(broker: broker, runtimeUpgrade: upgrade, helperLaunchUnavailable: launchUnavailable))
         if CommandLine.arguments.dropFirst().contains("--enroll-credential") {
             let report = ConsoleOwnedEnrollment.runCLI(arguments: Array(CommandLine.arguments.dropFirst()))
             var output = report.json(); output.append(10)
             try? FileHandle.standardOutput.write(contentsOf: output)
             exit(report.exitCode)
+        }
+        if CommandLine.arguments.dropFirst().contains("--check-vault") {
+            let report: VaultDiagnosticReport
+            if Array(CommandLine.arguments.dropFirst()).contains("--broker-pid") {
+                report = MigrationVaultReadiness.runCLI(arguments: Array(CommandLine.arguments.dropFirst()))
+            } else if Array(CommandLine.arguments.dropFirst()) != ["--check-vault"] {
+                report = VaultDiagnosticReport(stage: "setup", errorCode: "invalidArguments")
+            } else if SecKeychainSetUserInteractionAllowed(false) != errSecSuccess {
+                report = VaultDiagnosticReport(stage: "connection", errorCode: "interactionPolicyUnavailable")
+            } else if let configuration = Self.provisionedConfiguration() {
+                report = VaultDiagnostics.runFromExplicitCLI(transport: configuration.transport, credentials: configuration.credentials)
+            } else {
+                report = VaultDiagnosticReport(stage: "setup", errorCode: "setupUnavailable")
+            }
+            var output = report.json(); output.append(10)
+            try? FileHandle.standardOutput.write(contentsOf: output)
+            exit(report.succeeded ? 0 : 1)
+        }
+        if CommandLine.arguments.count == 1 {
+            Task { @MainActor in PersistentAutomationPointer.shared.start() }
+            return
         }
         guard CommandLine.arguments.dropFirst().contains("--check-connection") else { return }
         // LAContext's interaction policy does not cover legacy Keychain ACL
@@ -35,7 +86,7 @@ import Security
         try? FileHandle.standardOutput.write(contentsOf: output)
         exit(report.succeeded ? 0 : 1)
     }
-    private static func provisionedConfiguration() -> (transport: UnixBrokerTransport, credentials: KeychainEnrollment)? {
+    nonisolated private static func provisionedConfiguration() -> (transport: UnixBrokerTransport, credentials: KeychainEnrollment)? {
         guard Bundle.main.bundleIdentifier == "com.viant.mechanize.consent",
               let requirement = Bundle.main.object(forInfoDictionaryKey: "MechanizeBrokerRequirement") as? String,
               !requirement.isEmpty,
@@ -48,10 +99,27 @@ import Security
         guard let configuration = provisionedConfiguration() else { return DisconnectedHostAdapter() }
         return SocketConsentBroker(transport: configuration.transport, credentials: configuration.credentials)
     }
+    nonisolated static func nativeVaultBroker() throws -> SocketConsentBroker {
+        guard let configuration = provisionedConfiguration() else { throw BrokerTransportError.unavailable }
+        return SocketConsentBroker(transport: configuration.transport, credentials: configuration.credentials)
+    }
+    private static func menuBarIcon() -> NSImage? {
+        guard let path = Bundle.main.path(forResource: "MechanizeMenu", ofType: "png"),
+              let image = NSImage(contentsOfFile: path) else { return nil }
+        // MenuBarExtra can use the AppKit image's intrinsic size rather than
+        // a SwiftUI frame. Set its logical point size before supplying it.
+        image.size = NSSize(width: 16, height: 16)
+        image.isTemplate = false
+        return image
+    }
     var body: some Scene {
-        WindowGroup("Mechanize", id: "main") { ConsentView(model: model) }
-            .defaultSize(width: 620, height: 520)
-        MenuBarExtra("Mechanize", systemImage: "hand.raised") { MenuBarPanel(model: model) }
+        Window("Mechanize", id: "main") { ConsentView(model: model) }
+            .defaultSize(width: 760, height: 620)
+        MenuBarExtra { MenuBarPanel(model: model) } label: {
+            if let icon = Self.menuBarIcon() {
+                Image(nsImage: icon).renderingMode(.original).accessibilityLabel("Mechanize")
+            } else { Image(systemName: "v.circle").accessibilityLabel("Mechanize") }
+        }
     }
 }
 
@@ -60,17 +128,42 @@ import Security
     @Published var grants: [ConsentGrant] = []
     @Published var message = "Connecting to Mechanize…"
     @Published var busy = false
+    private var nextReconnectAt = Date.distantPast
+    private var reconnectDelay: TimeInterval = 2
+    let helperLaunchUnavailable: Bool
+    @Published var browserStatus: BrowserConnectionStatus?
+    @Published var browserStatusMessage = "Connect to the local broker to inspect browser readiness."
     @Published var doctor: [HelperPermissionStatus] = []
     @Published var installedApplications: [InstalledApplication] = []
     @Published var applicationAccess: ApplicationAccessSnapshot?
     @Published var applicationPolicyAvailable = false
     @Published var applicationPolicyMessage = "Loading application access…"
     let host: any ConsentHostAdapter
+    let runtimeUpgrade: MigrationUpgradeSelection
     @Published var revokeStatuses: [String: RevokeStatus] = [:]
     let controller: ConsentController
-    init(broker: any ConsentHostAdapter = DisconnectedHostAdapter()) { host = broker; controller = ConsentController(broker: broker); installedApplications = ApplicationInventory.scan() }
+    init(broker: any ConsentHostAdapter = DisconnectedHostAdapter(), runtimeUpgrade: MigrationUpgradeSelection? = nil, helperLaunchUnavailable: Bool = false) {
+        self.helperLaunchUnavailable = helperLaunchUnavailable
+        host = broker
+        self.runtimeUpgrade = runtimeUpgrade ?? MigrationUpgradeSelection()
+        controller = ConsentController(broker: broker)
+        installedApplications = ApplicationInventory.scan()
+    }
     var connected: Bool { controller.isConnected }
     var activeGrants: [ConsentGrant] { grants.filter { $0.isActive(at: Date()) } }
+    func refreshConnection() async {
+        guard !busy else { return }
+        if connected { reconnectDelay = 2; await refresh(); return }
+        guard Date() >= nextReconnectAt, let broker = host as? SocketConsentBroker else { return }
+        nextReconnectAt = Date().addingTimeInterval(reconnectDelay)
+        reconnectDelay = min(30, reconnectDelay * 2)
+        busy = true
+        do {
+            let restored = try await Task.detached { try broker.reconnectPreviouslyRequested() }.value
+            busy = false
+            if restored { reconnectDelay = 2; await refresh() }
+        } catch { busy = false; doctor = [] }
+    }
     func connect() async {
         guard !busy else { return }
         if connected { await refresh(); return }
@@ -78,7 +171,7 @@ import Security
         busy = true
         do { try await Task.detached { try broker.connectFromUserAction() }.value; busy = false; await refresh() }
         catch {
-            busy = false; message = error.localizedDescription
+            busy = false; doctor = []; message = error.localizedDescription
             applicationPolicyAvailable = false
             applicationPolicyMessage = "Connection unavailable. Use Retry connection above; switches stay disabled until access is confirmed."
         }
@@ -98,9 +191,11 @@ import Security
                 applicationPolicyAvailable = false
                 applicationPolicyMessage = "Could not load application access: \(error.localizedDescription) Use Refresh to retry."
             }
+            do { browserStatus = try await host.browserStatus(); browserStatusMessage = "" }
+            catch { browserStatus = nil; browserStatusMessage = "Browser status unavailable. Refresh after the broker supports browser diagnostics." }
             doctor = (try? await host.helperPermissionDoctor()) ?? []
-            message = "Connected. Review requests below and stop access at any time."
-        } catch { message = error.localizedDescription }
+            message = "Local broker connected. Review requests below and stop access at any time."
+        } catch { doctor = []; browserStatus = nil; browserStatusMessage = "Local broker unavailable. Retry connection above."; message = error.localizedDescription }
     }
     var applicationRows: [ApplicationAccessListRow] {
         let rules = Dictionary((applicationAccess?.policy.applications ?? []).map { ($0.bundleID, $0) }, uniquingKeysWith: { _, newer in newer })
@@ -159,22 +254,37 @@ struct ConsentView: View {
             HStack {
                 Text("Mechanize").font(.title2.bold())
                 Spacer()
-                Button(model.connected ? "Connected" : "Retry connection") { Task { await model.connect() } }
-                    .accessibilityIdentifier("mechanize.connect").disabled(model.busy || model.connected)
-                Button("Refresh") { Task { await model.refresh() } }.disabled(model.busy || !model.connected)
+                if model.connected {
+                    Label("Connected", systemImage: "checkmark.circle")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("mechanize.connectionStatus")
+                    Button("Refresh") { Task { await model.refresh() } }.disabled(model.busy)
+                } else {
+                    Button("Connect") { Task { await model.connect() } }
+                        .accessibilityIdentifier("mechanize.connect").disabled(model.busy)
+                }
                 if model.busy { ProgressView().controlSize(.small) }
             }
             Text(model.message).font(.caption).foregroundStyle(model.connected ? .primary : .secondary).lineLimit(2).textSelection(.enabled)
+            RuntimeUpgradeSelectionView(selection: model.runtimeUpgrade)
             TabView(selection: $selectedTab) {
                 RequestsTab(model: model).tabItem { Label("Requests", systemImage: "hand.raised") }.tag("requests")
+                BrowsersTab(model: model).tabItem { Label("Browsers", systemImage: "globe") }.tag("browsers")
                 ApplicationsTab(model: model).tabItem { Label("Applications", systemImage: "app.badge") }.tag("applications")
                 ActivityTab(model: model).tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }.tag("activity")
                 PermissionsTab(model: model).tabItem { Label("Permissions", systemImage: "lock.shield") }.tag("permissions")
-                VaultTab().tabItem { Label("Vault", systemImage: "key.horizontal") }.tag("vault")
+                VaultTab(openPermissions: { selectedTab = "permissions" }).tabItem { Label("Vault", systemImage: "key.horizontal") }.tag("vault")
+                SettingsTab(model: model).tabItem { Label("Settings", systemImage: "gearshape") }.tag("settings")
             }
         }
         .padding(16)
-        .task { await model.connect() }
+        .task {
+            await model.connect()
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { break }
+                await model.refreshConnection()
+            }
+        }
     }
 }
 
@@ -183,7 +293,7 @@ private struct RequestsTab: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                if model.requests.isEmpty { Text(model.connected ? "No tools are requesting access." : "Connect to see requests from verified tools.").foregroundStyle(.secondary) }
+                if model.requests.isEmpty { Text(model.connected ? "No new access requests. Trusted tools can continue automatically." : "Connect to see requests from verified tools.").foregroundStyle(.secondary) }
                 ForEach(model.requests) { request in
                     VStack(alignment: .leading, spacing: 7) {
                         Text("\(request.verifiedClient.displayName) wants access").font(.headline)
@@ -203,7 +313,6 @@ private struct RequestsTab: View {
                 }
             }.padding(.vertical, 10)
         }
-        .task { while !Task.isCancelled { try? await Task.sleep(nanoseconds: 2_000_000_000); if model.connected && !model.busy { await model.refresh() } } }
     }
 }
 
@@ -244,32 +353,47 @@ private struct ActivityTab: View {
     }
 }
 
+private func permissionLabel(_ permission: HelperPermission) -> String {
+    switch permission {
+    case .accessibility: return "Accessibility"
+    case .screenRecording: return "Screen Recording"
+    case .inputMonitoring: return "Input Monitoring"
+    }
+}
+
+private func permissionStatusDetail(_ status: HelperPermissionStatus) -> String {
+    switch status.detail.components(separatedBy: ":").first {
+    case "observationHelperCleanupUnconfirmed":
+        return "The previous automation helper did not finish closing. Mechanize needs a clean runtime restart to check this permission."
+    case "observationHelperUnavailable":
+        return "The automation helper could not be reached. This does not mean macOS denied permission."
+    case "observationHelperCheckInterrupted":
+        return "The permission check was interrupted. Mechanize will check again automatically."
+    case "observationHelperReplyInvalid":
+        return "The automation helper returned an incomplete permission check. Mechanize will check again automatically."
+    default:
+        return status.state == .unknown ? "The automation helper could not verify this permission. Mechanize will check again automatically." : "Verified by the automation runtime."
+    }
+}
+
 private struct PermissionsTab: View {
     @ObservedObject var model: ConsoleModel
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 AccessibilitySetupTile()
+                if model.helperLaunchUnavailable { Text("Mechanize could not start its private automation service. Quit and reopen the app. If the problem persists, reinstall the signed app.").foregroundStyle(.red) }
                 if model.doctor.isEmpty { Text(model.connected ? "Permission status has not been checked yet." : "Connect to Mechanize to check permission status.").font(.caption).foregroundStyle(.secondary) }
-                ForEach(model.doctor, id: \.permission) { status in
+                ForEach(model.connected ? model.doctor : [], id: \.permission) { status in
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("\(status.helperBundleID) · \(status.permission.rawValue): \(status.state.rawValue)").font(.headline)
-                        Text(status.detail).font(.caption)
+                        Text("\(permissionLabel(status.permission)) — \(status.state == .unknown ? "could not check" : status.state.rawValue)").font(.headline)
+                            .accessibilityIdentifier("mechanize.permission.\(status.permission.rawValue).state")
+                        Text(permissionStatusDetail(status)).font(.caption).foregroundStyle(status.state == .unknown ? .secondary : .primary)
                         Button("Open System Settings for \(status.permission.rawValue)") { Task { await model.openSettings(status.permission) } }.disabled(!model.connected)
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(.background, in: RoundedRectangle(cornerRadius: 10))
                 }
-                Text("macOS permissions are separate from access grants. You enable Accessibility, Screen Recording, or Input Monitoring for the Mechanize helper in System Settings.").font(.caption).foregroundStyle(.secondary)
+                Text("macOS permissions are separate from access grants. A single Mechanize app contains runtime components, but macOS can require separate permission entries for the broker, automation helper, or upgrade observer.").font(.caption).foregroundStyle(.secondary)
             }.padding(.vertical, 10)
-        }
-    }
-}
-
-private struct VaultTab: View {
-    var body: some View {
-        ScrollView {
-            ContentUnavailableView("Vault configuration unavailable", systemImage: "key.horizontal",
-                description: Text("This panel will be available when the secure Vault backend is connected. No secret values are shown here."))
-                .frame(maxWidth: .infinity, minHeight: 220).padding(.vertical, 20)
         }
     }
 }
@@ -277,11 +401,17 @@ private struct VaultTab: View {
 private struct MenuBarPanel: View {
     @ObservedObject var model: ConsoleModel
     @Environment(\.openWindow) private var openWindow
+    @AppStorage(PersistentAutomationPointer.preferenceKey) private var showPointer = true
     var body: some View {
         Text(model.connected ? "Connected · \(model.activeGrants.count) active grants" : "Not connected")
             .font(.caption).foregroundStyle(.secondary)
-        Button("Open Panel") { openWindow(id: "main") }
-        Button("Hide Panel") { NSApp.hide(nil) }
+        Button("Open Mechanize") {
+            NSApp.unhide(nil)
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        Toggle("Show automation pointer", isOn: $showPointer)
+            .onChange(of: showPointer) { _, value in PersistentAutomationPointer.shared.enabled = value }
         Button("Stop Access") { Task { await model.stopAllActive() } }.disabled(!model.connected || model.activeGrants.isEmpty || model.busy)
         Divider()
         Button("Quit Mechanize") { NSApp.terminate(nil) }
@@ -304,9 +434,9 @@ private struct MenuBarPanel: View {
 }
 
 /// macOS setup is available before connecting; it never grants broker consent.
-private struct AccessibilitySetupTile: View {
+struct AccessibilitySetupTile: View {
     @State private var installation: HelperInstallation?
-    @State private var unavailable = "Checking the installed helper…"
+    @State private var unavailable = "Checking the installed Mechanize runtime…"
     @State private var actionMessage: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -315,15 +445,16 @@ private struct AccessibilitySetupTile: View {
                 Text("Set up Accessibility").font(.headline)
                 Spacer()
             }
-            Text("Open Accessibility settings, drag the helper below into the list, then turn on its switch.")
+            Text(installation?.appOwnsAutomation == true ? "Open Accessibility settings and enable Mechanize.app below. This app launches the automation helper; runtime checks confirm whether access is available." : "Open Accessibility settings and enable the verified broker below. Keep existing Mechanize entries until the replacement runtime is verified. The automation helper may require its own entry.")
                 .font(.subheadline).foregroundStyle(.secondary)
             if let installation {
                 HStack(spacing: 14) {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: installation.helperURL.path))
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: installation.permissionDisplayURL.path))
                         .resizable().scaledToFit().frame(width: 52, height: 52)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Drag Mechanize Native into Accessibility").font(.subheadline.weight(.semibold))
-                        Text("Installed helper · drag this file icon").font(.caption).foregroundStyle(.secondary)
+                        Text("Drag Mechanize into Accessibility").font(.subheadline.weight(.semibold))
+                        Text(installation.appOwnsAutomation ? "Mechanize.app" : "mechanize · automation broker").font(.caption).foregroundStyle(.secondary)
+                        Text(installation.permissionDisplayURL.path).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
                     }
                     Spacer()
                     Image(systemName: "arrow.up.right").foregroundStyle(.secondary)
@@ -335,7 +466,7 @@ private struct AccessibilitySetupTile: View {
                     do { return try installation.makeItemProvider() }
                     catch { self.installation = nil; unavailable = error.localizedDescription; return NSItemProvider() }
                 }
-                .accessibilityLabel("Drag Mechanize Native into Accessibility")
+                .accessibilityLabel("Drag Mechanize into Accessibility")
             } else {
                 Label(unavailable, systemImage: "exclamationmark.triangle").font(.subheadline).foregroundStyle(.secondary)
             }
@@ -348,7 +479,7 @@ private struct AccessibilitySetupTile: View {
                 Button("Show in Finder") {
                     do {
                         guard let installation else { return }
-                        NSWorkspace.shared.activateFileViewerSelecting([try installation.verifiedURL()])
+                        NSWorkspace.shared.activateFileViewerSelecting([try installation.verifiedAppURL()])
                     } catch { self.installation = nil; unavailable = error.localizedDescription }
                 }.disabled(installation == nil)
             }

@@ -9,7 +9,8 @@ import (
 // ScyResolver uses a fixed administrator-approved key-version/resource map.
 // Resources contain a JSON {"key":"<base64 AES-256 key>"}. Unknown references
 // fail closed. Rotation retains old configured versions for decryption.
-// This adapter does not claim a macOS Keychain provider is implemented.
+// The Keychain resource provider is registered separately; this adapter alone
+// does not establish native key custody or signed broker readback qualification.
 type ScyResolver struct{ resources map[string]scy.Resource }
 
 func NewScyResolver(resources map[string]scy.Resource) (*ScyResolver, error) {

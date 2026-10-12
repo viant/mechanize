@@ -12,6 +12,29 @@ From the repository root:
 python3 scripts/build-development.py
 ```
 
+For repeated development updates, an existing valid code-signing certificate
+can be selected by its exact SHA-1 fingerprint:
+
+```sh
+security find-identity -v -p codesigning
+python3 scripts/build-development.py --signing-identity CERTIFICATE_SHA1
+```
+
+The fingerprint identifies a public certificate, not a credential. The builder
+rejects names, missing identities and invalid fingerprints before building. It
+signs every packaged artifact with the selected identity and verifies each
+artifact's actual leaf certificate. It preserves exact artifact hash pins for
+the broker/helper/console trust channels. No key or certificate is created,
+imported or trusted by this option; Keychain controls access to the existing
+private key. An unavailable signing identity fails without falling back to
+ad-hoc signing.
+
+Certificate signing lets macOS use the signer's designated requirement to
+recognize updates; see [Apple's code-signing guidance](https://developer.apple.com/library/archive/technotes/tn2206/).
+Permission preservation must still be tested across an actual signed upgrade.
+The manifest records the signing mode and public certificate fingerprint.
+Certificate signing alone does not qualify release distribution or Office input.
+
 This builds the MCP broker, native helper, and permission app under
 `dist/development/`, signs each locally, verifies signatures, and writes a
 private `manifest.json`. The app contains the exact broker requirement. Copy the

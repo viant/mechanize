@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/viant/mechanize/auth"
@@ -15,6 +16,7 @@ import (
 )
 
 type User struct {
+	SkillDirectories []string            `json:"skillDirectories,omitempty"`
 	DesktopAccess    bool                `json:"desktopAccess,omitempty"`
 	RecordingAllowed bool                `json:"recordingAllowed,omitempty"`
 	Subject          string              `json:"subject"`
@@ -40,8 +42,10 @@ type ArtifactConfig struct {
 // NativeLaunchConfig enrolls the launch or semantic helper profile. Keyboard
 // routes require separate opt-ins; all actions retain normal consent checks.
 type NativeLaunchConfig struct {
+	Transport         string  `json:"transport,omitempty"`
 	WindowFrameClick  bool    `json:"windowFrameClick,omitempty"`
 	SessionKeyboard   bool    `json:"sessionKeyboard,omitempty"`
+	SessionText       bool    `json:"sessionText,omitempty"`
 	TargetedKeyboard  bool    `json:"targetedKeyboard,omitempty"`
 	Mode              string  `json:"mode,omitempty"`
 	LockPath          string  `json:"lockPath"`
@@ -59,6 +63,8 @@ type Config struct {
 	Artifacts                  *ArtifactConfig         `json:"artifacts,omitempty"`
 	NativeConsole              *NativeConsoleConfig    `json:"nativeConsole,omitempty"`
 	Keychain                   *keychain.Options       `json:"keychain,omitempty"`
+	NativeVault                *NativeVaultConfig      `json:"nativeVault,omitempty"`
+	RuntimeListenAddress       string                  `json:"-"`
 	SourceRoot                 string                  `json:"sourceRoot"`
 	StorageRoot                string                  `json:"storageRoot"`
 	NativeHelper               string                  `json:"nativeHelper,omitempty"`
@@ -89,7 +95,20 @@ func (c Config) Validate() error {
 	}
 
 	if c.NativeLaunch != nil {
-		if (c.NativeLaunch.TargetedKeyboard || c.NativeLaunch.SessionKeyboard || c.NativeLaunch.WindowFrameClick) && c.NativeLaunch.Mode != "semantic" {
+		if c.NativeLaunch.Transport != "" && c.NativeLaunch.Transport != "console-v1" {
+			return errors.New("unsupported native helper transport")
+		}
+		if c.NativeLaunch.Transport == "console-v1" {
+			home, e := os.UserHomeDir()
+			if e != nil || c.NativeHelper != filepath.Join(home, "Applications", "Mechanize.app", "Contents", "Helpers", "mechanize-native") || c.NativeConsole == nil || c.NativeConsole.SocketPath != filepath.Join(home, "Library", "Application Support", "Mechanize", "runtime", "consent.sock") || c.NativeConsole.DesignatedRequirement == "" || c.NativeConsole.ExpectedUID != uint32(os.Getuid()) {
+				return errors.New("console helper transport requires the fixed enrolled app endpoint")
+			}
+			if c.NativeVault != nil && c.NativeVault.WindowProtection != "helper-v1" {
+				return errors.New("console helper transport requires helper-owned Vault window protection")
+			}
+		}
+
+		if (c.NativeLaunch.TargetedKeyboard || c.NativeLaunch.SessionKeyboard || c.NativeLaunch.SessionText || c.NativeLaunch.WindowFrameClick) && c.NativeLaunch.Mode != "semantic" {
 			return errors.New("native input routes require explicitly enrolled semantic profile")
 		}
 		if c.NativeLaunch.Mode != "" && c.NativeLaunch.Mode != "launch" && c.NativeLaunch.Mode != "semantic" {
@@ -123,6 +142,9 @@ func (c Config) Validate() error {
 		if !filepath.IsAbs(c.NativeConsole.SocketPath) || c.NativeConsole.DesignatedRequirement == "" {
 			return errors.New("native console requires fixed absolute socket and explicit signed peer requirement")
 		}
+	}
+	if err := c.validateNativeVault(); err != nil {
+		return err
 	}
 	if len(c.Users) == 0 || c.IdentityPolicy.Issuer == "" || c.IdentityPolicy.Audience == "" || len(c.IdentityPolicy.Algorithms) == 0 {
 		return errors.New("explicit users and identity policy required")
@@ -159,6 +181,9 @@ func (c Config) Validate() error {
 			scope, err := chrome.NormalizeTrustScope(grant.TrustScope)
 			if err != nil {
 				return err
+			}
+			if grant.AllWebsites && (!desktopUsers[grant.Principal.Namespace] || len(grant.Origins) != 0) {
+				return errors.New("all-websites Chrome enrollment requires desktop-wide user ceiling and empty origins")
 			}
 			if scope == chrome.TrustScopeDesktop && (c.Chrome.FixtureEnrollment || c.Chrome.ProcessTrust == nil || !desktopUsers[grant.Principal.Namespace]) {
 				return errors.New("desktop-wide browser trust requires an explicitly enrolled desktop-wide user and production process verification")

@@ -22,19 +22,28 @@ globalThis.MechanizeFingerprint = (() => {
     return JSON.stringify(value).replace(/\u2028/g,"\\u2028").replace(/\u2029/g,"\\u2029");
   }
   function canonicalEnvelope(command) {
-    object(command,["action","identity","brokerEpoch","channelEpoch","scopeHash","attemptId","locator","controlLease"],["args","requestId","deadlineUnixMs","fingerprintVersion","fingerprintSHA256"]);
-    if (!["element.press","element.fill"].includes(command.action)) fail();
+    object(command,["action","identity","brokerEpoch","channelEpoch","scopeHash","attemptId","controlLease"],["locator","args","requestId","deadlineUnixMs","fingerprintVersion","fingerprintSHA256"]);
+    if (!["element.press","element.fill","browser.navigate","browser.activate"].includes(command.action)) fail();
     const i=command.identity; object(i,["profileChannel","browserInstance","tabId","frameId","documentId","documentGeneration"]);
     if (![i.profileChannel,i.browserInstance,i.documentId,command.brokerEpoch,command.channelEpoch,command.attemptId].every(opaque) || !hash(command.scopeHash) || !positive(i.tabId) || i.tabId>2147483647 || i.frameId!==0 || !positive(i.documentGeneration)) fail();
     const lease=command.controlLease; object(lease,["id","generation"]); if (!opaque(lease.id) || !positive(lease.generation)) fail();
-    const l=command.locator; object(l,["strategy","value","exact"],["name"]);
-    if (!["id","testId","role","label"].includes(l.strategy) || l.exact!==true || !scalarString(l.value,1024)) fail();
-    let name=null;
-    if (l.name!==undefined && l.name!==null) { if (l.strategy!=="role" || !scalarString(l.name,1024)) fail(); name=l.name; }
-    let args={};
-    if (command.action==="element.press") { if (command.args!==undefined && command.args!==null) object(command.args,[]); }
-    else { object(command.args,["value"]); if (!scalarString(command.args.value,16384,true)) fail(); args={value:command.args.value}; }
-    return canonical({version:2,action:command.action,identity:{profileChannel:i.profileChannel,browserInstance:i.browserInstance,tabId:i.tabId,frameId:i.frameId,documentId:i.documentId,documentGeneration:i.documentGeneration},brokerEpoch:command.brokerEpoch,channelEpoch:command.channelEpoch,scopeHash:command.scopeHash,controlLease:{id:lease.id,generation:lease.generation},attemptId:command.attemptId,locator:{strategy:l.strategy,value:l.value,name,exact:true},args});
+    let locator=null,args={};
+    if (command.action.startsWith("browser.")) {
+      if (command.locator!==null && command.locator!==undefined) fail();
+      if (command.action==="browser.navigate") {object(command.args,["url"]);if(!scalarString(command.args.url,8192))fail();args={url:command.args.url};}
+      else if(command.args!==undefined && command.args!==null) object(command.args,[]);
+    } else {
+      const l=command.locator; object(l,["strategy","value","exact"],["name","index","order"]);
+      if (!["id","testId","role","label"].includes(l.strategy) || l.exact!==true || !scalarString(l.value,1024)) fail();
+      let name=null;
+      if (l.name!==undefined && l.name!==null) { if (l.strategy!=="role" || !scalarString(l.name,1024)) fail(); name=l.name; }
+      const indexed=Object.hasOwn(l,'index')||Object.hasOwn(l,'order');
+      if(indexed&&(!Number.isInteger(l.index)||l.index<0||l.index>999||l.order!=='document'))fail();
+      locator={strategy:l.strategy,value:l.value,name,exact:true,...(indexed?{index:l.index,order:l.order}:{})};
+      if (command.action==="element.press") { if (command.args!==undefined && command.args!==null) object(command.args,[]); }
+      else { object(command.args,["value"]); if (!scalarString(command.args.value,16384,true)) fail(); args={value:command.args.value}; }
+    }
+    return canonical({version:2,action:command.action,identity:{profileChannel:i.profileChannel,browserInstance:i.browserInstance,tabId:i.tabId,frameId:i.frameId,documentId:i.documentId,documentGeneration:i.documentGeneration},brokerEpoch:command.brokerEpoch,channelEpoch:command.channelEpoch,scopeHash:command.scopeHash,controlLease:{id:lease.id,generation:lease.generation},attemptId:command.attemptId,locator,args});
   }
   async function mutationV2(command) {
     const encoded=new TextEncoder().encode(canonicalEnvelope(command));

@@ -126,7 +126,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, p auth.Principal, predicate mo
 		return Result{Truth: Unknown, Reason: "outcome source deadline exceeded"}, nil
 	}
 	if err != nil {
-		return Result{Truth: Unknown, Reason: "outcome source unavailable"}, nil
+		return Result{Truth: Unknown, Reason: outcomeUnavailableReason(err)}, nil
 	}
 	if result.Truth != True && result.Truth != False && result.Truth != Unknown {
 		return Result{}, errors.New("adapter returned invalid truth state")
@@ -159,6 +159,21 @@ func (e *Evaluator) Evaluate(ctx context.Context, p auth.Principal, predicate mo
 		}
 	}
 	return result, nil
+}
+
+// Never surface adapter messages, values or arbitrary error codes. These fixed
+// native read diagnostics distinguish an unavailable proof from a mismatch
+// without exporting the compared value or weakening verification.
+func outcomeUnavailableReason(err error) string {
+	var failure *model.MechanizeError
+	if errors.As(err, &failure) && failure != nil && failure.Stage == "native" && failure.DispatchState == "notDispatched" {
+		switch failure.Code {
+		case "valueMatchUnsupported", "valueMatchUnconfirmed", "valueMatchDenied",
+			"valueComparisonDenied", "valueComparisonUnavailable", "readonlyMethodDenied":
+			return "outcome source unavailable: " + failure.Code
+		}
+	}
+	return "outcome source unavailable"
 }
 
 // RequireBusinessSuccess never treats unavailable evidence as false or success.

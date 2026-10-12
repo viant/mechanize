@@ -47,7 +47,7 @@ func TestObserveNativeWindowToolRoutingConsentAndClosedScope(t *testing.T) {
 			}, Observe: func(context.Context, auth.Principal, model.Surface) (model.Observation, error) {
 				ordinary++
 				return model.Observation{}, nil
-			}, ObserveNativeRoot: func(context.Context, auth.Principal, model.Surface, string) (model.Observation, error) {
+			}, ObserveNativeRoot: func(context.Context, auth.Principal, model.Surface, string, ...string) (model.Observation, error) {
 				rootCalls++
 				return model.Observation{}, nil
 			}, ObserveNativeWindow: func(c context.Context, actor auth.Principal, surface model.Surface, title, role string) (model.Observation, error) {

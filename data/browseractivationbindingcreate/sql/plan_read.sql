@@ -1,0 +1,1 @@
+SELECT p.* FROM plan_revisions p WHERE p.namespace=:Namespace AND p.id=:PlanID

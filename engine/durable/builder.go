@@ -26,7 +26,7 @@ import (
 	"github.com/viant/xdatly/handler"
 )
 
-var ErrNeedsReconciliation = errors.New("durable effect is unresolved; reconciliation required before dispatch")
+var ErrNeedsReconciliation = errors.New("durable effect is unresolved; reconciliation required")
 
 type Options struct {
 	ObjectiveEvaluator      *objective.Evaluator
@@ -45,6 +45,9 @@ type Options struct {
 	RefreshVariables func(context.Context, auth.Principal, string, map[string]model.Value) error
 	// VerifyArtifact verifies immutable bytes in the principal-owned artifact root.
 	VerifyArtifact func(context.Context, auth.Principal, data.ArtifactReference) error
+	// ValidateStepOutcome checks a declared outcome contract before intent/input.
+	// It receives the immutable plan and current owned bindings; it must not execute.
+	ValidateStepOutcome func(context.Context, auth.Principal, ReconciliationContext) error
 	// ReconciliationGuard inhibits overlapping execution through late evidence
 	// evaluation and commit. It must independently prove the executor stopped.
 	ReconciliationGuard func(context.Context, auth.Principal, string) (func() error, error)

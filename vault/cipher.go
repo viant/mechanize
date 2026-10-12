@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/json"
 	"github.com/viant/mechanize/artifact"
 	"github.com/viant/scy/kms"
 	"io"
@@ -17,6 +20,37 @@ import (
 type Cipher struct{ Keys artifact.KeyResolver }
 
 var _ kms.Cipher = (*Cipher)(nil)
+
+// Authenticates routing without decrypting another namespace's credentials.
+func (c *Cipher) EnvelopeTag(ctx context.Context, version, namespace, id string, encrypted []byte) ([]byte, error) {
+	if c == nil || c.Keys == nil || ctx.Err() != nil {
+		return nil, ErrUnavailable
+	}
+	key, err := c.Keys.Resolve(ctx, version)
+	defer clear(key)
+	if err != nil || len(key) != 32 {
+		return nil, ErrUnavailable
+	}
+	message, err := json.Marshal([]any{"mechanize.vault.envelope.v1", version, namespace, id, encrypted})
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write(message)
+	return mac.Sum(nil), nil
+}
+
+func (c *Cipher) Ready(ctx context.Context, version string) error {
+	if c == nil || c.Keys == nil || version == "" || ctx.Err() != nil {
+		return ErrUnavailable
+	}
+	key, err := c.Keys.Resolve(ctx, version)
+	defer clear(key)
+	if err != nil || len(key) != 32 || ctx.Err() != nil {
+		return ErrUnavailable
+	}
+	return nil
+}
 
 func (c *Cipher) aead(ctx context.Context, key *kms.Key) (cipher.AEAD, error) {
 	if err := ctx.Err(); err != nil {

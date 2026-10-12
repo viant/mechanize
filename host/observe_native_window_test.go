@@ -37,7 +37,7 @@ func (c *observeWindowHostCaller) Call(ctx context.Context, r native.Request) (n
 			return native.Reply{}, errors.New("invalid fixture request")
 		}
 		scope, ok := params["windowScope"].(map[string]any)
-		if !ok || scope["title"] != "Insert Sheet" || scope["role"] != "window" || params["processStartToken"] != "123:4" {
+		if !ok || scope["title"] != "Insert Sheet" || (scope["role"] != "window" && scope["role"] != "AXWindow") || params["processStartToken"] != "123:4" {
 			return native.Reply{}, errors.New("exact window scope lost")
 		}
 		nodes := []map[string]any{{"ref": "window", "nativeRole": "AXWindow", "name": "Insert Sheet"}, {"ref": "name", "parentRef": "window", "nativeRole": "AXTextField", "name": "Name", "value": "PRIVATE_VALUE"}}

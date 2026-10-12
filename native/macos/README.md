@@ -1,8 +1,18 @@
 # macOS feasibility helper
 
 Development slice, macOS 14+, public AppKit/ApplicationServices/ScreenCaptureKit APIs.
-Build/test with `swift test --package-path native/macos`; executable is
-`native/macos/.build/debug/mechanize-native`. No RobotGo/private WindowServer APIs.
+Capture-bound physical clicks use RobotGo v1.3.5, statically embedded in the
+existing signed helper; AX observation and window/owner checks use native APIs.
+No separate application or clipboard/credential interface is introduced.
+Before `swift test --package-path native/macos`, build the embedded archive:
+
+```
+mkdir -p native/macos/.build/robotgo
+go build -buildmode=c-archive -o native/macos/.build/robotgo/libmechanize_robotgo.a ./native/robotgo-bridge
+```
+
+The development build script runs this step automatically. The executable is
+`native/macos/.build/debug/mechanize-native`. No private WindowServer APIs.
 
 Transport: uint32 big-endian length then JSON; v1, 2 MiB maximum frames. Each
 request needs requestId, method, deadlineRemainingMs (1...30000), params, and
@@ -106,3 +116,36 @@ Application lifecycle `launchTime` is an opaque canonical kernel birth identifie
 have no `NSRunningApplication.launchDate`; inventory, activation, launch receipts,
 AX references, and capture identity rely on the exact same-user libproc birth
 fingerprint. Optional Cocoa date metadata cannot invalidate an unchanged process.
+
+### Automation window indicator
+
+Mechanize uses one top-left computer/VM badge for native and Chrome automation.
+The V is red and the smaller M is blue. The indicator is presentation only: it
+cannot receive clicks, activate an application, authorize input, or read page
+content. It follows the verified native window and hides when another window
+covers that window, its process changes, the operation ends, or its short lease
+expires. A connected but idle broker is not an active-control indication.
+
+Chrome supplies only exact-tab window geometry over its authenticated local
+connection. The helper independently matches the signed browser process and a
+unique OS window. Missing or ambiguous geometry never labels a guessed window.
+Native actions derive the same indicator from their already-verified input or
+accessibility target. There is no model-facing badge command.
+
+The helper runs as an accessory application, with its framed input reader off
+the main actor so AppKit can render and expire the indicator between requests.
+
+### Capture-bound click marker
+
+Pointer capture and delivery use the exact process birth, owned top window,
+active nonsecure console session, capture/fence lifetime and fresh pixel patch.
+An exposed background window may be captured and clicked. Before every mouse
+press, macOS must identify the requested window as the mouse-down recipient;
+other windows, menus and overlays cannot be clicked through by guessing.
+Keyboard input continues to require the exact foreground app and window.
+
+A larger red automation pointer with a white outline marks capture-bound clicks.
+Its nonactivating panel ignores mouse events, contains no page content and hides
+within one second or when the input lease is revoked. It is presentation only,
+not evidence that a click or business operation succeeded. Always observe the
+result after input; a refused or uncertain action must not be silently replayed.

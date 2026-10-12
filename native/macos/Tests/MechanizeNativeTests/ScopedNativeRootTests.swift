@@ -164,3 +164,45 @@ extension ScopedNativeRootTests {
         XCTAssertEqual(parentReads, 1)
     }
 }
+
+extension ScopedNativeRootTests {
+    func testNamedTopMenuSkipsHugeUnrelatedSubtreeAndRetainsExactAncestry()throws {
+        let app=AXUIElementCreateApplication(pid),bar=AXUIElementCreateApplication(42_001),git=AXUIElementCreateApplication(42_002),other=AXUIElementCreateApplication(42_003),push=AXUIElementCreateApplication(42_004)
+        let unrelated=(0..<3000).map{AXUIElementCreateApplication(pid_t(50_000+$0))}
+        var unrelatedReads=0,moved=false
+        let runtime=ScopedNativeRootRuntime(attribute:{element,name in
+            if CFEqual(element,app)&&name==kAXMenuBarAttribute{return (.success,bar)}
+            if CFEqual(element,bar)&&name==kAXRoleAttribute{return (.success,kAXMenuBarRole as CFString)}
+            if CFEqual(element,bar)&&name==kAXChildrenAttribute{return (.success,[git,other] as CFArray)}
+            if name==kAXRoleAttribute{return (.success,kAXMenuBarItemRole as CFString)}
+            if name==kAXTitleAttribute{return (.success,(CFEqual(element,git) ? "Git":"Window") as CFString)}
+            if name==kAXParentAttribute&&CFEqual(element,push){return (.success,moved ? other:git)}
+            if name==kAXParentAttribute{return (.success,app)}
+            if name==kAXChildrenAttribute&&CFEqual(element,other){unrelatedReads+=1;return (.success,unrelated as CFArray)}
+            if name==kAXChildrenAttribute&&CFEqual(element,git){return (.success,[push] as CFArray)}
+            XCTFail("unexpected scoped attribute");return (.attributeUnsupported,nil)
+        },owner:{_ in self.owner()})
+        let proof=try ScopedNativeRoot.resolve(.menuBar,application:app,pid:pid,uid:uid,birth:birth,bundle:bundle,nativeMenu:"Git",check:{},runtime:runtime)
+        XCTAssertTrue(CFEqual(proof.element,git));XCTAssertEqual(proof.nativeMenu,"Git")
+        let (status,children)=runtime.attribute(proof.element,kAXChildrenAttribute)
+        XCTAssertEqual(status,.success);XCTAssertEqual((children as? [AXUIElement])?.count,1);XCTAssertEqual(unrelated.count,3000);XCTAssertEqual(unrelatedReads,0)
+        try proof.validate(referenceElement:push,check:{},runtime:runtime)
+        moved=true;var inputs=0
+        do{try proof.validate(referenceElement:push,check:{},runtime:runtime);inputs+=1;XCTFail("escaped named root")}catch{}
+        XCTAssertEqual(inputs,0);XCTAssertEqual(unrelatedReads,0)
+    }
+    func testNamedTopMenuRejectsDuplicateUnknownForeignAndIncompleteCensus()throws {
+        let app=AXUIElementCreateApplication(pid),bar=AXUIElementCreateApplication(42_001),a=AXUIElementCreateApplication(42_002),b=AXUIElementCreateApplication(42_003)
+        for mode in ["duplicateName","unknownName","foreignOwner","missingTitle","duplicateIdentity","capacity"] {
+            let runtime=ScopedNativeRootRuntime(attribute:{element,name in
+                if CFEqual(element,app){return (.success,bar)}
+                if CFEqual(element,bar)&&name==kAXRoleAttribute{return (.success,kAXMenuBarRole as CFString)}
+                if name==kAXChildrenAttribute{return (.success,(mode=="capacity" ? Array(repeating:a,count:129):mode=="duplicateIdentity" ? [a,a]:[a,b]) as CFArray)}
+                if name==kAXRoleAttribute{return (.success,kAXMenuBarItemRole as CFString)}
+                if mode=="missingTitle"{return (.cannotComplete,nil)}
+                return (.success,(mode=="unknownName" ? "Other":mode=="duplicateName" || CFEqual(element,a) ? "Git":"Window") as CFString)
+            },owner:{element in mode=="foreignOwner"&&CFEqual(element,b) ? self.owner(77):self.owner()})
+            XCTAssertThrowsError(try ScopedNativeRoot.resolve(.menuBar,application:app,pid:pid,uid:uid,birth:birth,bundle:bundle,nativeMenu:"Git",check:{},runtime:runtime),mode)
+        }
+    }
+}

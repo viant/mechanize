@@ -21,6 +21,7 @@ import (
 )
 
 type StepResult struct {
+	Timing            *StepTiming        `json:"timing,omitempty"`
 	Value             *model.Value       `json:"value,omitempty"`
 	Observation       *model.Observation `json:"observation,omitempty"`
 	DispatchState     string             `json:"dispatchState"`
@@ -28,25 +29,42 @@ type StepResult struct {
 	Postcondition     *objective.Result  `json:"postcondition,omitempty"`
 }
 
+// StepTiming is operational metadata only: no arguments, selectors or values.
+// Total ends before the outcome persistence transaction, which stores this
+// record alongside the existing immutable attempt/event correlation.
+type StepTiming struct {
+	StartedAt      string `json:"startedAt"`
+	FinishedAt     string `json:"finishedAt"`
+	PreparationMs  int64  `json:"preparationMs"`
+	ExecutionMs    int64  `json:"executionMs"`
+	VerificationMs int64  `json:"verificationMs"`
+	TotalMs        int64  `json:"totalMs"`
+}
+
 // Execute handles a single action. Durable data operations belong in generated
 // Datly components called by this implementation, not Endly lifecycle hooks.
 type Execute func(context.Context, auth.Principal, model.Step, map[string]model.Value) (StepResult, error)
 type program struct {
-	requestPrincipal auth.Principal
-	consentBinding   auth.ConsentBinding
-	fingerprint      string
-	operationID      string
-	resumed          bool
-	planID           string
-	owner            string
-	plan             model.Plan
-	values           map[string]model.Value
-	outputs          map[string]runtimeOutput
-	ready            chan struct{}
-	admissionErr     error
-	objectiveReady   chan struct{}
-	objectiveCancel  context.CancelFunc
-	businessResult   BusinessResult
+	executionFailure     *ExecutionFailure
+	tabActivationOutcome *TabActivationOutcome
+	originOpeningOutcome *OriginOpeningOutcome
+	requestPrincipal     auth.Principal
+	consentBinding       auth.ConsentBinding
+	fingerprint          string
+	operationID          string
+	resumed              bool
+	pauseRequested       bool
+	cancelRequested      bool
+	planID               string
+	owner                string
+	plan                 model.Plan
+	values               map[string]model.Value
+	outputs              map[string]runtimeOutput
+	ready                chan struct{}
+	admissionErr         error
+	objectiveReady       chan struct{}
+	objectiveCancel      context.CancelFunc
+	businessResult       BusinessResult
 }
 type PreparePlan func(context.Context, auth.Principal, string, string, model.Plan, map[string]model.Value) (string, error)
 type LoadResume func(context.Context, auth.Principal, string, int, string, string) (ResumeSnapshot, error)
@@ -415,6 +433,14 @@ func (r *Runtime) Cancel(ctx context.Context, session, operation string) (*manag
 	if _, err := r.authorize(ctx, session); err != nil {
 		return nil, err
 	}
+	r.mu.Lock()
+	for _, p := range r.programs {
+		if p.owner == session && p.operationID == operation {
+			p.cancelRequested = true
+			p.pauseRequested = false
+		}
+	}
+	r.mu.Unlock()
 	return r.manager.StopOperation(session, operation)
 }
 func newID() string {
@@ -488,8 +514,9 @@ func (r *Runtime) StateMutationGuard(ctx context.Context, actor auth.Principal, 
 	return release, nil
 }
 
-// QuiesceRun stops the live Endly operation and waits for its action/lifecycle
-// completion. Durable pause publication is a separate guarded Datly operation.
+// QuiesceRun records resumable-stop intent before stopping an active operation
+// and waits for both action and objective completion. Explicit owner cancellation
+// remains terminal; durable pause publication uses the guarded Datly lifecycle.
 func (r *Runtime) QuiesceRun(ctx context.Context, actor auth.Principal, runID string) error {
 	actual, err := auth.FromContext(ctx)
 	if err != nil || actual.Namespace != actor.Namespace {
@@ -513,12 +540,24 @@ func (r *Runtime) QuiesceRun(ctx context.Context, actor auth.Principal, runID st
 		return err
 	}
 	if operation.Status == manager.OperationQueued || operation.Status == manager.OperationRunning || operation.Status == manager.OperationCancelling {
+		r.mu.Lock()
+		if r.programs[runID] != p {
+			r.mu.Unlock()
+			return errors.New("run operation changed before pause")
+		}
+		if !p.cancelRequested && operation.Status != manager.OperationCancelling {
+			p.pauseRequested = true
+		}
+		r.mu.Unlock()
 		if _, err = r.manager.StopOperation(p.owner, p.operationID); err != nil {
 			return err
 		}
 	}
 	_, err = r.manager.WaitOperation(ctx, p.owner, p.operationID)
-	return err
+	if err != nil {
+		return err
+	}
+	return r.waitObjective(ctx, p.owner, p.operationID)
 }
 
 // CheckSession binds an enrolled client to the current live automation session.

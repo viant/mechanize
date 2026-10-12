@@ -1,35 +1,118 @@
 # Remaining integration and qualification gates
 
-This inventory compares plan sections 33–36 with the implementation tracker and package evidence. “Done” means the bounded code/test slice exists; it does not mean the release gate is qualified. In particular, passing fixtures do not prove live macOS control, a real enrolled Chrome profile, code signing/TCC attribution, or production reliability. The full goal remains the product definition in [plan.md](../plan.md#33-definition-of-done).
+This inventory describes the checked-in source and fixture coverage. An
+implemented code path does not qualify signed installation, live macOS or Chrome
+control, process-death recovery, or production reliability. See the
+[qualification audit](qualification-audit.md) for the release checklist and the
+[README](../README.md) for the supported architecture. Historical planning and
+implementation-tracker files are not included in this repository; current status
+must be checked against the source and reproducible test results linked here.
 
 ## Priority gates
 
-| Priority / status | Gate and current evidence | Remaining evidence / exact locations |
+| Priority / status | Gate and current implementation | Remaining qualification |
 | --- | --- | --- |
-| P0 — implemented; lifecycle and qualification open | **Native consent to actual dispatch.** `Host.New` composes the Datly-backed `ConsentBroker`, exposes request/status through MCP, optionally starts the private native-console RPC listener from `NativeConsole` config, and routes observe plus Endly step execution through `AuthorizeOperation` before backend calls. Grant-bound leases carry cancellation to the dispatch context. Service, host and local RPC fixtures cover decision separation, once-CAS, expiry, scope/session/purpose binding, fixture revoke cancellation, cleanup uncertainty and transport authorization. | `Host.execute` releases leases for `notDispatched`; dispatched/unknown outcomes still need lifecycle reconciliation that confirms stop and calls `Release` or marks `CleanupUnknown`. Complete that boundary, then demonstrate the configured signed console with provisioned peer requirement and Scy admin enrollment against the packaged host; exercise disposable native/Chrome dispatch, held-input cancellation, helper stop and confirmed cleanup/restart reconciliation end to end. Fixtures do not establish real helper behavior. See `host/host.go`, `host/consent.go`, `host/consent_policy.go`, `host/localrpc/`, `integration/endly/`, `backend/`, and [consent README](../consent/README.md). Plan §36 acceptance still requires live evidence. |
-| P0 — missing qualification | **Signed helper, stable identity and macOS TCC.** Native AX/capture primitives, supervisor fencing/watchdog, permission UI contracts and nonprompting doctor exist. Doctor currently reports AX/input-monitoring unavailable and production identity false. | Sign/notarize the actual packaged app/helper, install and upgrade it, prove helper-specific Accessibility/Screen Recording/Input Monitoring attribution and behavior across restart, locked/active/disconnected sessions, and run a permission-granted disposable fixture with independently checked outcomes. See `native/macos/`, `backend/darwin/`, `session/README.md`; tests are fixtures/nonprompting only. |
-| P0 — implemented transport; qualification open | **Native window capture and encrypted evidence publication.** MCP registers bounded `mechanize_capture_windows` and exact-window `mechanize_capture`; discovery consumes a once grant, so discovery followed by capture needs a session grant. Capture retains one observe lease through helper cleanup, encrypted byte storage and Datly metadata publication. Original inline PNG content is capped at 2 MiB; larger full images remain encrypted and may return explicitly labelled bounded PNG/JPEG previews with logical mapping. Unsafe/unfit previews report `imageReturned: false`. Transport capability does not claim TCC approval. | Demonstrate exact-window capture and Screen Recording TCC attribution with the signed installed helper on disposable native fixtures; exercise revocation, cleanup uncertainty, metadata-acknowledgement reconciliation and unreachable/orphan artifact handling. Whole-display and Chrome capture are outside these tools. Fixture coverage is not live qualification. See `mcp/capture.go`, `host/capture.go`, `backend/darwin/capture_targets.go`, `artifact/README.md`, [capture transport](../backend/darwin/capture.md). |
-| P0 — missing qualification | **Real Chrome enrollment and semantics.** MV3 extension, native host, scoped enrollment, receipts and recording/navigation/delta APIs have fixture tests. | Exercise a disposable real Chrome profile and supported Chrome versions, including native dialog handoff, permission changes, reconnect/stale receipts and semantic outcomes. Production signing/parent identity are explicitly unqualified. See `extension/chrome/README.md`, `backend/chrome/`, `e2e/README.md`. |
-| P0 — partial | **Full objective execution and independent business completion.** Gateway, DSL lowering and Endly→Datly fixture dispatch exist. MCP returns unverified status unless an outcome contract proves business success. | Complete the supported native/Chrome workflow path and authoritative per-adapter business oracle; prove wrong-key/false-success and unknown outcomes cannot report success. See `mcp/`, `integration/`, `engine/durable/`, `data/`, plan §§33.1 and 21. |
-| P1 — partial | **Recording through durable export and replay.** Chrome event capture, bounded journal, generated event reader/writer, compiler and MCP tools are present. Host recording start requires an explicit record grant and holds its consent lease through stop; Endly observations and actions are consent-gated. | Durable end-to-end persistence, secret/gap review and changed-layout/input fixture replay with independent outcome verification remain. See `host/recording.go`, `engine/recording/`, `engine/durable/recording.go`, `mcp/recording.go`, `data/recordevents/`, [recording README](../engine/recording/README.md). |
-| P1 — partial | **Crash-safe Endly restore and state synchronization.** Generated run/effect/checkpoint/artifact/state components, effect barriers, trusted resume permit and a test proving confirmed steps are skipped on reconstructed resume exist. State patching validates transitive dependencies of confirmed effects and holds the host admission guard through durable commit and paused/new runtime refresh. A post-commit read or refresh failure returns committed state with transient `needsAttention`; it does not invent a persisted run status or roll back the write. | Prove broker/helper/Endly process-death recovery and task-path reconstruction end to end; qualify pause/patch/refresh/resume across process death and crash injection at all commit/dispatch boundaries; establish per-object grants. See `engine/durable/README.md`, `engine/durable/state.go`, `data/README.md`, `data/resume_permit.go`, `e2e/README.md`. Fixture builder restart is narrower than full process-death recovery. |
-| P1 — partial | **Scenario catalogue and bounded recovery admission.** Generated immutable scenario publication/listing, scoped keyset pages and proposal-only selection are connected to MCP. Real SQLite/MCP fixtures prove revision/hash/isolation and untrusted review rejection. Generated atomic repair admission and original-ledger lineage are also connected to same-owned Endly resume: the actual fixture covers immutable revisions, budget/CAS, lost-ack reconciliation, preserved original attempts and exactly-once execution of the repaired remaining effect with an independent final objective oracle. This proves a bounded fixture path, not a qualified recovery planner. | Enroll qualified current-environment/provenance/cohort providers; complete recorded proof for untracked read-only prefix steps and remaining state-variable policy; qualify held-out perturbations and wrong-repair/unknown-effect cases. NativeControlManager lifecycle/fence admission is in progress and is not yet integrated into Host. Packaged host lacks trusted recovery authority/runtime-ready production bindings and remains needsAttention. See `scenario/`, `recovery/README.md`, `engine/durable/`, `host/native_control.go`, plan §§21–22. |
-| P1 — partial | **MCP and Scy production acceptance.** Actual viant/mcp runtime, Scy-backed verification, strict verified identity, authenticated HTTP fixture flow and runnable streamable-HTTP MCP/Scy/Endly/Datly e2e cases are implemented. Tracker evidence records five fixture cases and 28 relevant assertions plus readiness; these exercise disposable credentials and fake UI. | Complete installed packaged-binary acceptance, provisioned authenticated stdio enrollment, deployment auth/session/reconnect behavior and the full negative claim/scope/namespace and cross-user resource/event/artifact suite. Fixture coverage does not qualify deployed security or prove all transport modes. Plan §34 and `e2e/README.md` retain the production boundary; see `auth/`, `host/`, and `mcp/`. |
-| P1 — missing qualification | **Packaged deployment and upgrade/rollback.** Local CLI/build and unsigned native app builds are available. | Reproducible clean-machine install, signed extension/helper/native identities, linked Datly sources/resources and Endly runtime, upgrade/rollback/version skew and runbooks. No shipping package/install proof is recorded. See plan §33.1 and `implementation.md` release-gate list. |
-| P1 — missing qualification | **Measured reliability and operational stability.** Cohort-report and qualification concepts exist in the plan; scenario selection uses measured cohort values when available. | Collect raw supported-cohort trials, confidence intervals, exclusions/incidents, held-out recovery outcomes and operational soak/contention/storage/stop/key-outage evidence. No reliability measurements or soak qualification are recorded. See plan §§22, 33.1 and `scenario/README.md`. |
+| P0 — implemented paths; qualification open | **Consent through dispatch and cleanup.** The host composes the Datly-backed consent broker and optional native console. Mutations route through native or web control managers; grants bind the authenticated client, session, scope and purpose. Managers implement stop/retirement and uncertain-cleanup handling. See [host dispatch](../host/host.go), [native control](../host/native_control.go), [web control](../host/web_control.go), and [consent integration](../host/consent.go). | Exercise the signed installed console and helper with provisioned credentials. Demonstrate revoke during input, held-input cleanup, lost receipts, database failure and restart reconciliation. Inspect read-only dispatch lease handling separately from manager-owned mutation cleanup. Fixture cleanup does not prove live helper behavior. |
+| P0 — missing live qualification | **Signed helper and macOS TCC.** Native observation, semantic control, capture, process identity and supervisor fencing have implementations and fixtures. Readiness is checked at runtime; this document does not report the permissions of an installed helper. See [native helper](../native/macos/README.md), [native backend](../backend/darwin/README.md), and [supervisor](../session/README.md). | Sign/notarize, install and upgrade the actual package. Prove helper-specific Accessibility, Screen Recording and applicable input permissions across restart, locked and disconnected sessions, with independently verified disposable-fixture outcomes. |
+| P0 — implemented transport; qualification open | **Window capture and encrypted evidence.** Exact-window capture, discovery, bounded inline previews and encrypted artifact publication are wired through consent. See [capture transport](../backend/darwin/capture.md), [host capture](../host/capture.go), and [artifacts](../artifact/README.md). | Qualify installed-helper TCC attribution, revocation, cleanup uncertainty, metadata acknowledgement loss and orphan artifact handling. Transport capability does not establish permission or universal capture support. |
+| P0 — missing live qualification | **Chrome enrollment and semantics.** The extension, native host, broker, scoped control leases, receipts and retirement paths have implementations and fixtures. See [Chrome backend](../backend/chrome/README.md) and [extension](../extension/chrome/README.md). | Use disposable real profiles and supported Chrome versions to qualify signed enrollment, native dialog handoff, navigation, permission changes, suspension, stale receipts and reconnect. |
+| P0 — partial | **Independent business completion.** The DSL, Endly execution and durable effect ledger are connected. Execution and business verification are reported separately. See [durable execution](../engine/durable/execute.go), [objective completion](../engine/durable/objective.go), and [MCP status](../mcp/server.go). | Enroll authoritative per-adapter outcome providers and qualify exact entity/key matching, false-success rejection and unknown outcomes on supported application cohorts. |
+| P1 — partial | **Recording, export and replay.** The host wires recording when Chrome or a native recording backend is configured, using durable append/read callbacks. See [host composition](../host/host.go), [native recording](../host/native_recording.go), and [durable recording](../engine/durable/recording.go). | Qualify sensitive-field redaction, gaps, retention, stop uncertainty, durable export and changed-input/layout replay with independent outcome verification. |
+| P1 — partial | **Crash recovery and state synchronization.** Guarded state patch/refresh, checkpoints, initial/resumed operation correlation, unknown-effect barriers and confirmed-prefix reuse are implemented. See [state](../engine/durable/state.go), [resume](../engine/durable/resume.go), and [shutdown tests](../host/shutdown_test.go). | Inject actual broker/helper/Endly process death at commit and dispatch boundaries; prove task/session reconstruction, grants, partial restore reporting and pause/patch/resume behavior. Builder reconstruction fixtures are narrower than process-death recovery. |
+| P1 — implemented bounded recovery; qualification open | **Scenario selection and repair admission.** Generated repair admission, immutable revisions, budget/CAS checks and original-ledger lineage are connected to Endly resume. See [lineage integration fixture](../engine/durable/lineage_test.go), [retry tests](../engine/durable/execute_retry_test.go), and [native recovery flow](../host/native_recovery_flow_test.go). | Enroll trusted environment, provenance, cohort and recovery-evidence providers. Qualify read-only prefix proof, held-out perturbations, wrong repairs and unknown effects. Optional source wiring does not establish installed recovery authority. |
+| P1 — partial | **MCP and Scy acceptance.** Authenticated MCP, strict principal identity, bundled skills and disposable Endly/Datly acceptance cases exist. See [authentication](../auth/verifier.go), [MCP](../mcp/server.go), and [e2e coverage](../e2e/README.md). | Qualify packaged stdio/HTTP enrollment, expiry/rotation/reconnect and the full negative-claim and cross-user object/resource matrix. |
+| P1 — missing release qualification | **Deployment and upgrades.** Development packaging and enrollment tooling exist. See [local installation](local-installation.md) and [developer mode](developer-mode.md). | Demonstrate reproducible clean-machine signed installation, source/resource packaging, upgrade/rollback, version skew and operator runbooks. An ad-hoc development build is not release-signing evidence. |
+| P1 — missing measurements | **Reliability and operational stability.** Bounded queues/storage, fences, stop handling and scenario qualification contracts exist. See [scenario selection](../scenario/README.md) and the [qualification audit](qualification-audit.md). | Publish raw cohort trials, confidence bounds, exclusions, false-success/duplicate-effect counts and soak/contention/storage/key-outage results before claiming production reliability. |
 
-## Latest native integration evidence
+## Current integration boundaries
 
-`Host.NewWithOptions` now wires trusted native control providers to supervisor admission, positive pre-intent fence epoch and exact operation consent; `Host.New` and the currently installed developer binary remain observe-only. Native helper source authenticates an exact signed kernel audit-token peer and launched child/start identity before accepting work. These source changes have disposable signed/injected fixtures, not permission-granted live qualification.
+The native helper has source-only, opt-in AX hierarchy invalidation
+(`--allow-ax-observer-invalidation`). Callbacks carry a revision counter rather
+than UI values. Focus/window notifications retire cached references; changes
+during traversal reject the snapshot, and changes during a mutation request
+reject dispatch before its ledger reservation. Existing ownership, scope,
+process-birth and input checks remain required. Unsupported notifications and
+changes without notifications still require fresh validation; observers are not
+a complete change feed. Registration is bounded by AX messaging timeouts and
+shutdown retires callbacks before source removal on the owning run-loop thread.
+This route is not enabled in the installed runtime or enrolled through host
+configuration yet. Live Office notification delivery, replacement and shutdown
+qualification remain open. Typed role/focus readers distinguish absent data from
+failed or malformed AX reads; other attribute readers have not all migrated.
 
-Native stop and consent metadata persistence use independent bounded budgets. The final race fixture passed with clean cleanup, lost receipt, cancellation, deliberately slow metadata and a generated writer deadline failure. Failure reports `cleanupPersistenceUnknown` and retains the physical fence and active dispatch lease. If a database outage prevents the update, the UI may still read the older grant state; reconciliation with the persistent fence remains required. Host shutdown still needs explicit Endly session teardown before database shutdown. The initial unconstrained full suite exposed two native startup timing failures; after fixture readiness correction a bounded-parallelism broad rerun is pending. A pass under bounded parallelism will not establish load qualification for the production two-second identity handshake.
+[Host.New](../host/host.go) calls
+[launchHostOptions](../host/native_launch_config.go), which can build trusted
+native control providers from `NativeLaunch` enrollment, including semantic mode
+and explicitly configured keyboard/frame capabilities. Without that enrollment,
+this path supplies no native control options. `Host.NewWithOptions` also accepts
+trusted injected providers. Both paths remain subject to helper identity,
+readiness, physical-fence, policy and consent checks. Source integration alone
+does not establish that a particular installed binary can mutate the desktop.
 
-## Tracker and README drift
+Native control is integrated into the host. Native stop and consent metadata
+persistence have independent bounded budgets; uncertain cleanup retains authority
+barriers. [Host.Close](../host/host.go) invokes Endly runtime shutdown before
+closing durable storage and preserves storage when runtime shutdown cannot be
+confirmed. Qualify these boundaries under real process failure and load; passing
+fixtures do not establish production handshake or cancellation latency.
 
-- `implementation.md` has advanced substantially beyond its original “all gates initially unverified” section: MCP/Endly/Datly fixture execution, recording tools, resume permit, state tools, native console, host/local RPC and consent enforcement now have evidence entries. Native `mechanize_capture_windows` and `mechanize_capture` are also wired through consent, helper transport, encrypted storage and durable metadata publication, with bounded inline MCP image content. The latest entries additionally record generated atomic repair admission and an actual original-ledger recovery-through-Endly fixture. Treat tracker evidence as bounded implementation/fixture status, not release qualification. Later entries correctly keep live platform, signed provisioning and production gates open.
-- The continuation notes in `implementation.md` still describe consent dispatch and console connection as “underway”/“not fully wired.” Current host code composes the broker and listener and calls authorization on observations and Endly steps; dispatched/unknown lease cleanup plus signed provisioning and installed/live qualification remain open. `NativeControlManager` has lifecycle/fence admission code in `host/native_control.go`, but it is in progress and not integrated into `Host`; do not treat native mutation authority as installed or available. Update the tracker wording when its owner next edits it.
-- The root `mechanize/README.md` calls the complete authenticated MCP gateway, full Chrome runtime, recorder/export and durable recovery “not yet complete.” That summary predates recent tracker additions: MCP gateway/HTTP fixture flow, Chrome runtime/recording APIs, recording compiler/tools and resume support are implemented in bounded slices. The release-level qualifications described above remain incomplete, so the README is stale about implementation progress but directionally right about product completion.
-- [recording README](../engine/recording/README.md) says the generated recording reader/writer root roundtrip remains required, while the tracker records the generated reader and root recording tool integration as implemented. Reconcile the README against the actual latest integration state before using it as an authoritative status source.
-- [session README](../session/README.md), [durable README](../engine/durable/README.md), [data README](../data/README.md), [recovery README](../recovery/README.md) and [e2e README](../e2e/README.md) still distinguish fixture/code progress from their remaining production gates. Their caution about live platform and process-death qualification remains valid.
+## Evidence maintenance
 
-This inventory is intentionally evidence-bounded: it does not infer universal app/browser support, completion percentages or reliability probabilities from passing fixtures.
+- Keep source status separate from installed-platform qualification. Record the
+  command, revision, platform, outcome and exercised scope for each test run.
+- The [regeneration script](../data/scripts/regenerate.sh) includes the generated
+  reconciliation and stop-boundary components. Compare its inventory with
+  `data/source/` whenever adding a use case, and validate regeneration against
+  the pinned Datly executable and an infrastructure-provisioned discovery schema.
+- Use the [e2e README](../e2e/README.md) for the bounded acceptance-case matrix;
+  its recorded fixture results do not cover live desktop or process-death tests.
+- Keep this inventory and the [qualification audit](qualification-audit.md)
+  aligned with source changes. Do not infer completion percentages, universal
+  application support or reliability probabilities from fixture pass counts.
+
+## Native outcome admission correction (October 5, 2026)
+
+An edited-copy Word Open Recent action was menuBar-scoped but declared a separate
+window-root text comparison. Dispatch did not produce the expected window and
+late reconciliation rejected the boundary transition. The original unknown
+effect remains stopped and preserved. The edited-copy reopen is not qualified.
+
+New source applies the enrolled native recovery contract's process, root, window,
+ancestor and declared-read checks before durable intent/input. Literal scoped-root
+substitutions are also rejected by model validation; references are checked after
+owned bindings resolve. Confirmed historical effects return before this new
+admission hook, and no stored predicate or effect is rewritten. Tests prove that
+a rejected root reference or trusted admission callback creates no attempt/effect
+and calls no input executor. This guard has not been rolled into the installed
+broker, so live prevention remains an installation gate.
+
+The parameterized Word frame-focus emitter now takes exact windowTitle and checks
+the AXTextArea focused flag inside that window. It is parser-validated only;
+the historical live click and its old predicate remain separate evidence.
+
+## Independent feature improvements (October 5, 2026; source only)
+
+External projects are feature references, not implementations to port. The direct
+AXSwift adaptation was removed. Mechanize’s existing native checked-state reader
+now permits fallback only for explicit missing-value statuses without a payload;
+failed or contradictory reads remain uncertain.
+
+Mechanize’s Chrome worker independently shares an in-flight connection attempt
+across trusted setup pages, preventing overlapping native transports. Tests cover
+explicit reconnect after failure and retain the existing scope/recovery gates.
+BrowserOS is a design reference for the independent native Browsers tab. No
+upstream controller is invoked, no new dependency is added, and no historical
+unknown effect is changed. Source tests are not installed/live qualification.
+
+## Bounded native hierarchy reads (installed observation qualification)
+
+The native snapshot producer now obtains AXChildren via a count and bounded
+prefix read, instead of fetching the complete array before limiting traversal.
+At most 1001 children are requested for each element. Changed counts, short reads,
+malformed arrays and transport errors mark coverage incomplete; unsupported array
+APIs do not trigger an unbounded fallback. Budget checks surround the API calls.
+Tests cover huge counts, count changes, malformed data and stable small arrays.
+This generic behavior is in Mechanize, not an Office skill. A helper-only update
+was installed with unchanged broker identity. Fresh MCP observations returned
+complete Word and Excel disposable-window trees (100 and 129 nodes respectively).
+This is two-window observation qualification, not production-wide AX coverage.
