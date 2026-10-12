@@ -115,6 +115,12 @@ func (s *credentialService) retireAbsentCredentialSources(ctx context.Context, p
 			return errPrivateCredential
 		}
 		for _, snapshot := range scopes {
+			if snapshot.Scope.ClientID != p.ClientID && snapshot.Scope.Origin == targetOrigin && !snapshot.Scope.Exact() {
+				if e := s.retireAbandonedControllerPreflight(held, p, snapshot); e != nil {
+					return e
+				}
+				continue
+			}
 			if snapshot.Scope.ClientID != p.ClientID || snapshot.Scope.Origin != targetOrigin {
 				return errOtherCredentialScopeHeld
 			}

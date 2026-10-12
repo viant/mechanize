@@ -27,10 +27,12 @@ import (
 )
 
 type credentialHostFixtureHooks struct {
-	origin      string
-	storageRoot func(string)
-	configure   func(*credentialBrowserFixture)
-	exercise    func(*testing.T, *Host, context.Context, auth.Principal, gateway.CredentialRefInput, gateway.CredentialPrepareInput, *credentialBrowserFixture, *atomic.Int64)
+	clientID          string
+	successorClientID string
+	origin            string
+	storageRoot       func(string)
+	configure         func(*credentialBrowserFixture)
+	exercise          func(*testing.T, *Host, context.Context, auth.Principal, gateway.CredentialRefInput, gateway.CredentialPrepareInput, *credentialBrowserFixture, *atomic.Int64)
 }
 
 type protectionWorkerRequest struct {

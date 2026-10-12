@@ -28,11 +28,17 @@ func credentialLifecycleSnapshot(t *testing.T, h *Host, ctx context.Context, p a
 	}
 	return prep, attempts
 }
-func prepareForeignLifecycleFixture(t *testing.T, h *Host, p auth.Principal, input gateway.CredentialPrepareInput) (gateway.CredentialResult, auth.Principal, string) {
+func prepareForeignLifecycleFixture(t *testing.T, h *Host, p auth.Principal, input gateway.CredentialPrepareInput, clientIDs ...string) (gateway.CredentialResult, auth.Principal, string) {
 	t.Helper()
 	foreign := p
 	foreign.ClientID = "successor-fixture-agent"
 	foreign.ClientName = "Successor fixture agent"
+	if len(clientIDs) > 1 {
+		t.Fatal("one successor identity required")
+	}
+	if len(clientIDs) == 1 {
+		foreign.ClientID = clientIDs[0]
+	}
 	ctx := auth.WithPrincipal(context.Background(), foreign)
 	opened, err := h.Runtime.Open(ctx, "Successor lifecycle fixture")
 	if err != nil {

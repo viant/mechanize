@@ -43,12 +43,16 @@ func TestCredentialHostCompositionReusableConsentAndDurableFailedProbe(t *testin
 }
 func credentialHostFixtureFlow(t *testing.T, mode string, hooks ...credentialHostFixtureHooks) {
 	origin := "https://fixture.invalid"
+	fixtureClient := "fixture-agent"
 	var hook credentialHostFixtureHooks
 	if len(hooks) > 1 {
 		t.Fatal("one fixture hook required")
 	}
 	if len(hooks) == 1 {
 		hook = hooks[0]
+		if hook.clientID != "" {
+			fixtureClient = hook.clientID
+		}
 		if hook.origin != "" {
 			origin = hook.origin
 		}
@@ -65,16 +69,17 @@ func credentialHostFixtureFlow(t *testing.T, mode string, hooks ...credentialHos
 		t.Fatal(e)
 	}
 	_, file, _, _ := runtime.Caller(0)
-	h, e := New(context.Background(), Config{SourceRoot: filepath.Dir(filepath.Dir(file)), StorageRoot: root, Keys: verifier.Config{HMAC: &scy.Resource{URL: key}}, IdentityPolicy: auth.Policy{Issuer: "fixture", Audience: "mechanize", Algorithms: []string{"HS256"}, Clients: map[string]string{"fixture-agent": "Fixture"}}, Users: []User{{Subject: "actor", DesktopAccess: true}}})
+	h, e := New(context.Background(), Config{SourceRoot: filepath.Dir(filepath.Dir(file)), StorageRoot: root, Keys: verifier.Config{HMAC: &scy.Resource{URL: key}}, IdentityPolicy: auth.Policy{Issuer: "fixture", Audience: "mechanize", Algorithms: []string{"HS256"}, Clients: map[string]string{fixtureClient: "Fixture"}}, Users: []User{{Subject: "actor", DesktopAccess: true}}})
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer h.Close(context.Background())
+
 	if h.credentials == nil || h.credentials.host != h {
 		t.Fatal("production host did not compose private service")
 	}
 	p, _ := auth.NewPrincipal("fixture", "", "actor", []string{"desktop:control", "desktop:observe", "consent:admin"})
-	p.ClientID = "fixture-agent"
+	p.ClientID = fixtureClient
 	p.ClientName = "Fixture"
 	ctx := auth.WithPrincipal(context.Background(), p)
 	human, _ := auth.WithNativeHuman(ctx)
@@ -125,6 +130,18 @@ func credentialHostFixtureFlow(t *testing.T, mode string, hooks ...credentialHos
 	decide, _ := json.Marshal(map[string]any{"requestID": request.ID, "decision": consent.AllowUntilRevoked})
 	if _, e = h.consent.NativeRPC(human, "decide", decide); e != nil {
 		t.Fatal(e)
+	}
+	if strings.HasPrefix(fixtureClient, "controller:") {
+		// Fake only the externally verified controller-port lifetime. The real
+		// consent service, grants and actual actor context remain exercised.
+		h.consent.options.ControllerPolicy = func(c context.Context, actor auth.Principal) (context.Context, time.Time, func(), error) {
+			if (actor.ClientID != fixtureClient && actor.ClientID != hook.successorClientID) || auth.NativeHuman(c) {
+				return nil, time.Time{}, nil, auth.ErrUnauthorized
+			}
+			expires := time.Now().Add(2 * time.Minute)
+			bound, cancel := context.WithDeadline(c, expires)
+			return bound, expires, cancel, nil
+		}
 	}
 	input := gateway.CredentialPrepareInput{SessionID: session.SessionID, Purpose: "login", Surface: model.Surface{Kind: "web", Origin: origin}}
 	switch mode {

@@ -15,15 +15,26 @@ import (
 // LoadCredentialRecovery is an internal metadata reader under the actual user
 // lock. It never reads the Vault or returns data directly to a tool caller.
 func (b *Builder) LoadCredentialRecovery(ctx context.Context, p auth.Principal, id string) (data.CredentialPreparationRecord, []data.CredentialDeliveryRecord, error) {
-	return readCredentialRecovery(ctx, p, id, func(c context.Context, r exec.ComponentRequest) (any, error) {
+	clientID := p.ClientID
+	if scope, ok := data.CredentialPreflightLifecycleScope(ctx); ok {
+		if scope.Namespace != p.Namespace || scope.PreparationID != id {
+			return data.CredentialPreparationRecord{}, nil, data.ErrCredentialDeliveryAuthority
+		}
+		// This value selects metadata only. Invocation retains the actual principal.
+		clientID = scope.ClientID
+	}
+	return readCredentialRecoveryClient(ctx, p.Namespace, clientID, id, func(c context.Context, r exec.ComponentRequest) (any, error) {
 		return b.invokeCredentialDeliveryComponent(c, p, r)
 	})
 }
 
 func readCredentialRecovery(ctx context.Context, p auth.Principal, id string, invoke func(context.Context, exec.ComponentRequest) (any, error)) (data.CredentialPreparationRecord, []data.CredentialDeliveryRecord, error) {
+	return readCredentialRecoveryClient(ctx, p.Namespace, p.ClientID, id, invoke)
+}
+func readCredentialRecoveryClient(ctx context.Context, namespace, clientID, id string, invoke func(context.Context, exec.ComponentRequest) (any, error)) (data.CredentialPreparationRecord, []data.CredentialDeliveryRecord, error) {
 	in := &credentialrecoveryload.CredentialRecoveryLoadInput{}
-	in.SetNamespace(p.Namespace)
-	in.SetClientID(p.ClientID)
+	in.SetNamespace(namespace)
+	in.SetClientID(clientID)
 	in.SetPreparationID(id)
 	value, e := invoke(ctx, exec.ComponentRequest{Target: credentialDeliveryTarget("credentialrecoveryload", "CredentialRecoveryLoad", "GET"), Input: in})
 	if e != nil {
@@ -41,7 +52,7 @@ func readCredentialRecovery(ctx context.Context, p auth.Principal, id string, in
 		data.CredentialPreparationRecord
 		Deliveries []data.CredentialDeliveryRecord `json:"deliveries"`
 	}
-	if json.Unmarshal(raw, &snapshot) != nil || snapshot.Namespace != p.Namespace || snapshot.ClientID != p.ClientID || snapshot.PreparationID != id || len(snapshot.Deliveries) > 512 {
+	if json.Unmarshal(raw, &snapshot) != nil || snapshot.Namespace != namespace || snapshot.ClientID != clientID || snapshot.PreparationID != id || len(snapshot.Deliveries) > 512 {
 		return data.CredentialPreparationRecord{}, nil, data.ErrCredentialDeliveryAuthority
 	}
 	return snapshot.CredentialPreparationRecord, snapshot.Deliveries, nil

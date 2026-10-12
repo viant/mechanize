@@ -27,7 +27,7 @@ type credentialCleanupAuthority struct {
 // An empty complete child snapshot represents an unfilled preparation; it still
 // requires the same independently proved browser retirement and CAS closure.
 func WithCredentialCleanupAuthority(ctx context.Context, r CredentialPreparationRecord, attempts []CredentialDeliveryRecord, guard func(context.Context) error) (context.Context, func(), error) {
-	return withCredentialCleanupAuthority(ctx, r, attempts, "", guard)
+	return withCredentialCleanupAuthority(ctx, r, attempts, "", guard, false)
 }
 
 // WithCredentialPreflightCleanupAuthority cannot retire a delivery attempt.
@@ -35,7 +35,7 @@ func WithCredentialCleanupAuthority(ctx context.Context, r CredentialPreparation
 // snapshot under the held user lock before its generated CAS may use this seal.
 // Guard proves that no private input or admission remains pending in the broker.
 func WithCredentialPreflightCleanupAuthority(ctx context.Context, r CredentialPreparationRecord, guard func(context.Context) error) (context.Context, func(), error) {
-	sealed, stop, e := withCredentialCleanupAuthority(ctx, r, nil, "", guard)
+	sealed, stop, e := withCredentialCleanupAuthority(ctx, r, nil, "", guard, true)
 	if e != nil {
 		return nil, nil, e
 	}
@@ -63,7 +63,7 @@ func WithCredentialRetirementAuthority(ctx context.Context, r CredentialPreparat
 	if retiredBirth == "" {
 		return nil, nil, ErrCredentialDeliveryAuthority
 	}
-	return withCredentialCleanupAuthority(ctx, r, attempts, retiredBirth, guard)
+	return withCredentialCleanupAuthority(ctx, r, attempts, retiredBirth, guard, false)
 }
 
 // WithCredentialSourceAbsenceAuthority is the exact-document counterpart of
@@ -89,13 +89,13 @@ func WithCredentialSourceAbsenceAuthority(ctx context.Context, r CredentialPrepa
 			return nil, nil, ErrCredentialDeliveryAuthority
 		}
 	}
-	return withCredentialCleanupAuthority(ctx, r, attempts, birth, guard)
+	return withCredentialCleanupAuthority(ctx, r, attempts, birth, guard, false)
 }
 
-func withCredentialCleanupAuthority(ctx context.Context, r CredentialPreparationRecord, attempts []CredentialDeliveryRecord, retiredBirth string, guard func(context.Context) error) (context.Context, func(), error) {
+func withCredentialCleanupAuthority(ctx context.Context, r CredentialPreparationRecord, attempts []CredentialDeliveryRecord, retiredBirth string, guard func(context.Context) error, preflightOnly bool) (context.Context, func(), error) {
 	p, e := auth.FromContext(ctx)
 	c, ok := auth.ConsentBindingFromContext(ctx)
-	if e != nil || p.Validate() != nil || !p.HasScope("desktop:control") || p.ClientID == "" || p.Namespace != r.Namespace || p.ClientID != r.ClientID || !ok || c.SessionID == "" || c.GrantID == "" || c.Purpose == "" || guard == nil || !credentialDeliveryGuard(ctx, guard) || r.ProtectionState != "held" || r.Revision != 1 || !deliveryHex.MatchString(r.PreparationID) || len(attempts) > 512 {
+	if e != nil || p.Validate() != nil || !p.HasScope("desktop:control") || p.ClientID == "" || p.Namespace != r.Namespace || (p.ClientID != r.ClientID && !(preflightOnly && len(attempts) == 0 && retiredBirth == "" && credentialPreflightLifecyclePreparationMatches(ctx, r))) || !ok || c.SessionID == "" || c.GrantID == "" || c.Purpose == "" || guard == nil || !credentialDeliveryGuard(ctx, guard) || r.ProtectionState != "held" || r.Revision != 1 || !deliveryHex.MatchString(r.PreparationID) || len(attempts) > 512 {
 		return nil, nil, ErrCredentialDeliveryAuthority
 	}
 	if _, e = RequireScope(ctx, r.Namespace); e != nil {
@@ -118,7 +118,7 @@ func requireCredentialCleanup(ctx context.Context) *credentialCleanupAuthority {
 		return nil
 	}
 	p, e := auth.FromContext(ctx)
-	if e != nil || !p.HasScope("desktop:control") || p.Namespace != a.preparation.Namespace || p.ClientID != a.preparation.ClientID {
+	if e != nil || !p.HasScope("desktop:control") || p.Namespace != a.preparation.Namespace || (p.ClientID != a.preparation.ClientID && !(a.preflightOnly && len(a.attempts) == 0 && credentialPreflightLifecyclePreparationMatches(ctx, a.preparation))) {
 		return nil
 	}
 	return a

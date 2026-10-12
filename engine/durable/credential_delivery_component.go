@@ -73,7 +73,7 @@ func (b *Builder) invokeCredentialDeliveryComponent(ctx context.Context, p auth.
 		// Generated reader independently restricts exact namespace/client/preparation.
 	} else if request.Target.Component.Name == "CredentialPreparationFinish" || request.Target.Component.Name == "CredentialPreparationReserve" || request.Target.Component.Name == "CredentialPreparationGet" {
 		a, err := data.RequireCredentialPreparationAuthority(ctx)
-		if err != nil || a.Namespace != p.Namespace || a.ClientID != p.ClientID {
+		if err != nil || a.Namespace != p.Namespace || (a.ClientID != p.ClientID && (request.Target.Component.Name == "CredentialPreparationReserve" || !data.CredentialPreflightLifecycleMatches(ctx, a.Namespace, a.ClientID, a.PreparationID))) {
 			return nil, auth.ErrUnauthorized
 		}
 	} else {
