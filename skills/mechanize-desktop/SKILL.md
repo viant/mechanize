@@ -12,7 +12,9 @@ until the server reports the relevant authorization and the result is verified.
 
 ## Workflow
 
-1. **Discover.** Call `mechanize_capabilities` and `mechanize_describe`. Treat
+1. **Discover.** Call `mechanize_capabilities` once. Read `mechanize_describe`
+   when additional syntax or workflow schema is needed; avoid duplicate full
+   discovery on each action. Treat
    their live capability map, method descriptions and policy as authoritative;
    do not infer support from a method name or an example. Observed node
    `actions` and `valueSettable` metadata guide target choice but are not
@@ -256,8 +258,12 @@ separate per-use Vault approval. `needsConfiguration` means the native Vault
 needs an unambiguous matching record; do not ask for credentials in chat.
 
 Never pass usernames, passwords, record contents or a caller-selected record ID
-to these tools. Do not capture or ordinarily observe a login form to work around
-private qualification. Follow the returned state before submitting through
+to these tools. Credential protection applies to the exact protected web DOM;
+it is not a desktop-wide observation prohibition. Authorized native screenshots
+and metadata retain their normal consent checks. Use masked visual state for
+layout or navigation when needed, but never reveal a password or use DOM reads
+or public input methods to bypass the private credential flow. Follow the
+returned state before submitting through
 `mechanize_credential_submit`; unknown attempts must never be replayed. A bank's
 MFA or other real challenge can still require local user action. Credential
 submission is not evidence of successful sign-in or a completed payment.
