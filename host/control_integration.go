@@ -102,7 +102,33 @@ func (h *Host) controlLeaseEpoch(ctx context.Context, p auth.Principal) (int, er
 	return admission.Epoch, nil
 }
 
-func (h *Host) nativeControlPolicy(ctx context.Context, p auth.Principal, caps map[string]bool) bool {
+func nativeControlAdmissionReason(err error) string {
+	switch {
+	case errors.Is(err, ErrNativeControlCleanupUnknown), errors.Is(err, session.ErrCleanupUnknown):
+		return "nativeCleanupUnknown"
+	case errors.Is(err, session.ErrNoLease), errors.Is(err, session.ErrContended):
+		return "nativeLeaseUnavailable"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "nativeAdmissionDeadline"
+	case errors.Is(err, context.Canceled):
+		return "nativeAdmissionCancelled"
+	case errors.Is(err, auth.ErrUnauthorized):
+		return "nativeAdmissionUnauthorized"
+	default:
+		return "nativeControlUnqualified"
+	}
+}
+func nativeControlUnavailable(caps map[string]bool, reasons []map[string]string, reason string) {
+	if len(reasons) == 0 || reasons[0] == nil {
+		return
+	}
+	for _, name := range []string{"appLaunch", "appActivation", "appQuit", "semanticPress", "replaceValue", "semanticSubmit", "targetedFocus", "targetedKeyboard", "sessionKeyboard", "windowSessionText", "windowFrameClick"} {
+		key := "native:" + name
+		caps[key] = false
+		reasons[0][key] = reason
+	}
+}
+func (h *Host) nativeControlPolicy(ctx context.Context, p auth.Principal, caps map[string]bool, reasons ...map[string]string) bool {
 	tabActivation := caps["web:browser.activateTab"] && p.HasScope("desktop:control")
 	originOpening := caps["web:browser.openOrigin"] && p.HasScope("desktop:control")
 	// A native grant cannot qualify a renderer or browser executor generation.
@@ -132,9 +158,15 @@ func (h *Host) nativeControlPolicy(ctx context.Context, p auth.Principal, caps m
 		}
 	}
 	if h.nativeControl == nil || !p.HasScope("desktop:control") {
+		reason := "nativeControlUnqualified"
+		if !p.HasScope("desktop:control") {
+			reason = "nativeAdmissionUnauthorized"
+		}
+		nativeControlUnavailable(caps, reasons, reason)
 		return webMutation
 	}
 	if _, err := h.admitNativeControl(ctx, p); err != nil {
+		nativeControlUnavailable(caps, reasons, nativeControlAdmissionReason(err))
 		return webMutation
 	}
 	caps["native:appLaunch"] = true

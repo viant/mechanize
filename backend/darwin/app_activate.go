@@ -21,7 +21,10 @@ type applicationIdentity struct {
 func (g *Gateway) currentApplication(ctx context.Context, surface model.Surface) (applicationIdentity, error) {
 	reply, err := g.call(ctx, "apps.list", map[string]any{"expectedApp": surface.BundleID}, nil)
 	if err != nil || reply.Error != nil {
-		return applicationIdentity{}, errors.Join(err, reply.Error)
+		if reply.Error != nil {
+			err = errors.Join(err, reply.Error)
+		}
+		return applicationIdentity{}, err
 	}
 	var inventory struct {
 		Complete bool                  `json:"complete"`
@@ -89,7 +92,10 @@ func (g *Gateway) activateApp(ctx context.Context, p auth.Principal, step model.
 		}
 	}
 	if err != nil || reply.Error != nil {
-		return result, errors.Join(err, reply.Error)
+		if reply.Error != nil {
+			err = errors.Join(err, reply.Error)
+		}
+		return result, err
 	}
 	if result.DispatchState != "dispatched" {
 		return result, nativeError("activationOutcomeUnknown", "Activation receipt unavailable; reconcile before replay")

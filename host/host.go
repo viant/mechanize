@@ -541,7 +541,7 @@ func (h *Host) Policy(ctx context.Context, p auth.Principal) (script.Policy, err
 			}
 		}
 	}
-	allowMutation := h.nativeControlPolicy(ctx, p, caps)
+	allowMutation := h.nativeControlPolicy(ctx, p, caps, reasons)
 	if nativeReadReady && nativeSemanticMenuSupported && caps["native:semanticPress"] {
 		caps["native:semanticMenu"] = true
 	}

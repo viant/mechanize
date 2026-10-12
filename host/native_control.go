@@ -468,6 +468,16 @@ type nativeControlCaller struct {
 	held    *nativeControlHeld
 }
 
+// These exact helper methods post no input and install no authority. Their
+// transport failure is unavailable observation, not unknown key/button state.
+func nativeRequestIsReadOnly(method string) bool {
+	switch method {
+	case "doctor", "apps.list", "elements.snapshot", "elements.read", "elements.valueMatches", "windows.list", "app.exitStatus":
+		return true
+	}
+	return false
+}
+
 func (c *nativeControlCaller) Call(ctx context.Context, request native.Request) (native.Reply, error) {
 	actual, _, err := c.manager.actor(ctx, c.held.principal, c.held.scope)
 	if err != nil {
@@ -547,6 +557,12 @@ func (c *nativeControlCaller) Call(ctx context.Context, request native.Request) 
 	}
 	// Serialize dispatch with revocation so an admitted request cannot race teardown.
 	reply, callErr := c.held.helper.Call(ctx, request)
+	if nativeRequestIsReadOnly(request.Method) {
+		// The earlier admission still rejects an already-inhibited helper.
+		// Preserve cancellation/transport errors without writing a new raw-input
+		// barrier, and never publish a late read as successful after cancellation.
+		return reply, errors.Join(callErr, ctx.Err())
+	}
 	var transport *native.TransportError
 	var applicationFailure *native.NativeError
 	unknownMutation := (request.Method == "elements.replaceText" || request.Method == "windows.clickFrame" || request.Method == "app.quit") && errors.As(callErr, &applicationFailure) && applicationFailure.DispatchState == "unknown"
