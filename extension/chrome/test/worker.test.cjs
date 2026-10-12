@@ -2652,3 +2652,29 @@ test('successful authenticated recovery renews the event budget across two episo
  sourceCommitted(f,{tabId:7,frameId:0,documentId:'second-recovered'});await waitRetry(f,()=>f.messages.some(m=>m.type==='executorPrepared'));
  assert.equal(f.state.nativeConnections,before+1);assert.equal(f.recoveryEventCount(),0);assert.equal(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending),pending);assert.equal(JSON.stringify(f.storage.mechanizeReconnect.history.slice(0,first.history.length)),firstHistory);assert.equal(f.state.deliveries,0);assert.equal(f.state.permissionRequests||0,0);
 });
+
+test('adoption refusals expose finite existing causes while retaining pending lineage and no input',async()=>{
+ for(const mode of ['shape','identity','generation','receipt','inventory']){
+  const f=await reconnectFixture(),priorGrant=JSON.stringify(f.storage.lastGrant);
+  f.state.renderer=async(_tab,message)=>{
+   if(message.type!=='brokerReconnect')throw Error('fixture unsupported');
+   const response={nonce:message.nonce,phase:message.phase==='inspect'?'inspected':message.phase==='prepare'?'prepared':'adopted',identity:{...message.newBinding.identity,documentGeneration:2},...(message.phase==='inspect'?{version:1}:{receiptRevision:0,receiptCount:0,quiescent:true})};
+   if(message.phase==='adopt'){if(mode==='shape')response.nonce='PRIVATE_CANARY';if(mode==='identity')response.identity.documentId='PRIVATE_CANARY';if(mode==='generation')response.identity.documentGeneration=1;if(mode==='receipt')response.receiptRevision=response.receiptCount=1;if(mode==='inventory')f.state.inventoryTabs=[];}
+   return response;
+  };
+  await f.receive({...restartQualification(),brokerEpoch:'adopt-test',channelEpoch:'adopt-test'});
+  const attention=f.messages.find(m=>m.type==='attention'&&m.error?.code==='storedFenceMismatch');assert.equal(attention.reconnectPhase,'adopt',mode);assert.equal(attention.reconnectReason,({shape:'executorRefused',identity:'documentChanged',generation:'documentChanged',receipt:'unknownReceipts',inventory:'inventoryChanged'})[mode]);if(mode==='inventory')assert.equal(attention.reconnectInventoryReason,'inventoryDrift');
+  assert.ok(!JSON.stringify(attention).includes('PRIVATE_CANARY'));assert.equal(f.storage.mechanizeReconnect.phase,'pending');assert.deepEqual(Array.from(f.storage.mechanizeReconnect.history),[]);assert.equal(JSON.stringify(f.storage.lastGrant),priorGrant);assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.state.deliveries,0);
+ }
+});
+test('committed adoption capacity is reserved before any renderer handoff or journal mutation',async()=>{
+ const f=await reconnectFixture();let record;
+ for(let per=16;per<=25;per++){
+  const history=Array.from({length:36},(_,i)=>({nonce:(100+i).toString(16).padStart(64,'0'),oldFence:{...grant,brokerEpoch:'h'+i,channelEpoch:'h'+i},newFence:i===35?{...grant}:{...grant,brokerEpoch:'h'+(i+1),channelEpoch:'h'+(i+1)},executors:Array.from({length:per},(_,n)=>({identity:{...identity,tabId:n+20,documentId:'fixture-'+n+'x'.repeat(80)},receiptRevision:3,receiptCount:3}))}));
+  const tail=history.at(-1),candidate={version:1,phase:'adopted',nonce:tail.nonce,oldFence:tail.oldFence,newFence:tail.newFence,history};
+  if(JSON.stringify(candidate).length>200000&&JSON.stringify(candidate).length<215000){record=candidate;break;}
+ }
+ assert.ok(record);assert.equal(f.journalValid(record,f.storage.lastGrant),true);f.storage.mechanizeReconnect=record;f.state.frameCount=200;
+ const original=JSON.stringify(record),priorGrant=JSON.stringify(f.storage.lastGrant);await f.receive({...restartQualification(),brokerEpoch:'budget-next',channelEpoch:'budget-next'});
+ const attention=f.messages.find(m=>m.type==='attention'&&m.error?.code==='storedFenceMismatch');assert.equal(attention.reconnectReason,'journalChanged');assert.equal(attention.reconnectJournal.reason,'historyLimit');assert.equal(attention.reconnectPhase,'inventory');assert.equal(JSON.stringify(f.storage.mechanizeReconnect),original);assert.equal(JSON.stringify(f.storage.lastGrant),priorGrant);assert.equal(f.state.reconnectCalls,undefined);assert.equal(f.state.deliveries,0);assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));
+});

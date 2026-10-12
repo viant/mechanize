@@ -1438,17 +1438,24 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
   if(!reconnectSourceInventoryValid(sourceInventory))throw reconnectInventoryRefuse('frameMetadataInvalid');
   let pending={sourceInventory,version:recovering?journal.version+1:journal?.version>=2?journal.version:1,phase:"pending",nonce,oldFence,newFence,history:journal?.history||[],...(journal?.archive?{archive:journal.archive}:{}),
     ...(recovering?{recovery:{kind:recoveryBinding?"verifiedCurrentDocuments":"emptySetupDocuments",originalPending:journal}}:journal?.version>=2?{recovery:journal.recovery}:{})};
-  // Bound and validate the exact next pending shape before any journal write.
-  try{reconnectPendingWireBound(pending);}catch(error){
+  // Reserve the largest permitted adoption proof BEFORE writing pending or
+  // asking any renderer to retire/adopt. The actual generation/counts can grow
+  // during preparation, but their numeric bounds cannot exceed this budget.
+  const committedBudget=record=>({...record,phase:'adopted',history:[...record.history,{nonce,oldFence,newFence,executors:snapshot.documents.map(item=>({identity:{...Object.fromEntries(['profileChannel','browserInstance','tabId','frameId','documentId'].map(key=>[key,item[key]])),documentGeneration:Number.MAX_SAFE_INTEGER},receiptRevision:512,receiptCount:512}))}]});
+  const checkCandidateBudget=()=>{reconnectPendingWireBound(pending);reconnectCanonical(committedBudget(pending));};
+  // An existing embedded predecessor may use the established immutable archive.
+  // Other capacity failures remain explicit and leave the current journal intact.
+  try{checkCandidateBudget();}catch(error){
     const predecessor=recovering?journal:journal.recovery?.originalPending;
     if(error?.journalReason!=='historyLimit'||!predecessor)throw error;
     const originalPendingRef=await archiveReconnectPending(predecessor,predecessor.oldFence,barriers,qualification,journal);
     pending={...pending,recovery:{kind:pending.recovery.kind,originalPendingRef}};
     reconnectDiagnosticReason='none';reconnectJournalDiagnostic.reason='none';
-    reconnectPendingWireBound(pending);
+    checkCandidateBudget();
   }
   if(!pendingReconnectValid(pending,previous))throw reconnectJournalRefuse("lineageInvalid");
   await verifyReconnectArchives(pending,qualification);
+  if(!reconnectJournalValid(committedBudget(pending),candidate))throw reconnectJournalRefuse('lineageInvalid');
   const proofs=[];
   async function exchange(identity,phase,revision,sourceFence=oldFence,allowRefusal=false) {
     await barriers();
@@ -1461,16 +1468,16 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
     if(result?.error){if(allowRefusal)return null;throw reconnectRefuse("executorRefused");}
     current();
     if(phase==="inspect") {
-      if(!result || Object.keys(result).sort().join()!=="identity,nonce,phase,version" || result.version!==1 || result.phase!=="inspected" || result.nonce!==nonce ||
-         !result.identity || ["profileChannel","browserInstance","tabId","frameId","documentId"].some(k=>result.identity[k]!==identity[k]))throw reconnectFail();
+      if(!result || Object.keys(result).sort().join()!=="identity,nonce,phase,version" || result.version!==1 || result.phase!=="inspected" || result.nonce!==nonce)throw reconnectRefuse('executorRefused');
+      if(!result.identity || ["profileChannel","browserInstance","tabId","frameId","documentId"].some(k=>result.identity[k]!==identity[k]))throw reconnectRefuse('documentChanged');
       return result;
     }
     if(!result || Object.keys(result).sort().join()!=="identity,nonce,phase,quiescent,receiptCount,receiptRevision" || result.nonce!==nonce ||
-       result.phase!==(phase==="prepare"?"prepared":"adopted") || result.quiescent!==true ||
-       !result.identity || Object.keys(result.identity).sort().join()!=="browserInstance,documentGeneration,documentId,frameId,profileChannel,tabId" ||
+       result.phase!==(phase==="prepare"?"prepared":"adopted") || result.quiescent!==true)throw reconnectRefuse('executorRefused');
+    if(!result.identity || Object.keys(result.identity).sort().join()!=="browserInstance,documentGeneration,documentId,frameId,profileChannel,tabId" ||
        ["profileChannel","browserInstance","tabId","frameId","documentId"].some(k=>result.identity[k]!==identity[k]) ||
-       !Number.isSafeInteger(result.identity.documentGeneration)||result.identity.documentGeneration<1 ||
-       !Number.isSafeInteger(result.receiptRevision)||result.receiptRevision<0||result.receiptRevision>512||result.receiptCount!==result.receiptRevision)throw reconnectFail();
+       !Number.isSafeInteger(result.identity.documentGeneration)||result.identity.documentGeneration<1)throw reconnectRefuse('documentChanged');
+    if(!Number.isSafeInteger(result.receiptRevision)||result.receiptRevision<0||result.receiptRevision>512||result.receiptCount!==result.receiptRevision)throw reconnectRefuse('unknownReceipts');
     return result;
   }
   const recoveryRenderers=[];
@@ -1504,7 +1511,7 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
     if(source&&proof.receiptRevision!==source.export.revision)throw reconnectRefuse("unknownReceipts");
     proofs.push({identity,proof,fence});
   }
-  const fresh=await inventory(enrollment,qualification);if(fresh.truncated||stable(fresh.documents)!==inventoryKey)throw reconnectFail();
+  const fresh=await inventory(enrollment,qualification);if(fresh.truncated||stable(fresh.documents)!==inventoryKey)throw reconnectInventoryRefuse("inventoryDrift");
   reconnectDiagnosticPhase = "adopt";
   for(const item of proofs) {
     const {identity,proof,fence}=item,adopted=await exchange(identity,"adopt",proof.receiptRevision,fence);
@@ -1512,13 +1519,15 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
     // document, prepared binding and receipt revision may not change. Adoption
     // publishes the current generation; it never transfers the retired lease.
     if(["profileChannel","browserInstance","tabId","frameId","documentId"].some(k=>adopted.identity[k]!==proof.identity[k])||
-       adopted.identity.documentGeneration<proof.identity.documentGeneration||adopted.receiptRevision!==proof.receiptRevision||adopted.receiptCount!==proof.receiptCount)throw reconnectFail();
+       adopted.identity.documentGeneration<proof.identity.documentGeneration)throw reconnectRefuse('documentChanged');
+    if(adopted.receiptRevision!==proof.receiptRevision||adopted.receiptCount!==proof.receiptCount)throw reconnectRefuse('unknownReceipts');
     item.proof=adopted;
   }
   const history=[...pending.history,{nonce,oldFence,newFence,executors:proofs.map(({proof})=>({identity:proof.identity,receiptRevision:proof.receiptRevision,receiptCount:proof.receiptCount}))}];
   const committed={...pending,phase:"adopted",history};
-  if(!reconnectJournalValid(committed,candidate))throw reconnectFail();
-  await recoveryCheck();const final=await inventory(enrollment,qualification);if(final.truncated||stable(final.documents)!==inventoryKey)throw reconnectFail();
+  reconnectCanonical(committed); // Preserve the finite resource-budget cause.
+  if(!reconnectJournalValid(committed,candidate))throw reconnectJournalRefuse('lineageInvalid');
+  await recoveryCheck();const final=await inventory(enrollment,qualification);if(final.truncated||stable(final.documents)!==inventoryKey)throw reconnectInventoryRefuse('inventoryDrift');
   for(const {proof} of proofs){const key=`${proof.identity.tabId}:${proof.identity.documentId}`;documents.set(key,proof.identity);documentControlLeases.delete(key);inactiveLeaseDocuments.delete(key);documentFingerprintVersions.set(key,2);documentOrigins.set(key,snapshot.documents.find(i=>i.tabId===proof.identity.tabId&&i.documentId===proof.identity.documentId).origin);}
   reconnectDiagnosticPhase = "commit";
   if(recovering) {
