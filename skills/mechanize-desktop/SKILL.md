@@ -178,6 +178,15 @@ identity and a semantic locator instead.
 
 ## Short Chrome action loops
 
+If a web read returns credential-delivery protection or transport unavailable,
+inspect the closed status and use native capture for the current visible UI.
+A native fallback targets the Chrome application and physical window, not a
+`web.tab` or web element ref. Browser DOM protection does not itself forbid native
+interaction; secure Vault entry and actual in-flight input guards still apply.
+For public UI, confirm the active tab's origin/handle before changing it. Plan
+the action before acquiring a fresh frame, then click within its expiry; refresh
+an expired frame instead of reusing its coordinates or repeating an unknown input.
+
 Use a qualified exact tab handle and exact unique semantic locators. In JSON,
 set `locator.exact: true` explicitly and declare `requires.adapters: [web]`.
 Start with a three-second mutation timeout; native messaging and cold debugger
