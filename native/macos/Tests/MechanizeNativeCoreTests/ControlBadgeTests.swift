@@ -15,6 +15,19 @@ final class ControlBadgeTests: XCTestCase {
         XCTAssertNil(ControlBadgeGeometry.frame(window:CGRect(x:0,y:0,width:119,height:48)))
         XCTAssertNil(ControlBadgeGeometry.frame(window: CGRect(x: CGFloat.infinity, y: 0, width: 900, height: 700)))
     }
+    func testMeasuredPlacementPrefersLeadingZoneAndFallsBackToReducedLeadingMark() {
+        let window = CGRect(x: 300, y: 50, width: 1000, height: 700)
+        let lights = (0..<3).map { CGRect(x: window.minX + 14 + CGFloat($0 * 20), y: window.minY + 18, width: 12, height: 12) }
+        XCTAssertEqual(ControlBadgeGeometry.leadingZoneEnd(window: window, trafficLights: lights), window.minX + 66 + 60)
+        XCTAssertEqual(ControlBadgeGeometry.freeHeaderFrame(window: window, trafficLights: lights, occupied: []), CGRect(x: window.minX + 68, y: window.minY + 15, width: 46, height: 18))
+        let crowded = CGRect(x: window.minX + 80, y: window.minY, width: 200, height: 44)
+        let reduced = ControlBadgeGeometry.freeHeaderFrame(window: window, trafficLights: lights, occupied: [crowded])!
+        XCTAssertEqual(reduced, CGRect(x: window.minX + 6, y: window.minY + 2, width: 22, height: 12))
+        // A narrow window clamps the zone to its own trailing inset.
+        let narrow = CGRect(x: 0, y: 0, width: 120, height: 100), narrowLights = (0..<3).map { CGRect(x: 14 + CGFloat($0 * 20), y: 18, width: 12, height: 12) }
+        XCTAssertEqual(ControlBadgeGeometry.leadingZoneEnd(window: narrow, trafficLights: narrowLights), 114)
+        XCTAssertEqual(ControlBadgeGeometry.freeHeaderFrame(window: narrow, trafficLights: narrowLights, occupied: []), CGRect(x: 68, y: 15, width: 46, height: 18))
+    }
     func testHeartbeatInvalidatesOldLeaseWithoutChangingOwner() {
         var life = ControlBadgeLifetime()
         let owner = life.begin(), firstLease = life.leaseRevision
