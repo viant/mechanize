@@ -3,6 +3,7 @@ package chrome
 import (
 	"context"
 	"github.com/viant/mechanize/auth"
+	"sort"
 	"time"
 )
 
@@ -16,13 +17,14 @@ type TabHandleInventory struct {
 	Tabs       []TabHandle `json:"tabs"`
 	Complete   bool        `json:"complete"`
 	ObservedAt time.Time   `json:"observedAt"`
+	Reason     string      `json:"reason,omitempty"`
 }
 
-// ListTabHandles revalidates running peers before exposing origin-scoped handles.
-// Retained private scopes do not hide title-free origin/handle metadata.
-// Unqualified channels never contribute stale cached routing data.
+// ListTabHandles observes fresh origin-scoped browser metadata, independently
+// of renderer readiness and historical reconnect records. Handles are routing
+// observations only; private protections and uncertain attempts remain intact.
 func (g *Gateway) ListTabHandles(ctx context.Context, p auth.Principal, origin string) (TabHandleInventory, error) {
-	out := TabHandleInventory{Tabs: []TabHandle{}, Complete: true}
+	out := TabHandleInventory{Tabs: []TabHandle{}, Complete: false, Reason: "none"}
 	if err := authorize(ctx, p, false); err != nil {
 		return out, err
 	}
@@ -30,43 +32,56 @@ func (g *Gateway) ListTabHandles(ctx context.Context, p auth.Principal, origin s
 	if actual.ClientID != p.ClientID || !OrdinaryWebsiteOrigin(origin) {
 		return out, auth.ErrUnauthorized
 	}
+	out.Complete = true
+	if g == nil || g.broker == nil {
+		out.Complete = false
+		out.Reason = "noQualifiedChannel"
+		return out, nil
+	}
+	bounded, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
 	b := g.broker
 	b.mu.Lock()
-	selected := []*channel{}
-	for _, c := range b.channels {
+	keys := []string{}
+	for key, c := range b.channels {
 		if c.grant.Principal.Namespace == p.Namespace && allowedOrigin(c.grant, origin) {
-			selected = append(selected, c)
+			keys = append(keys, key)
 		}
+	}
+	sort.Strings(keys)
+	selected := make([]*channel, 0, len(keys))
+	for _, key := range keys {
+		selected = append(selected, b.channels[key])
 	}
 	b.mu.Unlock()
 	if len(selected) == 0 {
 		out.Complete = false
+		out.Reason = "noQualifiedChannel"
 	}
 	for _, c := range selected {
-		b.mu.Lock()
-		conn, epoch := c.conn, c.epoch
-		eligible := conn != nil && !c.fixtureOnly && channelScopeQualified(c) && c.executorQualified && c.inventoryComplete && !c.lifecycleInhibited
-		b.mu.Unlock()
-		if !eligible || b.checkChannelProcess(ctx, c, false) != nil {
+		reply, reason := b.currentTabInventory(bounded, c, p.Namespace, origin)
+		if reason != "none" {
 			out.Complete = false
-			continue
-		}
-		b.mu.Lock()
-		current := c.conn == conn && c.epoch == epoch && channelScopeQualified(c) && c.executorQualified && c.inventoryComplete && !c.lifecycleInhibited
-		if !current {
-			out.Complete = false
-			b.mu.Unlock()
-			continue
-		}
-		if out.ObservedAt.IsZero() || c.inventoryAt.Before(out.ObservedAt) {
-			out.ObservedAt = c.inventoryAt
-		}
-		for _, doc := range c.documents {
-			if doc.FrameID == 0 && doc.Origin == origin {
-				out.Tabs = append(out.Tabs, TabHandle{Handle: doc.QualifiedTabID(), Origin: origin})
+			if out.Reason == "none" {
+				out.Reason = reason
 			}
 		}
-		b.mu.Unlock()
+		if reason != "none" && reason != "inventoryLimit" {
+			continue
+		}
+		observed := time.Now().UTC()
+		if out.ObservedAt.IsZero() {
+			out.ObservedAt = observed
+		}
+		for _, id := range reply.TabIDs {
+			if len(out.Tabs) >= maximumTabInventory {
+				out.Complete = false
+				out.Reason = "inventoryLimit"
+				break
+			}
+			handle := (Document{Identity: Identity{ProfileChannel: reply.profileChannel, BrowserInstance: reply.browserInstance, TabID: id}}).QualifiedTabID()
+			out.Tabs = append(out.Tabs, TabHandle{Handle: handle, Origin: origin})
+		}
 	}
 	return out, ctx.Err()
 }

@@ -1680,6 +1680,10 @@ async function receive(command) {
     if(reply)heldPort.postMessage(reply);
    }catch{}return;
   }
+  if(command?.type==='tabInventory'){
+    const heldPort=port,heldFence=setupFence;
+    try{const reply=await MechanizeTabMetadata.inventory(chrome,command,heldFence,()=>config(),()=>Boolean(heldPort&&port===heldPort&&setupFence===heldFence));if(reply&&port===heldPort&&setupFence===heldFence&&new TextEncoder().encode(JSON.stringify(reply)).length<=4096)heldPort.postMessage(reply);}catch{}return;
+  }
   if(command?.type==='tabLocation'){
     const heldPort=port,heldFence=setupFence;try{const reply=await MechanizeTabMetadata.match(chrome,command,heldFence,await config(),()=>Boolean(heldPort&&port===heldPort&&setupFence===heldFence));if(reply&&port===heldPort)heldPort.postMessage(reply);}catch{}return;
   }
@@ -2182,7 +2186,7 @@ async function connectNativeOnce(token,valid=()=>true) {
     }catch{metadataStartupBarrier='inventoryUnavailable';}
     // This fixed metadata hello is independent of secret/document visibility.
     // No retained document or input payload is replayed on a replacement port.
-    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:32,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
+    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:32,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
 
   } catch {
     if (lifecycleGuardId) connectionAttention = "lifecycleInhibited";

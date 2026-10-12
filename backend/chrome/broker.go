@@ -60,6 +60,8 @@ type channel struct {
 	controllerResultChunkVersion int
 	reconnectBindings            *reconnectBindingExchange
 	tabMetadataVersion           int
+	tabInventoryVersion          int
+	tabInventoryPending          *tabInventoryPending
 	tabLocationPending           *tabLocationPending
 	controlBadgePending          *controlBadgePending
 	controlBadgeVersion          int
@@ -419,6 +421,7 @@ func (b *Broker) serve(conn net.Conn) {
 		ManualPrivacyDocumentVersion       int             `json:"manualPrivacyDocumentVersion"`
 		FocusedLocationVersion             int             `json:"focusedLocationVersion"`
 		TabMetadataVersion                 int             `json:"tabMetadataVersion"`
+		TabInventoryVersion                int             `json:"tabInventoryVersion"`
 		OpenOriginVersion                  int             `json:"openOriginVersion"`
 		ProtectionScopeVersion             int             `json:"protectionScopeVersion"`
 		CredentialPublicReadVersion        int             `json:"credentialPublicReadVersion"`
@@ -518,6 +521,7 @@ func (b *Broker) serve(conn net.Conn) {
 	c.manualPrivacyDocumentVersion = hello.ManualPrivacyDocumentVersion
 	c.focusedLocationVersion = hello.FocusedLocationVersion
 	c.tabMetadataVersion = hello.TabMetadataVersion
+	c.tabInventoryVersion = hello.TabInventoryVersion
 	c.openOriginVersion = hello.OpenOriginVersion
 	c.protectionScopeVersion = hello.ProtectionScopeVersion
 	c.credentialPublicReadVersion = hello.CredentialPublicReadVersion
@@ -580,6 +584,10 @@ func (b *Broker) serve(conn net.Conn) {
 			continue
 		}
 		if b.acceptOpenOriginLocked(c, conn, data) {
+			b.mu.Unlock()
+			continue
+		}
+		if b.acceptTabInventoryLocked(c, conn, data) {
 			b.mu.Unlock()
 			continue
 		}

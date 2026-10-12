@@ -10,21 +10,31 @@ import (
 )
 
 func TestTabHandleInventoryRetainedPrivateScopeIsMetadataOnly(t *testing.T) {
-	f := newReadFixture(t)
-	b := f.g.broker
+	g, p, ctx, c, conn := liveTabInventoryFixture(t, 1)
+	b := g.broker
+	original := Document{Identity: Identity{ProfileChannel: c.grant.ProfileChannel, BrowserInstance: c.grant.BrowserInstance, TabID: 7, DocumentID: "cached-private-doc", Generation: 1}, Origin: c.grant.Origins[0]}
 	b.mu.Lock()
-	c := b.channels[channelKey("p1", "b1")]
-	original := c.documents[0]
+	c.documents = []Document{original}
+	c.documents[0].TabID = 99
 	c.documents[0].Title = "PRIVATE_CANARY"
 	c.privateInspection = &credentialAdmissionPending{}
 	c.privacy = &credentialPrivacyState{}
 	b.mu.Unlock()
-	result, err := f.g.ListTabHandles(f.ctx, f.p, original.Origin)
+	go func() {
+		raw, _ := ReadFrame(conn)
+		var q tabInventoryRequest
+		json.Unmarshal(raw, &q)
+		if q.Type != "tabInventory" {
+			return
+		}
+		_ = WriteFrame(conn, tabInventoryReply{Type: "tabInventoryResult", RequestID: q.RequestID, BrokerEpoch: q.BrokerEpoch, ChannelEpoch: q.ChannelEpoch, ScopeHash: q.ScopeHash, TabIDs: []int{7}, Complete: true, Reason: "none"})
+	}()
+	result, err := g.ListTabHandles(ctx, p, original.Origin)
 	if err != nil || !result.Complete || len(result.Tabs) != 1 || result.Tabs[0].Handle != original.QualifiedTabID() || result.Tabs[0].Origin != original.Origin {
 		t.Fatal("protected channel metadata discovery failed", err)
 	}
 	raw, _ := json.Marshal(result)
-	if strings.Contains(string(raw), "PRIVATE_CANARY") || strings.Contains(string(raw), original.DocumentID) || f.reads.Load() != 0 || f.mutations.Load() != 0 {
+	if strings.Contains(string(raw), "PRIVATE_CANARY") || strings.Contains(string(raw), original.DocumentID) {
 		t.Fatal("metadata route accessed or exposed document data")
 	}
 	b.mu.Lock()
@@ -33,7 +43,7 @@ func TestTabHandleInventoryRetainedPrivateScopeIsMetadataOnly(t *testing.T) {
 	}
 	c.scopeQualified = false
 	b.mu.Unlock()
-	result, err = f.g.ListTabHandles(f.ctx, f.p, original.Origin)
+	result, err = g.ListTabHandles(ctx, p, original.Origin)
 	if err != nil || result.Complete || len(result.Tabs) != 0 {
 		t.Fatal("scope revocation published metadata")
 	}

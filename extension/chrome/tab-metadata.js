@@ -20,6 +20,34 @@ globalThis.MechanizeTabMetadata=(()=>{
   try{check();if(!await api.permissions.contains({origins:[r.expectedOrigin+'/*']}))throw 'permissionUnavailable';check();const a=await readTab(api,r.tabId,check),b=await readTab(api,r.tabId,check);if(a.tab.windowId!==b.tab.windowId||a.tab.url!==b.tab.url)throw 'authorityChanged';check();if(!await api.permissions.contains({origins:[r.expectedOrigin+'/*']}))throw 'permissionUnavailable';check();const same=b.url.origin===r.expectedOrigin,pathChecked=r.expectedPath!=='';return reply(true,same,pathChecked,same&&pathChecked&&b.url.pathname===r.expectedPath,'none');}
   catch(reason){return reply(false,false,false,false,['permissionUnavailable','tabUnavailable','pendingNavigation','unsafeTab','unsupportedLocation','authorityChanged'].includes(reason)?reason:'tabUnavailable');}
  }
+ async function inventory(api,r,fence,enrollment,current){
+  if(!closed(r,['type','requestId','expectedOrigin','brokerEpoch','channelEpoch','scopeHash','deadlineUnixMs'])||r.type!=='tabInventory'||!hex(r.requestId)||!Number.isSafeInteger(r.deadlineUnixMs)||['brokerEpoch','channelEpoch','scopeHash'].some(k=>typeof r[k]!=='string'||!r[k]||r[k].length>256))return null;
+  const reply=(tabIds,complete,reason)=>({type:'tabInventoryResult',requestId:r.requestId,brokerEpoch:r.brokerEpoch,channelEpoch:r.channelEpoch,scopeHash:r.scopeHash,tabIds,complete,reason});
+  const check=()=>{if(!fence||!current()||['brokerEpoch','channelEpoch','scopeHash'].some(k=>r[k]!==fence[k])||Date.now()>=r.deadlineUnixMs||r.deadlineUnixMs>Date.now()+10000)throw 'authorityChanged';};
+  // Every metadata await shares the request's deadline, including saved config.
+  // A late Chrome reply has no state to commit and cannot produce a second result.
+  const wait=async work=>{check();let timer;try{return await Promise.race([Promise.resolve().then(work),new Promise((_,reject)=>{timer=setTimeout(()=>reject('authorityChanged'),Math.max(1,r.deadlineUnixMs-Date.now()));})]);}finally{clearTimeout(timer);check();}};
+  try{
+   enrollment=await wait(typeof enrollment==='function'?enrollment:()=>enrollment);
+   if(!exactOrigin(r.expectedOrigin,enrollment))throw 'permissionUnavailable';
+   if(!await wait(()=>api.permissions.contains({origins:[r.expectedOrigin+'/*']})))throw 'permissionUnavailable';
+   const rows=await wait(()=>api.tabs.query({url:r.expectedOrigin+'/*'}));
+   if(!Array.isArray(rows))throw 'inventoryUnavailable';
+   const ids=[],seen=new Set(),limited=rows.length>200;
+   for(const tab of rows.slice(0,200)){
+    if(!tab||!Number.isSafeInteger(tab.id)||tab.id<=0||tab.id>2147483647||seen.has(tab.id))throw 'inventoryUnavailable';seen.add(tab.id);
+    if(tab.incognito===true)continue;
+    // Committed URL metadata remains useful while a tab loads or is discarded.
+    // No pending URL or renderer state is consulted and no input is authorized.
+    if(tab.incognito!==false||typeof tab.url!=='string'||tab.url.length>16384)throw 'inventoryUnavailable';
+    let url;try{url=new URL(tab.url);}catch{throw 'inventoryUnavailable';}
+    if(url.origin!==r.expectedOrigin||url.username||url.password)continue;
+    ids.push(tab.id);
+   }
+   if(!await wait(()=>api.permissions.contains({origins:[r.expectedOrigin+'/*']})))throw 'permissionUnavailable';
+   check();ids.sort((a,b)=>a-b);return reply(ids,!limited,limited?'inventoryLimit':'none');
+  }catch(reason){return reply([],false,['permissionUnavailable','inventoryUnavailable','authorityChanged'].includes(reason)?reason:'inventoryUnavailable');}
+ }
  async function activate(api,r,fence,enrollment,current){
   const keys=['type','requestId','attemptId','origin','brokerEpoch','channelEpoch','scopeHash','deadlineUnixMs','tabId',...(r?.controlBadge===true?['controlBadge']:[])];
   if(!closed(r,keys)||r.type!=='browser.activateTab'||!base(r,fence)||!hex(r.attemptId)||!exactOrigin(r.origin,enrollment))return null;
@@ -81,5 +109,5 @@ globalThis.MechanizeTabMetadata=(()=>{
    check();return reply(true);
   }catch{return reply(false);}
  }
- return {match,activate,activationStatus,safePath};
+ return {match,inventory,activate,activationStatus,safePath};
 })();

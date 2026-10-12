@@ -2759,3 +2759,23 @@ test('failed archive graph verification clears prior and partially loaded proof 
  }
  await f.verifyArchives(current);assert.equal(f.journalValid(current,f.storage.lastGrant),true);
 });
+
+test('fresh tab inventory uses authenticated setup metadata despite invalid history private UNKNOWN and lifecycle barriers',async()=>{
+ const f=await metadataActivationFixture();f.storage.mechanizeReconnect={invalid:'PRIVATE-CANARY'};
+ f.state.inventoryTabs=[{id:7,url:'https://fixture.example.test/public?PRIVATE-CANARY',title:'PRIVATE-CANARY',incognito:false,discarded:false,status:'complete'}];
+ for(const kind of ['flow','redactions','unknown','lifecycle','privatePending','admission','privacy','mutation'])f.reconnectBarrier(kind);f.setActiveCommands(1);
+ const before={local:JSON.stringify(f.storage),session:JSON.stringify(f.sessionState),counts:JSON.stringify(f.publicReadCounts()),inputs:f.state.deliveries,injections:f.state.injections,binds:f.state.binds};
+ const q={type:'tabInventory',requestId:'a'.repeat(64),expectedOrigin:'https://fixture.example.test',...grant,deadlineUnixMs:Date.now()+1000};
+ await f.receive(q);const r=f.messages.at(-1);assert.equal(r.type,'tabInventoryResult');assert.equal(r.complete,true);assert.equal(r.reason,'none');assert.deepEqual([...r.tabIds],[7]);assert.ok(!JSON.stringify(r).includes('PRIVATE-CANARY'));
+ assert.equal(JSON.stringify(f.storage),before.local);assert.equal(JSON.stringify(f.sessionState),before.session);assert.equal(JSON.stringify(f.publicReadCounts()),before.counts);assert.equal(f.state.deliveries,before.inputs);assert.equal(f.state.injections,before.injections);assert.equal(f.state.binds,before.binds);assert.equal(f.state.tabUpdates||0,0);assert.equal(f.state.permissionRequests||0,0);assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));
+ for(const override of [{scopeHash:'e'.repeat(64)},{expectedOrigin:'https://foreign.test'},{deadlineUnixMs:Date.now()-1}]){await f.receive({...q,...override});const rejected=f.messages.at(-1);assert.equal(rejected.complete,false);assert.equal(rejected.tabIds.length,0);assert.ok(['permissionUnavailable','authorityChanged'].includes(rejected.reason));}
+ f.state.hostGranted=false;await f.receive(q);assert.equal(f.messages.at(-1).reason,'permissionUnavailable');
+});
+test('tab inventory advertises its own capability and drops results for a replaced native port',async()=>{
+ const f=await metadataActivationFixture();f.disconnect();await f.connect();assert.equal(f.messages.find(m=>m.type==='hello').tabInventoryVersion,1);
+ await f.receive({...restartQualification(),fixtureOnly:false});f.messages.length=0;
+ f.state.blockStorageReadKey='enrollment';let release;f.state.blockStorageRead=new Promise(resolve=>{release=resolve;});
+ const pending=f.receive({type:'tabInventory',requestId:'b'.repeat(64),expectedOrigin:'https://fixture.example.test',...grant,deadlineUnixMs:Date.now()+1000});
+ await new Promise(resolve=>setImmediate(resolve));f.disconnect();release();await pending;
+ assert.ok(!f.messages.some(m=>m.type==='tabInventoryResult'));assert.equal(f.state.deliveries,0);
+});
