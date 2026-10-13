@@ -92,3 +92,56 @@ func TestControllerCanonicalFrameTypedFailures(t *testing.T) {
 		}
 	}
 }
+
+func TestControllerCanonicalCaptureRetainedPublication(t *testing.T) {
+	for _, name := range []string{"mechanize_capture", "mechanize_capture_window_frame"} {
+		for _, mode := range []string{"retained", "malformed-phase", "malformed-ref"} {
+			t.Run(name+"/"+mode, func(t *testing.T) {
+				ref := data.ArtifactReference{ID: "fixture-artifact", ContentHash: strings.Repeat("a", 64), SizeBytes: 8, MediaType: "image/png", KeyReference: "fixture-v1"}
+				phase, cause := "verify", "verificationUnavailable"
+				if mode == "malformed-phase" {
+					phase, cause = "RAW_CANARY", "RAW_CANARY"
+				}
+				if mode == "malformed-ref" {
+					ref.ContentHash = "RAW_CANARY"
+				}
+				publication := &fixtureCapturePublication{ref: ref, phase: phase, cause: cause}
+				d, id, ctx, _ := controllerFixture(t, func(deps *Dependencies) {
+					deps.CaptureWindow = func(context.Context, auth.Principal, model.Surface, int32, uint32) (data.ArtifactReference, native.CapturedImage, error) {
+						return ref, native.CapturedImage{}, publication
+					}
+					deps.CaptureWindowFrame = func(context.Context, auth.Principal, model.Surface, int32, uint32) (data.ArtifactReference, data.ArtifactReference, native.WindowFrameCapture, error) {
+						return ref, data.ArtifactReference{}, native.WindowFrameCapture{}, publication
+					}
+				})
+				session := controllerBody(t, controllerCall(t, d, ctx, id, "mechanize_session_open", map[string]any{"name": "publication failure"}))["sessionId"].(string)
+				out := controllerCall(t, d, ctx, id, name, CaptureWindowInput{SessionID: session, GrantID: "fixture-grant", Purpose: "Observe fixture", Surface: model.Surface{Kind: "native", BundleID: "com.example.Fixture", ProcessID: 71, ProcessStartToken: "71:1"}, PID: 71, WindowID: 2})
+				body := controllerBody(t, out)
+				if mode == "malformed-ref" {
+					if body["code"] != "captureFailed" || body["artifact"] != nil {
+						t.Fatalf("malformed artifact projected: %+v", body)
+					}
+				} else {
+					if body["code"] != "artifactPublicationUnconfirmed" || body["dispatchState"] != "dispatched" || body["publicationState"] != "unknown" || body["publicationConfirmed"] != false || body["imageReturned"] != false {
+						t.Fatalf("publication semantics lost: %+v", body)
+					}
+					encodedRef, _ := json.Marshal(body["artifact"])
+					var retained data.ArtifactReference
+					if json.Unmarshal(encodedRef, &retained) != nil || retained != ref {
+						t.Fatalf("retained opaque reference lost: %+v", retained)
+					}
+					if mode == "malformed-phase" {
+						phase, cause = "unknown", "metadataUnavailable"
+					}
+					if body["publicationPhase"] != phase || body["publicationCause"] != cause {
+						t.Fatalf("wrong closed diagnostic: %+v", body)
+					}
+				}
+				encoded, _ := json.Marshal(out)
+				if strings.Contains(string(encoded), "RAW_CANARY") || len(out.Content) != 1 || out.IsError == nil || !*out.IsError {
+					t.Fatalf("unsafe publication projection: %s", encoded)
+				}
+			})
+		}
+	}
+}

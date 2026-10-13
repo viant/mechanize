@@ -55,7 +55,7 @@ globalThis.MechanizeDOM = globalThis.MechanizeDOM || (() => {
       // Every open shadow root participates; exhausted coverage never proves
       // public. The snapshot's smaller output budget remains independent.
       const roots=[doc];let inspected=0,candidates=0;
-      const valueControl=el=>['INPUT','TEXTAREA','SELECT'].includes(el.tagName)||el.isContentEditable||['textbox','searchbox','combobox'].includes(el.getAttribute('role'));
+      const valueControl=el=>['INPUT','TEXTAREA','SELECT'].includes(el.tagName)||el.isContentEditable||el.hasAttribute('contenteditable')&&['true','','plaintext-only'].includes(el.getAttribute('contenteditable'))||['textbox','searchbox','combobox'].includes(el.getAttribute('role'));
       for(let rootIndex=0;rootIndex<roots.length;rootIndex++) {
         const walker=doc.createTreeWalker(roots[rootIndex],1);
         for(let el=walker.nextNode();el;el=walker.nextNode()) {
@@ -100,17 +100,16 @@ globalThis.MechanizeDOM = globalThis.MechanizeDOM || (() => {
     credentialScopeGuard=()=>guard()===true&&credentialLayout(doc).state==='public';
     try { return run(); } finally { credentialScopeGuard=null; }
   }
-  const quarantined = new WeakSet();
   function protectedDocument(doc) {
     if(credentialScopeGuard)return !credentialScopeGuard();
     // A committed login handoff ends document-wide blocking. Sensitive fields
     // are still withheld by secret(), and known values pass through privateText.
     if (privateText) return false;
-    if (quarantined.has(doc)) return true;
-    const result = walk(doc);
-    // Incomplete coverage cannot establish that a document is credential-free.
-    if (!result.complete || result.nodes.some(privateText ? unsafePrivateInput : secret)) { quarantined.add(doc); return true; }
-    return false;
+    const layout=credentialLayout(doc);
+    // Public controls and hidden secrets can coexist: field/descendant masking
+    // handles their projection. Classify the current layout; private delivery
+    // ownership is enforced by the content executor, not remembered layout.
+    return layout.state!=='public';
   }
   function unsafePrivateInput(el) {
     if(!["INPUT","TEXTAREA","SELECT"].includes(el.tagName)&&!el.isContentEditable)return false;
@@ -120,22 +119,31 @@ globalThis.MechanizeDOM = globalThis.MechanizeDOM || (() => {
   }
   // Layout evidence alone grants no public observation authority.
   function privateLayoutReady(doc) {const result=walk(doc);return result.complete&&!result.nodes.some(unsafePrivateInput);}
-  function privateDocumentReady(doc) {return !quarantined.has(doc)&&privateLayoutReady(doc);}
+  function privateDocumentReady(doc) {return privateLayoutReady(doc);}
   function installPrivateDocumentRedactor(doc,redactor) {
     if(typeof redactor!=='function'||!privateLayoutReady(doc))throw Error();
     if(privateText)return privateDocumentReady(doc);
-    installPrivateRedactor(redactor);quarantined.delete(doc);return privateDocumentReady(doc);
+    installPrivateRedactor(redactor);return privateDocumentReady(doc);
   }
   function requirePublicDocument(doc) {
     if (protectedDocument(doc)) fail("secureDocumentRequired", "Credential document requires a separately qualified local secure route");
   }
   function role(el){return globalThis.MechanizeAccessibility?.role(el)||'generic';}
-  let projection,projectionOperation=false;
+  let projection,projectionDocument,projectionOperation=false;
   function withProjection(doc,run){
+    if(projectionOperation){
+      if(projectionDocument!==doc)fail('coverageIncomplete','Projection document changed');
+      return run();
+    }
     requirePublicDocument(doc);
-    if(projectionOperation)return run();
-    projectionOperation=true;
-    try{return run();}finally{projection=undefined;projectionOperation=false;}
+    projectionOperation=true;projectionDocument=doc;
+    try{
+      const result=run();
+      // Recheck before publishing; synchronous getters/providers may mutate
+      // the DOM. This shared coverage never survives the current call.
+      requirePublicDocument(doc);
+      return result;
+    }finally{projection=undefined;projectionDocument=undefined;projectionOperation=false;}
   }
   function name(el,doc){
     if(secret(el))return '[redacted]';
@@ -183,7 +191,6 @@ globalThis.MechanizeDOM = globalThis.MechanizeDOM || (() => {
   }
   function resolve(doc,locator){return withProjection(doc,()=>resolveProjected(doc,locator));}
   function resolveProjected(doc, locator) {
-    requirePublicDocument(doc);
     if (!locator || Object.keys(locator).some(k => !["strategy", "value", "name", "exact"].includes(k)) || typeof locator.value !== "string") fail("invalidLocator", "Closed locator with string value required");
     const allowed = ["id", "testId", "role", "label", "css"];
     if (!allowed.includes(locator.strategy)) fail("unsupportedSelector", "Supported: id, testId, role, label, css; frame scope is mandatory");
@@ -226,7 +233,6 @@ globalThis.MechanizeDOM = globalThis.MechanizeDOM || (() => {
   }
   function snapshot(doc,args={}){return withProjection(doc,()=>snapshotProjected(doc,args));}
   function snapshotProjected(doc, args = {}) {
-    requirePublicDocument(doc);
     const limit = Number.isInteger(args.limit) ? Math.max(1, Math.min(args.limit, 200)) : 100;
     const result = walk(doc), nodes = [];
     // Reorder only the already bounded discovery set into DOM preorder. Open
@@ -288,7 +294,6 @@ globalThis.MechanizeDOM = globalThis.MechanizeDOM || (() => {
     return {x,y};
   }
   function scopedElementText(el) {
-    if(!credentialScopeGuard)return el.textContent;
     const queue=[el],pieces=[];let count=0;
     while(queue.length){const node=queue.pop();if(++count>2000)fail('coverageIncomplete','Bounded text projection unavailable');
       if(node.nodeType===3){pieces.push(node.textContent||'');continue;}

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/viant/mcp-protocol/schema"
 	native "github.com/viant/mechanize/backend/darwin"
@@ -122,6 +123,18 @@ func projectControllerCapture(ctx context.Context, name string, encoded []byte, 
 // cross the browser boundary; upstream text and arbitrary metadata never do.
 func projectControllerCaptureFailure(structured map[string]any) *schema.CallToolResult {
 	code, _ := structured["code"].(string)
+	if code == "artifactPublicationUnconfirmed" {
+		encoded, err := json.Marshal(structured["artifact"])
+		var ref data.ArtifactReference
+		if err != nil || json.Unmarshal(encoded, &ref) != nil || !controllerCaptureArtifactReference(ref) {
+			out, _ := captureFailure(&native.CaptureError{DispatchState: "unknown"}, data.ArtifactReference{})
+			return out
+		}
+		phase, _ := structured["publicationPhase"].(string)
+		cause, _ := structured["publicationCause"].(string)
+		out, _ := captureFailure(&controllerCapturePublication{ref: ref, phase: phase, cause: cause}, ref)
+		return out
+	}
 	dispatch, _ := structured["dispatchState"].(string)
 	if dispatch != "notDispatched" && dispatch != "dispatched" {
 		dispatch = "unknown"
@@ -168,4 +181,40 @@ func projectControllerCaptureFailure(structured map[string]any) *schema.CallTool
 		out.IsError = &yes
 	}
 	return out
+}
+
+// This projection carries an opaque encrypted-artifact reference, never input
+// authority. Diagnostics are closed by captureFailure's existing contract.
+type controllerCapturePublication struct {
+	ref          data.ArtifactReference
+	phase, cause string
+}
+
+func (e *controllerCapturePublication) Error() string { return "capture publication unconfirmed" }
+func (e *controllerCapturePublication) RetainedArtifactReference() data.ArtifactReference {
+	return e.ref
+}
+func (e *controllerCapturePublication) ArtifactPublicationDiagnostic() (string, string) {
+	return e.phase, e.cause
+}
+
+func controllerCaptureArtifactReference(ref data.ArtifactReference) bool {
+	if ref.ID == "" || len(ref.ID) > 256 || ref.SizeBytes <= 0 || ref.SizeBytes > native.MaximumCaptureBytes || ref.MediaType != "image/png" || len(ref.ContentHash) != 64 || len(ref.KeyReference) > 256 {
+		return false
+	}
+	digest, err := hex.DecodeString(ref.ContentHash)
+	if err != nil || len(digest) != sha256.Size {
+		return false
+	}
+	for _, value := range []string{ref.ID, ref.KeyReference} {
+		if value == ref.ID && strings.ContainsAny(value, "/\\") {
+			return false
+		}
+		for _, c := range value {
+			if c < 32 || c == 127 {
+				return false
+			}
+		}
+	}
+	return true
 }

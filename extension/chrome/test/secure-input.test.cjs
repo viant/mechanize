@@ -14,7 +14,7 @@ function fixture(body = html) {
 }
 function payload(extra={}) {return {attemptId:'a'.repeat(64),origin:'https://fixture.example.test',deadlineUnixMs:Date.now()+5000,username:'USERNAME-CANARY',password:'PASSWORD-CANARY',...extra};}
 function result(f,p=payload(),check=()=>{}) {return JSON.parse(JSON.stringify(f.receiver.fill(f.doc,p,check)));}
-test('private login fill returns only dispatch state and keeps document quarantined without submission',()=>{
+test('private login fill returns only dispatch state and keeps visible login fields unreadable without submission',()=>{
   const f=fixture();let submits=0;f.doc.querySelector('form').addEventListener('submit',()=>submits++);
   assert.deepEqual(result(f),{status:'dispatched'});
   assert.equal(f.doc.querySelector('[autocomplete="username"]').value,'USERNAME-CANARY');
@@ -22,7 +22,9 @@ test('private login fill returns only dispatch state and keeps document quaranti
   assert.equal(submits,0);
   assert.throws(()=>f.window.MechanizeDOM.snapshot(f.doc),e=>e.code==='secureDocumentRequired');
   f.doc.querySelector('form').remove();
-  assert.throws(()=>f.window.MechanizeDOM.snapshot(f.doc),e=>e.code==='secureDocumentRequired');
+  // The content message handler owns actual private-delivery admission. DOM
+  // layout inspection must not permanently quarantine a now-empty page.
+  assert.ok(!JSON.stringify(f.window.MechanizeDOM.snapshot(f.doc)).includes('CANARY'));
   f.window.close();
 });
 test('private fill refuses origin drift, extra instructions and expired deadline before writing',()=>{
@@ -78,7 +80,7 @@ test('private POST submit uses retained exact form once with scalar result and n
  assert.equal(submits,1);assert.throws(()=>f.window.MechanizeDOM.snapshot(f.doc));f.window.close();
 });
 
-test('same-document post-submit classification reads no values, repeats no input and retains quarantine',()=>{
+test('same-document post-submit classification reads no values and repeats no input',()=>{
  const f=fixture(html);let submits=0;
  f.doc.querySelector('form').addEventListener('submit',e=>{e.preventDefault();submits++;});
  assert.equal(result(f).status,'dispatched');
@@ -97,7 +99,7 @@ test('same-document post-submit classification reads no values, repeats no input
  assert.deepEqual(read(),{ready:false,stage:'challenge'});mobile.remove();
  f.doc.querySelector('form').remove();
  assert.deepEqual(read(),{ready:false,stage:'unavailable'});
- assert.throws(()=>f.window.MechanizeDOM.snapshot(f.doc),e=>e.code==='secureDocumentRequired');
+ assert.ok(!JSON.stringify(f.window.MechanizeDOM.snapshot(f.doc)).includes('CANARY'));
  assert.ok(!JSON.stringify(read()).includes('CANARY'));assert.equal(submits,1);
  f.window.close();
 });

@@ -12,8 +12,9 @@ globalThis.MechanizeRecorder = class {
   suppressProtectedDocument() {
     if (!MechanizeDOM.protectedDocument(this.doc)) return false;
     this.active = false;
+    this.stopped = true; // Stop this recording, not later observation of the page.
     this.doc.defaultView.clearTimeout(this.expiryTimer);
-    this.events = []; // Never export earlier buffered page data after quarantine.
+    this.events = []; // Never export buffered values after a credential transition.
     return true;
   }
   control(action, args = {}) {

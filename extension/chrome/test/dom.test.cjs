@@ -35,7 +35,6 @@ test('credential documents withhold all output and refuse ordinary mutation', ()
     '<input type="password" id="secret-canary" value="value-canary"><h1>reflected-canary</h1>',
     '<input autocomplete="username" value="login-canary"><button data-testid="metadata-canary">Save</button>',
     '<form aria-label="Sign in"><label for="account">identyfikator</label><input id="account" value="login-canary"></form>',
-    '<div data-mechanize-secret>reflected-canary</div>',
   ]) {
     const f = fixture(html);
     for (const run of [() => f.api.snapshot(f.document), () => f.api.resolve(f.document, {strategy:'css', value:'input'}),
@@ -44,9 +43,17 @@ test('credential documents withhold all output and refuse ordinary mutation', ()
       assert.throws(run, e => e.code === 'secureDocumentRequired' && !JSON.stringify(e).includes('canary'));
     }
     f.document.body.innerHTML = '<button>ordinary</button>';
-    assert.throws(() => f.api.snapshot(f.document), e => e.code === 'secureDocumentRequired');
+    assert.ok(f.api.snapshot(f.document).nodes.some(n=>n.name==='ordinary'));
+    f.document.body.insertAdjacentHTML('beforeend','<input type=password value=RETURNING-CANARY>');
+    assert.throws(()=>f.api.snapshot(f.document),e=>e.code==='secureDocumentRequired');
     f.window.close();
   }
+});
+test('explicit secret region preserves public labels and filters parent text',()=>{
+ const f=fixture('<button id=public>History</button><p id=parent>Public <span data-mechanize-secret>reflected-canary</span> text</p>');
+ const snapshot=f.api.snapshot(f.document);assert.ok(snapshot.nodes.some(n=>n.name==='History'));assert.ok(!JSON.stringify(snapshot).includes('canary'));
+ assert.equal(f.api.act(f.document,'read',{strategy:'id',value:'parent'},{attribute:'text'}).value,'Public text');
+ f.document.body.innerHTML='<button>ordinary</button>';assert.ok(f.api.snapshot(f.document).nodes.some(n=>n.name==='ordinary'));f.window.close();
 });
 test('credential detection includes open shadow roots and fails closed on incomplete coverage', () => {
   const f = fixture('<div id="host"></div>');
@@ -54,6 +61,8 @@ test('credential detection includes open shadow roots and fails closed on incomp
   assert.throws(() => f.api.snapshot(f.document), e => e.code === 'secureDocumentRequired');
   f.window.close();
   const large = fixture('<div></div>'.repeat(2100));
+  assert.equal(large.api.snapshot(large.document).truncated,true);
+  large.document.body.innerHTML='<div></div>'.repeat(20001);
   assert.throws(() => large.api.snapshot(large.document), e => e.code === 'secureDocumentRequired');
   large.window.close();
 });
@@ -65,11 +74,20 @@ test('public navigation discussing credentials does not quarantine a composer', 
   f.api.act(f.document,'element.fill',{strategy:'id',value:'composer'},{value:'Public task'});
   assert.equal(f.api.act(f.document,'read',{strategy:'id',value:'composer'},{attribute:'value'}).value,'Public task');
 });
-test('credential value controls and explicit secret regions still quarantine', t => {
-  for(const html of ['<input hidden name="token" value="PRIVATE-CANARY">','<textarea aria-label="API key">PRIVATE-CANARY</textarea>','<div role="textbox" aria-label="Username">PRIVATE-CANARY</div>','<div contenteditable="true" aria-label="Password">PRIVATE-CANARY</div>','<button data-mechanize-secret>PRIVATE-CANARY</button>']){
-    const f=fixture(html);t.after(()=>f.window.close());
-    assert.throws(()=>f.api.snapshot(f.document),e=>e.code==='secureDocumentRequired'&&!JSON.stringify(e).includes('CANARY'));
-  }
+test('visible credential entry blocks current reads while other secrets are masked locally', t => {
+ for(const html of ['<div role="textbox" aria-label="Username">PRIVATE-CANARY</div>','<div contenteditable="true" aria-label="Password">PRIVATE-CANARY</div>']){
+  const f=fixture(html+'<button>History</button>');t.after(()=>f.window.close());
+  assert.throws(()=>f.api.snapshot(f.document),e=>e.code==='secureDocumentRequired'&&!JSON.stringify(e).includes('CANARY'));
+ }
+ for(const html of ['<input hidden name="token" value="PRIVATE-CANARY">','<textarea aria-label="API key">PRIVATE-CANARY</textarea>','<button data-mechanize-secret>PRIVATE-CANARY</button>']){
+  const f=fixture('<button id=public>History</button><div id=parent>Public <span id=secret>'+html+'</span> text</div>');t.after(()=>f.window.close());
+  for(const input of f.document.querySelectorAll('input,textarea'))Object.defineProperty(input,'value',{get(){throw Error('secret value read')}});
+  const snapshot=f.api.snapshot(f.document);assert.ok(snapshot.nodes.some(n=>n.name==='History'));assert.ok(!JSON.stringify(snapshot).includes('CANARY'));
+  assert.equal(f.api.act(f.document,'read',{strategy:'id',value:'parent'},{attribute:'text'}).value,'Public text');
+  const secret=f.document.querySelector('#secret').firstElementChild;secret.id='sensitive';
+  assert.equal(f.api.act(f.document,'read',{strategy:'id',value:'sensitive'},{attribute:'value'}).value,'[redacted]');
+  assert.equal(f.api.act(f.document,'read',{strategy:'id',value:'public'},{attribute:'text'}).value,'History');
+ }
 });
 test('ordinary snapshots remain bounded and exclude script content', () => {
   const f = fixture('<input id="case" value="CASE"><button>Save</button><script>private-data</script>');
@@ -302,8 +320,8 @@ test('control prioritization preserves private redaction and never reads hidden 
   let secretReads=0;Object.defineProperty(f.document.getElementById('password'),'value',{get(){secretReads++;throw Error('SECRET-VALUE-CANARY');}});
   for(const limit of [100,200]){const result=f.api.snapshot(f.document,{limit});assert.equal(result.nodes[0].id,'query');assert.ok(!JSON.stringify(result).includes('CANARY'));assert.equal(secretReads,0);}
  }finally{f.window.close();}
- const locked=fixture('<div role="listitem">Row</div>'.repeat(130)+'<input type="search"><input hidden type="password" value="PRIVATE-CANARY">');
- try{assert.throws(()=>locked.api.snapshot(locked.document),e=>e.code==='secureDocumentRequired'&&!JSON.stringify(e).includes('CANARY'));}finally{locked.window.close();}
+ const masked=fixture('<div role="listitem">Row</div>'.repeat(130)+'<input type="search" aria-label="Find records"><input hidden type="password" id="password" value="PRIVATE-CANARY">');
+ try{Object.defineProperty(masked.document.querySelector('#password'),'value',{get(){throw Error('secret read')}});const snapshot=masked.api.snapshot(masked.document);assert.ok(snapshot.nodes.some(n=>n.name==='Find records'));assert.ok(!JSON.stringify(snapshot).includes('CANARY'));assert.equal(masked.api.act(masked.document,'read',{strategy:'id',value:'password'},{attribute:'value'}).value,'[redacted]');}finally{masked.window.close();}
 });
 
 test('role discovery includes implicit main dialog and all heading levels',()=>{

@@ -6,6 +6,7 @@ const {JSDOM} = require('jsdom');
 function fixture() {
   const dom = new JSDOM('<input id="case" value="CASE-42"><button id="save">Save</button>', {url: 'https://fixture.example.test', runScripts: 'outside-only'});
   dom.window.TextEncoder = TextEncoder;
+  dom.window.HTMLElement.prototype.getClientRects = function(){return this.hidden?[]:[{width:100,height:20}];};
   for (const file of ['protocol.js', 'accessibility-provider.js', 'dom.js', 'recorder.js']) dom.window.eval(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'));
   const identity = {profileChannel: 'p1', browserInstance: 'b1', tabId: 7, frameId: 0, documentId: 'doc1', documentGeneration: 1};
   const recorder = new dom.window.MechanizeRecorder(dom.window.document, () => identity, dom.window.location.origin);
@@ -24,7 +25,7 @@ test('explicit recording excludes injected events and records ordinary controls'
   assert.equal(batch.events[0].value, 'CASE-42');
   assert.equal(batch.events[0].selectorConfidence, 'uniqueDOM');
 });
-test('credential appearance purges buffered recording and permanently suppresses the document', t => {
+test('credential appearance stops the recording without blocking later page observation', t => {
   const {dom, recorder} = fixture(); t.after(() => dom.window.close());
   const doc = dom.window.document;
   recorder.control('record.start', {leaseExpiresUnixMs:Date.now()+29000, recordingId:'r1'});
@@ -36,7 +37,8 @@ test('credential appearance purges buffered recording and permanently suppresses
   doc.body.innerHTML = '<input id="case" value="reflected-canary">';
   recorder.capture({isTrusted:true, type:'input', target:doc.getElementById('case')});
   assert.equal(recorder.events.length, 0);
-  assert.throws(() => recorder.control('record.start', {leaseExpiresUnixMs:Date.now()+29000, recordingId:'r1'}), e => e.code === 'secureDocumentRequired');
+  assert.throws(() => recorder.control('record.start', {leaseExpiresUnixMs:Date.now()+29000, recordingId:'r1'}), e => e.code === 'recordingStopped');
+  assert.doesNotThrow(()=>dom.window.MechanizeDOM.snapshot(doc));
 });
 test('pause/stop and bounded overflow expose gaps without silent replay', t => {
   const {dom, recorder} = fixture();

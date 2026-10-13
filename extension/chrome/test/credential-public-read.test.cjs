@@ -7,13 +7,13 @@ test('metadata classification never reads values and rejects login and error',()
  const f=fixture(html);for(const input of f.doc.querySelectorAll('input'))Object.defineProperty(input,'value',{get(){throw Error('value read')}});
  const c=f.api.credentialLayout(f.doc);assert.notEqual(c.state,'public');assert.ok(!JSON.stringify(c).includes('CANARY'));f.w.close();}
 });
-test('same-document login to dashboard fresh scope sanitizes retained hidden credentials; no scope means no bypass',()=>{
+test('manual same-document login to dashboard permits fresh reads with hidden credential masking',()=>{
  const f=fixture('<input type=password value=PASSWORD-CANARY><input autocomplete=username value=USER-CANARY>');
  assert.throws(()=>f.api.snapshot(f.doc));
  f.doc.querySelectorAll('input').forEach(el=>el.hidden=true);f.doc.body.insertAdjacentHTML('beforeend','<h1>Dashboard</h1><button>History</button>');f.w.history.replaceState(null,'','/history');
- assert.equal(f.api.credentialLayout(f.doc).state,'public');assert.throws(()=>f.api.snapshot(f.doc));assert.throws(()=>f.api.withCredentialScope(f.doc,()=>false,()=>f.api.snapshot(f.doc)));
+ assert.equal(f.api.credentialLayout(f.doc).state,'public');assert.ok(!JSON.stringify(f.api.snapshot(f.doc)).includes('CANARY'));assert.throws(()=>f.api.withCredentialScope(f.doc,()=>false,()=>f.api.snapshot(f.doc)));
  const result=f.api.withCredentialScope(f.doc,()=>true,()=>f.api.snapshot(f.doc));const encoded=JSON.stringify(result);assert.ok(encoded.includes('History'));assert.ok(!encoded.includes('PASSWORD-CANARY'));assert.ok(!encoded.includes('USER-CANARY'));
- assert.throws(()=>f.api.snapshot(f.doc));f.w.close();
+ assert.ok(!JSON.stringify(f.api.snapshot(f.doc)).includes('CANARY'));f.doc.querySelector('input').hidden=false;assert.throws(()=>f.api.snapshot(f.doc),e=>e.code==='secureDocumentRequired');f.w.close();
 });
 test('classification never outlives guard or dynamic return to login',()=>{
  const f=fixture('<h1>History</h1>');let current=true;
@@ -69,6 +69,7 @@ test('filled private source needs known-value redaction and cannot export reflec
  const inspected=await f.send({...f.common,type:'credentialInspect',controlLease:lease});assert.ok(inspected.identity.documentGeneration>0);
  const filled=await f.send({...f.common,type:'credentialDelivery',identity:inspected.identity,controlLease:lease,attemptId:'e'.repeat(64),username:'USER-REFLECTED-CANARY',password:'PASSWORD-REFLECTED-CANARY'});assert.equal(filled.status,'dispatched');
  f.doc.querySelectorAll('input').forEach(el=>el.hidden=true);f.doc.body.insertAdjacentHTML('beforeend','<h1>History</h1><h2>PASSWORD-REFLECTED-CANARY</h2>');
+ const ordinary=await f.send({requestId:'unscoped-observe',action:'observe',identity:filled.identity||inspected.identity,brokerEpoch:f.common.brokerEpoch,channelEpoch:f.common.channelEpoch,scopeHash:f.common.scopeHash,deadlineUnixMs:Date.now()+3000,args:{limit:100}});assert.equal(ordinary.error.code,'secureDocumentRequired');
  const denied=await f.send({...f.common,type:'credentialPublicScope',redactions:[]});assert.equal(denied.publicDocument,null);
  const redactions=f.w.MechanizeSecureInput.redactionVariants(['USER-REFLECTED-CANARY','PASSWORD-REFLECTED-CANARY']);
  const proof=await f.send({...f.common,type:'credentialPublicScope',redactions});assert.equal(proof.publicDocument.public,true);
@@ -112,4 +113,43 @@ test('exhausted metadata coverage or unavailable traversal never becomes public'
 test('display-contents shadow host cannot hide a visible password',()=>{
  const f=fixture('<section id=host style="display:contents"></section>');const host=f.doc.querySelector('#host');host.getClientRects=()=>[];
  host.attachShadow({mode:'open'}).innerHTML='<input type=password value=CANARY>';assert.equal(f.api.credentialLayout(f.doc).state,'login');f.w.close();
+});
+
+test('ordinary large public page supports bounded initial snapshot and exact late button reads',()=>{
+ const f=fixture('<h1>History</h1>'+'<div>Row</div>'.repeat(5000)+'<button id=late>Show records</button>');
+ const snapshot=f.api.snapshot(f.doc,{limit:10});assert.ok(snapshot.nodes.length<=10);assert.equal(snapshot.truncated,true);
+ assert.equal(f.api.resolve(f.doc,{strategy:'id',value:'late'}),f.doc.querySelector('#late'));
+ assert.equal(f.api.act(f.doc,'read',{strategy:'id',value:'late'},{attribute:'text'}).value,'Show records');f.w.close();
+});
+test('ordinary public read masks hidden late credentials and API keys including parent text',()=>{
+ for(const html of ['<input hidden type=password value=CANARY>','<textarea aria-label="API key">CANARY</textarea>','<span data-mechanize-secret>CANARY</span>']){
+  const f=fixture('<h1>History</h1><p id=parent>Public '+html+' text</p>'+'<div>Row</div>'.repeat(5000)+'<input hidden type=password id=late value=LATE-CANARY>');
+  for(const input of f.doc.querySelectorAll('input,textarea'))Object.defineProperty(input,'value',{get(){throw Error('secret value read')}});
+  assert.ok(!JSON.stringify(f.api.snapshot(f.doc)).includes('CANARY'));
+  assert.equal(f.api.act(f.doc,'read',{strategy:'id',value:'parent'},{attribute:'text'}).value,'Public text');
+  assert.equal(f.api.act(f.doc,'read',{strategy:'id',value:'late'},{attribute:'value'}).value,'[redacted]');
+  if(f.doc.querySelector('textarea')){assert.equal(f.api.act(f.doc,'read',{strategy:'css',value:'textarea'},{attribute:'value'}).value,'[redacted]');assert.throws(()=>f.api.act(f.doc,'element.fill',{strategy:'css',value:'textarea'},{value:'new'}),e=>e.code==='secureDocumentRequired');}
+  f.w.close();
+ }
+});
+test('ordinary large page refuses late visible credentials and incomplete coverage',()=>{
+ for(const suffix of ['<input type=password value=CANARY>','<input autocomplete=username value=CANARY>','<div contenteditable="true" aria-label="Password">CANARY</div>']){
+  const f=fixture('<div>Row</div>'.repeat(5000)+suffix);assert.throws(()=>f.api.snapshot(f.doc),e=>e.code==='secureDocumentRequired');f.w.close();
+ }
+ const f=fixture('<div></div>'.repeat(20001));assert.throws(()=>f.api.snapshot(f.doc),e=>e.code==='secureDocumentRequired');f.w.close();
+});
+
+test('one synchronous snapshot shares metadata coverage only until publication',()=>{
+ const f=fixture('<button>History</button>'.repeat(100)+'<div>Row</div>'.repeat(5000));
+ let scans=0;const create=f.doc.createTreeWalker.bind(f.doc);f.doc.createTreeWalker=(...args)=>{scans++;return create(...args)};
+ const started=performance.now();const result=f.api.snapshot(f.doc,{limit:100});
+ console.log(`100-button snapshot: ${(performance.now()-started).toFixed(1)} ms, ${scans} metadata passes`);
+ assert.equal(scans,2);assert.equal(result.nodes.length,100);
+ f.doc.body.insertAdjacentHTML('beforeend','<input type=password value=CANARY>');
+ assert.throws(()=>f.api.snapshot(f.doc),e=>e.code==='secureDocumentRequired');f.w.close();
+});
+test('synchronous credential mutation during name projection refuses publication',()=>{
+ const f=fixture('<button>History</button>');const create=f.w.MechanizeAccessibility.createProjection;
+ f.w.MechanizeAccessibility={...f.w.MechanizeAccessibility,createProjection:(...args)=>{const projection=create(...args),name=projection.name.bind(projection);projection.name=el=>{const result=name(el);f.doc.body.insertAdjacentHTML('beforeend','<input type=password value=CANARY>');return result;};return projection;}};
+ assert.throws(()=>f.api.snapshot(f.doc),e=>e.code==='secureDocumentRequired'&&!JSON.stringify(e).includes('CANARY'));f.w.close();
 });
