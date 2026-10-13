@@ -782,7 +782,7 @@ let reconnectBusy = false;
 let qualificationFlight=null, queuedQualification=null;
 function qualificationCurrent(owner){
  if(port!==owner.port||qualificationFlight!==owner)throw reconnectRefuse('portChanged');
- if(owner.expired||Date.now()>=owner.deadline)throw reconnectRefuse('deadline');
+ if(owner.expired||Date.now()>=owner.deadline){owner.expired=true;throw reconnectRefuse('deadline');}
 }
 function qualificationDeadline(owner){
  owner.expired=true;
@@ -795,10 +795,10 @@ function qualificationDeadline(owner){
 }
 async function qualificationRead(owner,operation){
  qualificationCurrent(owner);
- const remaining=owner.deadline-Date.now();
- let timer;
- try{const value=await Promise.race([Promise.resolve().then(operation),new Promise((_,reject)=>{timer=setTimeout(()=>reject(reconnectRefuse('deadline')),remaining);})]);if(port!==owner.port)throw reconnectRefuse('portChanged');return value;}
- finally{clearTimeout(timer);}
+ // The flight timer reports a finite deadline. Chrome operations cannot be
+ // cancelled: retain their original owner until settlement, especially writes
+ // that may still commit after the deadline. Recovery must not race that work.
+ try{return await operation();}finally{qualificationCurrent(owner);}
 }
 
 const reconnectPorts = new WeakSet(), qualifiedNativePorts = new WeakSet(), reconnectRecoveryChecks = new WeakMap(), reconnectPendingRecords=new WeakMap();
@@ -1701,6 +1701,7 @@ async function receive(command) {
         qualificationFlight=null;reconnectBusy=false;verifiedPendingArchives.clear();verifiedHistoryArchives.clear();
         const queued=queuedQualification;queuedQualification=null;
         if(queued?.port===port)void receive(queued.command);
+        else if(owner.expired&&owner.port===port)scheduleInventoryRecovery(true);
       }
     }
   }
@@ -2021,6 +2022,7 @@ async function receiveCommand(command, qualification) {
       qualificationCurrent(qualification);
       await revalidateRetiredUnknownTargets(()=>qualificationCurrent(qualification));
       grant = candidate;connectionAttention='none';chrome.runtime.sendMessage({type:'nativeConnectionStatus',connected:true,qualified:true,attentionCode:'none'}).catch(()=>{});
+      qualificationDeadlineRecoveryUsed=false;
       if(command.type==="processQualified")qualifiedNativePorts.add(commandPort);
       // Complete awaited setup before acknowledging renderer qualification. An
       // empty inventory remains explicitly empty; it proves no available tab.
@@ -2202,13 +2204,18 @@ const connectionLifecycle=MechanizeConnectionLifecycle.create(chrome,{
 function idleUnqualifiedReconnect(){
  return Boolean(port&&!grant&&connectionAttention==='storedFenceMismatch'&&!reconnectBusy&&!mutationBusy&&!setupActiveCommands&&!unknownAttempts.size&&!activeBrowserInputs.size&&!lifecycleGuardId&&!privatePending&&!privateAdmission&&!privateFlow&&!privatePrivacy&&!privateRedactions.length&&port!==privateSilencedPort);
 }
-let inventoryRecoveryTimer=null,inventoryRecoveryLast=0;
-function scheduleInventoryRecovery(){
- if(inventoryRecoveryTimer||!idleUnqualifiedReconnect()||reconnectDiagnosticPhase!=='inventory'||reconnectDiagnosticReason!=='inventoryChanged')return;
+let inventoryRecoveryTimer=null,inventoryRecoveryLast=0,qualificationDeadlineRecoveryUsed=false;
+function scheduleInventoryRecovery(deadline=false){
+ deadline=deadline===true; // Chrome event listeners pass tab IDs, not a retry mode.
+ const eligible=()=>idleUnqualifiedReconnect()&&(deadline?reconnectDiagnosticReason==='deadline'&&!qualificationDeadlineRecoveryUsed:reconnectDiagnosticPhase==='inventory'&&reconnectDiagnosticReason==='inventoryChanged');
+ if(inventoryRecoveryTimer||!eligible())return;
  const expected=port,delay=Math.max(100,1000-(Date.now()-inventoryRecoveryLast));
  inventoryRecoveryTimer=setTimeout(()=>{
   inventoryRecoveryTimer=null;
-  if(port!==expected||!idleUnqualifiedReconnect()||reconnectDiagnosticPhase!=='inventory'||reconnectDiagnosticReason!=='inventoryChanged')return;
+  if(port!==expected||!eligible())return;
+  // One metadata retry for this unresolved deadline generation. A fresh port
+  // obtains a fresh authenticated broker challenge; never replay the command.
+  if(deadline)qualificationDeadlineRecoveryUsed=true;
   inventoryRecoveryLast=Date.now();void connect().catch(()=>{});
  },delay);inventoryRecoveryTimer?.unref?.();
 }

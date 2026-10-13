@@ -2322,12 +2322,14 @@ test('cold pending archive cache resolves afresh and missing references never te
  delete f.storage['mechanizeReconnectPendingArchive:'+ref.digest];await assert.rejects(()=>f.verifyArchives(current));assert.equal(f.journalValid(current,f.storage.lastGrant),false);assert.equal(f.state.deliveries,0);
 });
 test('blocked archive read obeys qualification deadline without publishing input or overwriting history',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date'],now:Date.now()});
  const f=await largePendingReconnectFixture(t);await f.run();f.disconnect();await f.connect();f.messages.length=0;
  const original=JSON.stringify(f.storage.mechanizeReconnect),ref=f.storage.mechanizeReconnect.recovery.originalPendingRef;let release;
- t.mock.timers.enable({apis:['setTimeout','Date']});
  f.state.blockStorageReadKey='mechanizeReconnectPendingArchive:'+ref.digest;f.state.blockStorageRead=new Promise(r=>release=r);
  const pending=f.receive({...restartQualification(),brokerEpoch:'blocked-archive',channelEpoch:'blocked-archive',reconnectBindingsVersion:1});for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));
- t.mock.timers.tick(10001);await pending;release();
+ t.mock.timers.tick(10001);await new Promise(r=>setImmediate(r));
+ assert.ok(f.messages.some(m=>m.type==='attention'&&m.reconnectReason==='deadline'));
+ release();await pending;
  assert.equal(f.messages.some(m=>m.type==='executorPrepared'),false);assert.equal(JSON.stringify(f.storage.mechanizeReconnect),original);assert.equal(f.state.deliveries,0);
 });
 

@@ -32,7 +32,7 @@ not separately been live-executed. It neither captures nor grants permissions.
 Use the same owned session, approved grant and exact purpose for capture and
 run; changing the grant can invalidate the permit even when both grants permit
 control. Activate the exact document before capture. The permit is single-use,
-expires after thirty seconds, and other native mutation invalidates it. Never
+expires at the returned `metadata.expiresAt` (currently two minutes), and other native mutation invalidates it. Never
 reuse a preview's pixel coordinates or a stale permit. Inspect terminal status
 and original effect state before an alternate route or replay.
 
