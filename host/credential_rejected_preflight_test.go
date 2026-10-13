@@ -86,3 +86,51 @@ func (f *revokeNonReadyFixture) AdmitCredentialControl(ctx context.Context, p au
 	}
 	return out, e
 }
+
+func TestReleasedInspectionAllowsFreshPrepareInSameSession(t *testing.T) {
+	credentialHostFixtureFlow(t, "unavailable", credentialHostFixtureHooks{configure: func(f *credentialBrowserFixture) {
+		f.inspectionFailure = "noCredentialFields"
+		f.inspectionNoInput = true
+		f.preflightIdle = true
+	}, beforeStatus: func(t *testing.T, h *Host, ctx context.Context, p auth.Principal, ref gateway.CredentialRefInput, input gateway.CredentialPrepareInput, f *credentialBrowserFixture, reads *atomic.Int64) {
+		original := f.session
+		out, e := h.CredentialStatus(ctx, p, ref)
+		if e != nil || out.PreflightRelease != "released" {
+			t.Fatal("negative inspection not confirmed released", e)
+		}
+		prep, children := credentialLifecycleSnapshot(t, h, ctx, p, ref.PreparationID)
+		if prep.ProtectionState != "closed" || len(children) != 0 {
+			t.Fatal("fixture retained original input protection")
+		}
+		fresh, e := h.CredentialPrepare(ctx, p, input)
+		if e != nil || fresh.State != "awaitingPreflight" || fresh.PreparationID == ref.PreparationID {
+			t.Fatal("released item blocks identical same-session Prepare", e)
+		}
+		h.credentials.mu.Lock()
+		f.session = h.credentials.pending[fresh.PreparationID]
+		_, retained := h.credentials.pending[ref.PreparationID]
+		h.credentials.mu.Unlock()
+		if retained || original.done.Err() == nil {
+			t.Fatal("old canceled selection remains usable")
+		}
+		f.inspectionFailure = ""
+		f.inspectionNoInput = false
+		f.unavailable = false
+		f.admissionTransform = func(c context.Context, a chrome.ControlAuthority) (chrome.ControlAuthority, error) {
+			a.Document.DocumentID = "fresh-document"
+			a.Document.Generation++
+			return a, c.Err()
+		}
+		ready, e := h.CredentialStatus(ctx, p, gateway.CredentialRefInput{SessionID: input.SessionID, PreparationID: fresh.PreparationID})
+		if e != nil || ready.State != "ready" || f.session.binding.DocumentID != "fresh-document" {
+			t.Fatal("new preparation failed fresh document qualification", ready.State, e)
+		}
+		after, rows := credentialLifecycleSnapshot(t, h, ctx, p, ref.PreparationID)
+		if after != prep || len(rows) != 0 || f.fills != 0 || f.submits != 0 {
+			t.Fatal("retry changed old history or dispatched input")
+		}
+		if _, e = h.CredentialApply(ctx, p, ref); e == nil {
+			t.Fatal("old preparation resumed private input")
+		}
+	}})
+}

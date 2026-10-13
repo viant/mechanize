@@ -58,6 +58,13 @@ func (s *credentialService) releaseRejectedPreflight(ctx context.Context, p auth
 			return e
 		}
 		item.preflightNoInput = false
+		// Confirmed zero-child retirement has released this volatile gate.
+		// Cancel only this old selection; the owned automation session remains
+		// open so a fresh explicit Prepare can qualify the current document.
+		item.preparation = nil
+		if item.cancel != nil {
+			item.cancel()
+		}
 		if item.selection != nil {
 			item.selection.Revoke()
 		}

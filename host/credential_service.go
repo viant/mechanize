@@ -159,7 +159,7 @@ func (s *credentialService) prepare(ctx context.Context, p auth.Principal, in ga
 	// Expiry cannot erase an unknown effect or its durable privacy barrier.
 	for oldID, old := range s.pending {
 		old.mu.Lock()
-		retire := (!time.Now().Before(old.expires) || old.state == "needsConfiguration") && old.preparation == nil && old.protected == nil && old.dom == nil && len(old.attempts) == 0 && old.fillAttempt == "" && old.submitAttempt == "" && !old.uncertain && old.dispatch != "unknown"
+		retire := (!time.Now().Before(old.expires) || old.state == "needsConfiguration" || old.done != nil && old.done.Err() != nil) && old.preparation == nil && old.protected == nil && old.dom == nil && len(old.attempts) == 0 && old.fillAttempt == "" && old.submitAttempt == "" && !old.uncertain && old.dispatch != "unknown"
 		if retire {
 			if old.selection != nil {
 				old.selection.Revoke()
