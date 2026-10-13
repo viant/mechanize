@@ -311,7 +311,11 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 		}
 	}
 	b.mu.Lock()
-	c.invalidateConsentReconnect()
+	// The held reconnect snapshot may revoke an original dead-target hazard.
+	// This metadata-only RPC is part of that same proof, never fresh work.
+	if !reconnectTargetRetirementLocked(c, command) {
+		c.invalidateConsentReconnect()
+	}
 	b.mu.Unlock()
 	for _, check := range beforeSend {
 		if err := check(); err != nil {

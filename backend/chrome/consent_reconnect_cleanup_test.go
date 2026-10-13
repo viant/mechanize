@@ -5,17 +5,38 @@ import (
 	"errors"
 	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/model"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestConsentReconnectProofRequiresActualPreparedHandshakeAndUnchangedInventory(t *testing.T) {
-	for _, mode := range []string{"complete", "absent", "notPrepared", "newChallenge", "documentChanged", "activeWork", "unknown", "private", "newWorkCompleted", "peerChanged", "foreign", "incomplete"} {
+	for _, mode := range []string{"complete", "retiredUnknown", "retiredMissingProof", "retiredWrongLease", "absent", "notPrepared", "newChallenge", "documentChanged", "activeWork", "unknown", "private", "newWorkCompleted", "peerChanged", "foreign", "incomplete"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newLifecycleFixture(t, 0, mode != "absent")
 			b, c := f.gateway.broker, f.channel
 			p, ctx := f.principal, f.ctx
 			b.mu.Lock()
+			if strings.HasPrefix(mode, "retired") {
+				id := strings.Repeat("d", 64)
+				identity := c.documents[0].Identity
+				identity.DocumentID = "retired-source"
+				lease := Lease{ID: "original-lease", Generation: 1}
+				command := Command{Identity: identity, AttemptID: id, BrokerEpoch: "prior-broker", ChannelEpoch: "prior-channel", ScopeHash: c.scopeHash, ControlLease: &lease, FingerprintVersion: 2, FingerprintSHA256: strings.Repeat("e", 64)}
+				c.attempts[id] = command
+				c.receipts[id] = Reply{Identity: identity, AttemptID: id, ControlLease: &lease, FingerprintVersion: 2, FingerprintSHA256: command.FingerprintSHA256, DispatchState: "unknown", EffectState: "unknown"}
+				c.retiredTargets = map[string]Command{id: command}
+				if mode == "retiredMissingProof" {
+					c.retiredTargets = nil
+				}
+				if mode == "retiredWrongLease" {
+					other := command
+					copied := lease
+					copied.ID = "foreign-lease"
+					other.ControlLease = &copied
+					c.retiredTargets[id] = other
+				}
+			}
 			switch mode {
 			case "notPrepared":
 				c.consentReconnect.prepared = false
@@ -41,7 +62,8 @@ func TestConsentReconnectProofRequiresActualPreparedHandshakeAndUnchangedInvento
 			b.mu.Unlock()
 			calls := 0
 			err := f.gateway.WithConsentReconnectProof(ctx, p, func() error { calls++; return nil })
-			if (err == nil) != (mode == "complete") || calls != map[bool]int{true: 1, false: 0}[mode == "complete"] {
+			expected := mode == "complete" || mode == "retiredUnknown"
+			if (err == nil) != expected || calls != map[bool]int{true: 1, false: 0}[expected] {
 				t.Fatalf("mode%s calls%d err%v", mode, calls, err)
 			}
 			b.mu.Lock()

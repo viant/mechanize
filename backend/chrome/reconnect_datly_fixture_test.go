@@ -30,6 +30,7 @@ import (
 // existing linked writers and readback contract. It supplies no Chrome input.
 type reconnectDatlyFixture struct {
 	builder    *durable.Builder
+	storage    string
 	runtime    *integration.Runtime
 	setExecute func(integration.Execute)
 	ctx        context.Context
@@ -158,7 +159,7 @@ func newReconnectDatlyFixture(t *testing.T, missing bool, completed ...bool) *re
 	}
 	current := p
 	current.ClientID = "current-native-client"
-	return &reconnectDatlyFixture{builder: b, runtime: runtimeService, setExecute: func(execute integration.Execute) { next = execute }, ctx: auth.WithPrincipal(ctx, current), p: current, scope: ReconnectBindingScope{ProfileChannel: "p1", BrowserInstance: "b1", ScopeHash: strings.Repeat("a", 64), PendingDigest: strings.Repeat("b", 64)}, descriptor: descriptor, read: read, dispatches: &dispatches}
+	return &reconnectDatlyFixture{builder: b, storage: storage, runtime: runtimeService, setExecute: func(execute integration.Execute) { next = execute }, ctx: auth.WithPrincipal(ctx, current), p: current, scope: ReconnectBindingScope{ProfileChannel: "p1", BrowserInstance: "b1", ScopeHash: strings.Repeat("a", 64), PendingDigest: strings.Repeat("b", 64)}, descriptor: descriptor, read: read, dispatches: &dispatches}
 }
 
 type reconnectCommittedInvoker func(context.Context, auth.Principal, exec.ComponentRequest) (any, error)

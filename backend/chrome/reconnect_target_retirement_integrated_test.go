@@ -92,6 +92,7 @@ func TestHistoricalUnknownReloadDatlyBrokerWorkerAndFreshAction(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	recoverConsent := historicalConsentRecoveryFixture(t, f, g)
 	conn, e := net.Dial("unix", b.listener.Addr().String())
 	if e != nil {
 		t.Fatal(e)
@@ -185,6 +186,7 @@ func TestHistoricalUnknownReloadDatlyBrokerWorkerAndFreshAction(t *testing.T) {
 		if r.Original.FingerprintSHA256 != f.descriptor.Fingerprint.SHA256 || r.Hello["playwrightTargetRetirementVersion"] != float64(1) {
 			t.Fatal("real journal or negotiated feature mismatch")
 		}
+
 		r.Hello["credential"] = strings.Repeat("synthetic", 8)
 		// The synthetic Chrome API runtime has no installed extension identity;
 		// the signed-peer adapter uses this fixture's configured enrollment.
@@ -215,6 +217,13 @@ func TestHistoricalUnknownReloadDatlyBrokerWorkerAndFreshAction(t *testing.T) {
 	b.mu.Unlock()
 	if audit.DispatchState != "unknown" || audit.EffectState != "unknown" || active || string(before) != string(f.read()) {
 		t.Fatal("operational recovery changed original audit")
+	}
+	if err := recoverConsent(); err != nil {
+
+		t.Fatal("retired historical audit blocked existing consent recovery CAS", err)
+	}
+	if string(before) != string(f.read()) {
+		t.Fatal("consent cleanup altered original UNKNOWN")
 	}
 	f.setExecute(func(runCtx context.Context, p auth.Principal, step model.Step, values map[string]model.Value) (integration.StepResult, error) {
 		a, e := g.AdmitControl(runCtx, p, step.Target.Surface)

@@ -68,8 +68,28 @@ func (c *channel) invalidateConsentReconnect() { c.consentReconnect = nil }
 func (b *Broker) consentReconnectValidLocked(c *channel, proof *consentReconnectProof) bool {
 	return proof != nil && c.consentReconnect == proof && proof.prepared && proof.inventoried && !b.closed && c.conn == proof.conn && c.processEvidence != nil && c.processEvidence.KernelPeerQualified && c.processEvidence.NativeHost == proof.peer.NativeHost && c.processEvidence.ChromeParent == proof.peer.ChromeParent &&
 		b.epoch == proof.brokerEpoch && c.epoch == proof.channelEpoch && c.scopeHash == proof.scopeHash && c.executorChallenge == proof.challenge && channelScopeQualified(c) && c.executorQualified && c.inventoryComplete && !c.lifecycleInhibited && c.lifecycleGuard == nil &&
-		len(c.pending) == 0 && len(c.unknown) == 0 && len(c.attempts) == 0 && len(c.receipts) == 0 && !c.controllerCleanupPending && c.playwright == nil && c.privateInspection == nil && c.privateCredential == nil && c.privateAdvance == nil && c.privateFlow == nil && c.privacy == nil && c.privacyPending == nil && c.manualPending == nil && c.manualTransition == nil && c.openOriginPending == nil &&
+		len(c.pending) == 0 && len(c.unknown) == 0 && consentReconnectRetiredHistoryLocked(c) && !c.controllerCleanupPending && c.playwright == nil && c.privateInspection == nil && c.privateCredential == nil && c.privateAdvance == nil && c.privateFlow == nil && c.privacy == nil && c.privacyPending == nil && c.manualPending == nil && c.manualTransition == nil && c.openOriginPending == nil &&
 		reflect.DeepEqual(proof.documents, consentReconnectDocuments(c.documents))
+}
+
+// UNKNOWN audit is not an active executor hazard after the current connection
+// independently proved exact target death. Accept only those original tuples;
+// any other work/history still invalidates or refuses the reconnect seal.
+func consentReconnectRetiredHistoryLocked(c *channel) bool {
+	if len(c.attempts) == 0 && len(c.receipts) == 0 {
+		return true
+	}
+	if len(c.attempts) != len(c.retiredTargets) || len(c.receipts) != len(c.retiredTargets) {
+		return false
+	}
+	for id, command := range c.attempts {
+		retired, ok := c.retiredTargets[id]
+		receipt, hasReceipt := c.receipts[id]
+		if !ok || !hasReceipt || command.AttemptID != id || retired.AttemptID != id || command.Identity != retired.Identity || command.BrokerEpoch != retired.BrokerEpoch || command.ChannelEpoch != retired.ChannelEpoch || command.ScopeHash != retired.ScopeHash || retired.ScopeHash != c.scopeHash || command.ControlLease == nil || retired.ControlLease == nil || *command.ControlLease != *retired.ControlLease || command.FingerprintVersion != 2 || retired.FingerprintVersion != 2 || command.FingerprintSHA256 != retired.FingerprintSHA256 || receipt.AttemptID != id || receipt.Identity != command.Identity || receipt.ControlLease == nil || *receipt.ControlLease != *command.ControlLease || receipt.FingerprintVersion != 2 || receipt.FingerprintSHA256 != command.FingerprintSHA256 || receipt.DispatchState != "unknown" || receipt.EffectState != "unknown" {
+			return false
+		}
+	}
+	return true
 }
 func lockConsentReconnect(ctx context.Context, mu *sync.Mutex) error {
 	for !mu.TryLock() {
