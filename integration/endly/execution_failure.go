@@ -26,6 +26,10 @@ func executionFailure(result StepResult, err error) *ExecutionFailure {
 	code, reported := "", ""
 	var typed *model.MechanizeError
 	if errors.As(err, &typed) && typed != nil && executionFailureCode(typed.Code) && !model.NativeExecutionFailureCode(typed.Code) {
+		// Frame expiry is a local pre-I/O rejection, not a generic helper error.
+		if typed.Code == "staleFramePermit" && (typed.Stage != "native" || typed.DispatchState != "notDispatched" || typed.EffectState != "none") {
+			return nil
+		}
 		code, reported = typed.Code, typed.DispatchState
 	} else {
 		var native nativeExecutionFailure
@@ -61,7 +65,7 @@ func executionFailureCode(code string) bool {
 		return true
 	}
 	switch code {
-	case "privateDOMUnavailable", "publicReadIdentityChanged", "publicReadInventoryUnavailable", "publicReadBusy", "publicReadLimit", "publicReadUnavailable", "invalidPredicate", "playwrightRuntimeQualification", "playwrightChildLaunch", "playwrightDeadline", "playwrightIPCFrame", "playwrightIPCProtocol", "playwrightIPCWrite", "playwrightChildExited", "playwrightAttemptCapacity", "playwrightAttemptConflict", "playwrightAuthorityChanged", "playwrightAuthorityDenied", "playwrightBindingRequired", "playwrightBusy", "playwrightCommandDenied", "playwrightDocumentChanged", "playwrightFingerprintMismatch", "playwrightHostRequired", "playwrightIntentRequired", "playwrightLocatorDenied", "playwrightOriginDenied", "playwrightPrivateDOMDenied", "playwrightReadDenied", "playwrightReadTooLarge", "playwrightReceiptUncertain", "playwrightRedactionDenied", "playwrightTargetDenied", "playwrightTargetUnpinned", "playwrightTargetChanged", "playwrightUnavailable", "playwrightUncertain", "playwrightExecutionRequired", "playwrightHostDeadline", "playwrightHostDenied", "playwrightHostDisconnected", "playwrightRelayDenied":
+	case "staleFramePermit", "privateDOMUnavailable", "publicReadIdentityChanged", "publicReadInventoryUnavailable", "publicReadBusy", "publicReadLimit", "publicReadUnavailable", "invalidPredicate", "playwrightRuntimeQualification", "playwrightChildLaunch", "playwrightDeadline", "playwrightIPCFrame", "playwrightIPCProtocol", "playwrightIPCWrite", "playwrightChildExited", "playwrightAttemptCapacity", "playwrightAttemptConflict", "playwrightAuthorityChanged", "playwrightAuthorityDenied", "playwrightBindingRequired", "playwrightBusy", "playwrightCommandDenied", "playwrightDocumentChanged", "playwrightFingerprintMismatch", "playwrightHostRequired", "playwrightIntentRequired", "playwrightLocatorDenied", "playwrightOriginDenied", "playwrightPrivateDOMDenied", "playwrightReadDenied", "playwrightReadTooLarge", "playwrightReceiptUncertain", "playwrightRedactionDenied", "playwrightTargetDenied", "playwrightTargetUnpinned", "playwrightTargetChanged", "playwrightUnavailable", "playwrightUncertain", "playwrightExecutionRequired", "playwrightHostDeadline", "playwrightHostDenied", "playwrightHostDisconnected", "playwrightRelayDenied":
 		return true
 	}
 	return false

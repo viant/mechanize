@@ -546,3 +546,54 @@ func TestWindowFrameHostShutdownDuringCreatingCaptureJoinsAndClosesAdmission(t *
 		t.Fatal("shutdown retained capture/input interval")
 	}
 }
+
+func TestWindowFrameExpiredPermitProjectsKnownNoInputThroughRuntime(t *testing.T) {
+	h, f, helper, ctx, surface := newWindowFrameHostFixture(t)
+	_, _, frame, err := h.CaptureWindowFrame(ctx, f.principal, surface, 42, 17)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, _ := auth.ConsentBindingFromContext(ctx)
+	h.frameMu.Lock()
+	record := h.framePermits[f.principal.Namespace]
+	if record == nil {
+		h.frameMu.Unlock()
+		t.Fatal("capture record missing")
+	}
+	expired := time.Now().Add(-time.Second)
+	record.frame.Permit.ExpiresAt = expired
+	h.frameMu.Unlock()
+	step := capturedFrameHostStep(t, frame.Permit.ID)
+	step.Effect.BusinessKey = map[string]model.Value{"operation": {Kind: model.StringValue, String: "expired-fixture-frame"}}
+	op, err := h.Runtime.StartPlan(ctx, binding.SessionID, model.Plan{SchemaVersion: 1, Steps: []model.Step{step}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	done, err := h.Runtime.Wait(wait, binding.SessionID, op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure, err := h.Runtime.ExecutionFailure(ctx, binding.SessionID, op.ID)
+	if err != nil || failure == nil || failure.Code != "staleFramePermit" || failure.DispatchState != "notDispatched" || !failure.Valid() {
+		t.Fatalf("known pre-input expiry was hidden: %+v %v", failure, err)
+	}
+	if done.Status != "failed" || helper.clicks != 0 {
+		t.Fatal("expired frame reached input or success")
+	}
+	h.frameMu.Lock()
+	changed := record.used || !record.frame.Permit.ExpiresAt.Equal(expired)
+	h.frameMu.Unlock()
+	if changed {
+		t.Fatal("expiry projection consumed or extended the permit")
+	}
+	run, err := h.Runtime.RunReference(ctx, binding.SessionID, op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := h.durable.StateGet(ctx, f.principal, run)
+	if err != nil || len(state.UnresolvedEffects) != 0 {
+		t.Fatal("known no-input expiry minted unresolved input", err)
+	}
+}

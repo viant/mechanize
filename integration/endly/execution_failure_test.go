@@ -126,3 +126,35 @@ func TestExecutionFailureNativeClosedProvenanceAndDispatch(t *testing.T) {
 		})
 	}
 }
+
+func TestExecutionFailureStaleFramePermitRequiresTypedNoInputProof(t *testing.T) {
+	proof := &model.MechanizeError{Code: "staleFramePermit", Message: "private-frame-canary", Stage: "native", DispatchState: "notDispatched", EffectState: "none"}
+	for _, tc := range []struct {
+		name   string
+		result StepResult
+		err    error
+		want   string
+	}{
+		{"typed", StepResult{DispatchState: "notDispatched"}, proof, "notDispatched"},
+		{"wrapped", StepResult{}, fmt.Errorf("wrapper: %w", proof), "notDispatched"},
+		{"unknown retained", StepResult{DispatchState: "unknown"}, proof, "unknown"},
+		{"conflicting receipt", StepResult{DispatchState: "dispatched"}, proof, "unknown"},
+		{"flattened", StepResult{DispatchState: "notDispatched"}, errors.New(proof.Error()), ""},
+		{"native error not local proof", StepResult{DispatchState: "notDispatched"}, nativeFailureFixture{"staleFramePermit", "notDispatched", true}, ""},
+		{"ambiguous typed", StepResult{}, &model.MechanizeError{Code: "staleFramePermit", Stage: "native", DispatchState: "unknown", EffectState: "unknown"}, ""},
+		{"missing provenance", StepResult{}, &model.MechanizeError{Code: "staleFramePermit", DispatchState: "notDispatched"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := executionFailure(tc.result, tc.err)
+			if tc.want == "" {
+				if got != nil {
+					t.Fatal("unproven expiry projected", got)
+				}
+				return
+			}
+			if got == nil || got.Code != "staleFramePermit" || got.DispatchState != tc.want || !got.Valid() {
+				t.Fatal("closed expiry projection lost", got)
+			}
+		})
+	}
+}
