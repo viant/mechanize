@@ -56,7 +56,7 @@ func TestTrustedControllerOriginRetainsSessionBoundsAndToolConsent(t *testing.T)
 	original := c.controllerSessions["trusted"]
 	expiry := original.ExpiresAt
 	b.mu.Unlock()
-	if expiry.After(time.Now().Add(5*time.Minute)) || !original.Approved {
+	if expiry.After(time.Now().Add(controllerIdleTTL)) || !original.Approved {
 		t.Fatal("unbounded admission")
 	}
 	ctx := auth.WithPrincipal(context.Background(), p)

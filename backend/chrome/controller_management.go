@@ -50,16 +50,18 @@ func ValidControllerPolicy(p ControllerPolicy) bool {
 }
 
 type ControllerSession struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	identity   ControllerIdentity
-	inFlight   bool
-	ID         string    `json:"id"`
-	Origin     string    `json:"origin"`
-	DocumentID string    `json:"documentId"`
-	TabID      int       `json:"tabId"`
-	Approved   bool      `json:"approved"`
-	ExpiresAt  time.Time `json:"expiresAt"`
+	ctx              context.Context
+	cancel           context.CancelFunc
+	identity         ControllerIdentity
+	inFlight         bool
+	expiryTimer      *time.Timer
+	expiryGeneration uint64
+	ID               string    `json:"id"`
+	Origin           string    `json:"origin"`
+	DocumentID       string    `json:"documentId"`
+	TabID            int       `json:"tabId"`
+	Approved         bool      `json:"approved"`
+	ExpiresAt        time.Time `json:"expiresAt"`
 }
 type ControllerManagement struct {
 	ProfileChannel  string            `json:"profileChannel"`
@@ -285,7 +287,7 @@ func (b *Broker) controllerLifecycle(c *channel, conn net.Conn, raw []byte) bool
 		}
 		c.controllerSessions = make(map[string]*ControllerSession)
 	}
-	c.controllerSessions[r.SessionID] = &ControllerSession{ID: r.SessionID, Origin: r.Origin, DocumentID: r.DocumentID, TabID: r.TabID, Approved: true, ExpiresAt: time.Now().Add(5 * time.Minute)}
+	c.controllerSessions[r.SessionID] = &ControllerSession{ID: r.SessionID, Origin: r.Origin, DocumentID: r.DocumentID, TabID: r.TabID, Approved: true, ExpiresAt: time.Now().Add(controllerIdleTTL)}
 	b.initControllerSessionLocked(c, c.controllerSessions[r.SessionID])
 	admitted = c.controllerSessions[r.SessionID]
 	return true

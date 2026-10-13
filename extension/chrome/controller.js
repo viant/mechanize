@@ -90,6 +90,12 @@ globalThis.MechanizeController = {
       for (const [key, p] of pending) if (p.session === id) { clearTimeout(p.timer); releaseResult(p); pending.delete(key); }
       try { s.port.disconnect(); } catch {}
     };
+    const idleMs=24*60*60*1000;
+    const renew=id=>{
+      const s=sessions.get(id);if(!s)return;
+      clearTimeout(s.expiry);const expiresAt=Date.now()+idleMs;s.expiresAt=expiresAt;
+      s.expiry=setTimeout(()=>{if(sessions.get(id)===s&&s.expiresAt===expiresAt)revoke(id);},idleMs);
+    };
     const live = async s => {
       const f = await chrome.webNavigation.getFrame({tabId:s.tabId, frameId:0});
       const binding=native.binding();
@@ -128,12 +134,12 @@ globalThis.MechanizeController = {
       const id = crypto.randomUUID();
       const s = {port:p, binding:{...binding}, origin, tabId:sender.tab.id, documentId:sender.documentId, approved:false, seen:new Set(), tools:new Set()};
       sessions.set(id,s);
-      s.expiry = setTimeout(() => revoke(id), 300000);
+      renew(id);
       p.onDisconnect.addListener(() => { clearTimeout(s.expiry); revoke(id); });
       emit(p,{type:'approvalRequired'});
       native.send({type:'controllerOpen',sessionId:id,origin,documentId:s.documentId,tabId:s.tabId,...binding});
       p.onMessage.addListener(async m => {
-        if (sessions.get(id) !== s || !s.approved || !exact(m,['type','requestId','operation','deadlineUnixMs',...(m?.operation==='tools/call' || m && ['initialize','tools/list'].includes(m.operation) && Object.hasOwn(m,'params') ? ['params'] : [])]) ||
+        if (sessions.get(id) !== s || Date.now()>=s.expiresAt || !s.approved || !exact(m,['type','requestId','operation','deadlineUnixMs',...(m?.operation==='tools/call' || m && ['initialize','tools/list'].includes(m.operation) && Object.hasOwn(m,'params') ? ['params'] : [])]) ||
             m.type !== 'request' || !['connection.status','tools.list','browser.inventory.summary','tools/list','tools/call','initialize'].includes(m.operation) || typeof m.requestId !== 'string' || !/^[A-Za-z0-9._:-]{1,64}$/.test(m.requestId) ||
             s.seen.has(m.requestId) || s.seen.size >= 128 || pending.size >= 16 || !Number.isSafeInteger(m.deadlineUnixMs) || m.deadlineUnixMs <= Date.now() || m.deadlineUnixMs > Date.now()+10000) { revoke(id); return; }
         if (new TextEncoder().encode(JSON.stringify(m)).length>65536 || m.operation!=='tools/call' && !metadata(m) || m.operation==='tools/call' && (!exact(m.params,['name','arguments']) || !s.tools.has(m.params.name) || !m.params.arguments || typeof m.params.arguments!=='object' || Array.isArray(m.params.arguments) || new TextEncoder().encode(JSON.stringify(m.params.arguments)).length>49152)) {revoke(id);return;}
@@ -142,6 +148,7 @@ globalThis.MechanizeController = {
           if (!await live(s) || sessions.get(id) !== s) { revoke(id); return; }
           const binding = native.binding();
           if (!binding) { revoke(id); return; }
+          renew(id); // Only a validated live request extends idle lifetime.
           const requestId = crypto.randomUUID();
           const timer = setTimeout(() => { const held=pending.get(requestId);if(held)finishResult(requestId,held,m.operation==='tools/call'?'resultTransferTimeout':'deadlineExceeded'); }, Math.max(1,m.deadlineUnixMs-Date.now()));
           pending.set(requestId,{session:id, requestId:m.requestId, operation:m.operation, timer, deadline:m.deadlineUnixMs});

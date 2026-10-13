@@ -62,6 +62,7 @@ func (b *Broker) controllerReply(c *channel, conn net.Conn, r *controllerRequest
 	if !b.controllerRequestAllowedLocked(c, conn, r) {
 		return result
 	}
+	b.renewControllerSessionLocked(c, c.controllerSessions[r.SessionID], time.Now())
 	delete(result, "error")
 	switch r.Operation {
 	case "connection.status":

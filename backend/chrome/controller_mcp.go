@@ -66,7 +66,8 @@ func (b *Broker) initControllerSessionLocked(c *channel, s *ControllerSession) {
 		}
 	}
 	s.identity = identity
-	s.ctx, s.cancel = context.WithDeadline(auth.WithPrincipal(context.Background(), identity.Principal), s.ExpiresAt)
+	s.ctx, s.cancel = context.WithCancel(auth.WithPrincipal(context.Background(), identity.Principal))
+	b.armControllerExpiryLocked(c, s)
 	dispatcher := b.controllerDispatcher
 	b.wg.Add(1)
 	go func() {
@@ -83,9 +84,43 @@ func (b *Broker) initControllerSessionLocked(c *channel, s *ControllerSession) {
 		}
 	}()
 }
+
+const controllerIdleTTL = 24 * time.Hour
+
+// Caller holds b.mu. A timer belongs to this exact session and refresh
+// generation; queued old callbacks cannot cancel a refreshed/replaced owner.
+func (b *Broker) armControllerExpiryLocked(c *channel, s *ControllerSession) {
+	if s.expiryTimer != nil {
+		s.expiryTimer.Stop()
+	}
+	s.expiryGeneration++
+	generation := s.expiryGeneration
+	s.expiryTimer = time.AfterFunc(time.Until(s.ExpiresAt), func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		b.expireControllerSessionLocked(c, s, generation, time.Now())
+	})
+}
+func (b *Broker) expireControllerSessionLocked(c *channel, s *ControllerSession, generation uint64, now time.Time) {
+	if c.controllerSessions[s.ID] != s || s.expiryGeneration != generation || s.ExpiresAt.After(now) {
+		return
+	}
+	cancelControllerSession(s)
+	delete(c.controllerSessions, s.ID)
+}
+func (b *Broker) renewControllerSessionLocked(c *channel, s *ControllerSession, now time.Time) {
+	s.ExpiresAt = now.Add(controllerIdleTTL)
+	b.armControllerExpiryLocked(c, s)
+}
 func cancelControllerSession(s *ControllerSession) {
-	if s != nil && s.cancel != nil {
-		s.cancel()
+	if s != nil {
+		if s.expiryTimer != nil {
+			s.expiryTimer.Stop()
+		}
+		s.expiryGeneration++
+		if s.cancel != nil {
+			s.cancel()
+		}
 	}
 }
 func (b *Broker) controllerMCPLocked(c *channel, conn net.Conn, r *controllerRequest) bool {
@@ -99,6 +134,7 @@ func (b *Broker) controllerMCPLocked(c *channel, conn net.Conn, r *controllerReq
 		b.mu.Unlock()
 		return false
 	}
+	b.renewControllerSessionLocked(c, s, time.Now())
 	s.inFlight = true
 	dispatcher := b.controllerDispatcher
 	b.wg.Add(1)

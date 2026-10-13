@@ -277,3 +277,25 @@ test('canonical catalog allows sixty-four explicit tools within unchanged byte b
   assert.equal(Array.isArray(f.outward.at(-1).result?.tools),accepted);
  }
 });
+test('validated controller requests renew 24-hour idle lifetime without changing binding or replay receipts',async()=>{
+ const f=fixture();f.state.now=Date.now();f.events.external(f.p);await f.approve();const idle=24*60*60*1000;
+ const oldTimer=[...f.timers.values()].find(v=>v.delay===idle);assert.ok(oldTimer);
+ f.state.now+=6*60*1000;
+ await f.events.message({...request(),deadlineUnixMs:f.state.now+5000});assert.equal(f.p.disconnected,undefined);assert.equal(f.sent.length,1);
+ const sent=f.sent[0];f.bridge.receive({type:'controllerResult',requestId:sent.requestId,ready:true});
+ const renewed=[...f.timers.values()].find(v=>v.delay===idle);assert.ok(renewed);assert.notEqual(renewed,oldTimer);
+ oldTimer.f();assert.equal(f.p.disconnected,undefined,'old timeout cannot cancel refreshed owner');
+ await f.events.message({...request(),deadlineUnixMs:f.state.now+5000});assert.equal(f.p.disconnected,true,'original request still cannot replay');assert.equal(f.sent.filter(m=>m.type==='controllerRequest').length,1);
+});
+test('idle expiry policy revocation navigation and invalid requests never renew authority',async()=>{
+ const idle=24*60*60*1000;
+ for(const mode of ['idle','expiredRequest','invalid','revoke','navigate']){
+  const f=fixture();f.state.now=Date.now();f.events.external(f.p);await f.approve();const timer=[...f.timers.values()].find(v=>v.delay===idle);assert.ok(timer);
+  if(mode==='idle'){f.state.now+=idle;timer.f();}
+  if(mode==='expiredRequest'){f.state.now+=idle;await f.events.message({...request(),deadlineUnixMs:f.state.now+5000});}
+  if(mode==='invalid')await f.events.message({...request(),foreign:'PRIVATE_CANARY'});
+  if(mode==='revoke')f.bridge.receive({type:'controllerPolicy',enabled:false,origins:[],...f.binding});
+  if(mode==='navigate')f.events.navigate({tabId:7,frameId:0});
+  assert.equal(f.p.disconnected,true,mode);assert.equal(f.sent.filter(m=>m.type==='controllerRequest').length,0,mode);assert.ok(![...f.timers.values()].some(v=>v.delay===idle),mode);
+ }
+});
