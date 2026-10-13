@@ -289,3 +289,17 @@ test('fresh-document layout refusal does not leave a partial private binding tha
  f.w.document.body.innerHTML='<h1>USERNAME-CANARY</h1><h2>Safe records</h2>';assert.equal(f.send(request).ready,true);
  const commit={...request,type:'credentialPrivacyCommit'};delete commit.redactions;assert.equal(f.send(commit).ready,true);assert.ok(!JSON.stringify(f.send(f.command('observe'))).includes('CANARY'));
 });
+
+test('successor redaction survives worker cache loss and reinjection without inherited input authority',async t=>{
+ const f=fixture('<main><h1>USERNAME-CANARY PASSWORD-CANARY</h1><h2>public report</h2></main><button id="details">Details</button>',false);t.after(f.close);
+ const scopeHash='a'.repeat(64),seed={type:'credentialPrivacyBind',requestId:'a'.repeat(64),identity,brokerEpoch:binding.brokerEpoch,channelEpoch:binding.channelEpoch,scopeHash,deadlineUnixMs:Date.now()+5000,origin:f.w.location.origin,permitId:'b'.repeat(64),redactions:f.w.MechanizeSecureInput.redactionVariants(['USERNAME-CANARY','PASSWORD-CANARY'])};
+ assert.equal(f.send(seed).ready,true);const commit={...seed,type:'credentialPrivacyCommit'};delete commit.redactions;assert.equal(f.send(commit).ready,true);
+ // Retirement does not send a redactor removal message to B. Its isolated
+ // content closure survives later packaged injection when the worker rebinds.
+ for(const file of ['fingerprint.js','dom.js','secure-input.js','content.js'])f.w.eval(fs.readFileSync(path.join(__dirname,'..',file),'utf8'));
+ const bound=f.send({type:'bind',binding:{...binding,scopeHash,mutationFingerprintVersion:2}});assert.ok(bound.identity);
+ const observed=f.send(f.command('observe',{scopeHash,identity:bound.identity}));assert.equal(observed.error,undefined);assert.ok(!JSON.stringify(observed).includes('CANARY'));assert.ok(JSON.stringify(observed).includes('public report'),JSON.stringify(observed));
+ let clicks=0;f.w.document.querySelector('#details').addEventListener('click',()=>clicks++);
+ const mutation=f.command('element.press',{scopeHash,identity:bound.identity,attemptId:'c'.repeat(64),locator:{strategy:'id',value:'details',exact:true},controlLease:{id:'old-login-lease',generation:1},fingerprintVersion:2});mutation.fingerprintSHA256=(await f.w.MechanizeFingerprint.mutationV2(mutation)).sha256;
+ const refused=await f.sendAsync(mutation);assert.equal(refused.error.code,'staleAuthority');assert.equal(refused.error.dispatchState,'notDispatched');assert.equal(clicks,0);
+});

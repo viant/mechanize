@@ -476,6 +476,17 @@ func TestCredentialPrivacyNegativeIsClosedCorrelatedAndGrantsNoAuthority(t *test
 			if !g.broker.acceptCredentialPrivacyLocked(c, raw) {
 				t.Fatal("private reply escaped")
 			}
+			if mode == "wrongRequest" {
+				select {
+				case <-p.done:
+					t.Fatal("late foreign reply poisoned current qualification")
+				default:
+				}
+				if p.failed || p.replied {
+					t.Fatal("late foreign reply changed live state")
+				}
+				return
+			}
 			id := <-p.done
 			if mode == "notReady" {
 				if p.failed || !p.notReady || id != a.Document.Identity {

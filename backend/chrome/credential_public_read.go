@@ -163,7 +163,7 @@ func (g *Gateway) NeedsVerifiedPublicRead(ctx context.Context, p auth.Principal,
 		return false
 	}
 	actual, e := auth.FromContext(ctx)
-	profile, instance, _, valid := ownedTabParts(target.TabID)
+	profile, instance, tab, valid := ownedTabParts(target.TabID)
 	if e != nil || actual.ClientID != p.ClientID || !valid {
 		return false
 	}
@@ -171,5 +171,16 @@ func (g *Gateway) NeedsVerifiedPublicRead(ctx context.Context, p auth.Principal,
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	c := b.channels[channelKey(profile, instance)]
-	return c != nil && c.grant.Principal.Namespace == p.Namespace && c.credentialPublicReadVersion == 2 && allowedOrigin(c.grant, target.Origin) && (!c.executorQualified || !c.inventoryComplete || domUnknownBlockedLocked(c))
+	if c == nil || c.grant.Principal.Namespace != p.Namespace || c.credentialPublicReadVersion != 2 || !allowedOrigin(c.grant, target.Origin) {
+		return false
+	}
+	if !c.executorQualified || !c.inventoryComplete || domUnknownBlockedLocked(c) {
+		return true
+	}
+	for _, document := range c.documents {
+		if document.TabID == tab && document.Origin == target.Origin {
+			return false
+		}
+	}
+	return true
 }

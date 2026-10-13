@@ -2,45 +2,58 @@ package host
 
 import (
 	"context"
+	"errors"
 	"github.com/viant/mechanize/auth"
+	"github.com/viant/mechanize/backend/chrome"
 	"github.com/viant/mechanize/data"
 	"github.com/viant/mechanize/engine/durable"
+	"github.com/viant/mechanize/vault"
 	"strings"
 )
 
-type credentialControllerAbsenceBrowser interface {
-	VerifyControllerOwnerAbsent(context.Context, auth.Principal, string) error
+type credentialControllerIdleBrowser interface {
+	VerifyCredentialSourceIdle(context.Context, auth.Principal) error
 }
 
-// Explicit Prepare may retire an extinct controller's privacy protection only.
+// Explicit Prepare may retire an idle controller's privacy protection only.
 // The real successor remains the actor; no old delivery capability is restored.
-func (s *credentialService) retireExtinctControllerSource(ctx context.Context, p auth.Principal, snapshot durable.CredentialProtection) error {
+func (s *credentialService) retireIdleControllerSource(ctx context.Context, p auth.Principal, snapshot durable.CredentialProtection) error {
 	h := s.host
 	backend := h.credentialScopeBrowser()
-	owners, ok := backend.(credentialControllerAbsenceBrowser)
+	owners, ok := backend.(credentialControllerIdleBrowser)
 	binding, bound := auth.ConsentBindingFromContext(ctx)
 	if !ok || !bound || !snapshot.Scope.Exact() || !strings.HasPrefix(snapshot.Scope.ClientID, "controller:") {
 		return errOtherCredentialScopeHeld
 	}
-	ownerAbsent := func(c context.Context) error {
-		if c.Err() != nil || h.checkCredentialSession(c, p, binding.SessionID) != nil {
-			return errPrivateCredential
+	s.mu.Lock()
+	old := s.pending[snapshot.Scope.PreparationID]
+	s.mu.Unlock()
+	if old != nil {
+		if !old.mu.TryLock() {
+			return chrome.ErrCredentialSourceInputBusy
 		}
-		s.mu.Lock()
-		live := s.pending[snapshot.Scope.PreparationID] != nil
-		s.mu.Unlock()
-		if live {
+		defer old.mu.Unlock()
+		if old.actor.Namespace != snapshot.Scope.Namespace || old.actor.ClientID != snapshot.Scope.ClientID || old.id != snapshot.Scope.PreparationID || old.target.Origin != snapshot.Scope.Origin || old.target.Account != snapshot.Scope.PreparationID {
 			return errOtherCredentialScopeHeld
 		}
-		return owners.VerifyControllerOwnerAbsent(c, p, snapshot.Scope.ClientID)
 	}
-	sealed, revoke, e := data.WithCredentialSourceLifecycleAuthority(ctx, snapshot.Scope, ownerAbsent)
+	inputIdle := func(c context.Context) error {
+		if c.Err() != nil || h.Runtime.CheckSession(c, p, binding.SessionID) != nil {
+			return errPrivateCredential
+		}
+		return owners.VerifyCredentialSourceIdle(c, p)
+	}
+	// Preserve the finite original guard cause before the sealed boolean checker.
+	if e := inputIdle(ctx); e != nil {
+		return e
+	}
+	sealed, revoke, e := data.WithCredentialSourceLifecycleAuthority(ctx, snapshot.Scope, inputIdle)
 	if e != nil {
 		return e
 	}
 	defer revoke()
 	prep, children, e := h.durable.LoadCredentialRecovery(sealed, p, snapshot.Scope.PreparationID)
-	if e != nil || prep.Namespace != snapshot.Scope.Namespace || prep.ClientID != snapshot.Scope.ClientID || prep.Origin != snapshot.Scope.Origin || prep.PreparationID != snapshot.Scope.PreparationID || prep.ProtectionState != "held" || prep.Revision != 1 {
+	if e != nil || prep.Namespace != snapshot.Scope.Namespace || prep.ClientID != snapshot.Scope.ClientID || prep.Origin != snapshot.Scope.Origin || prep.PreparationID != snapshot.Scope.PreparationID || !(prep.ProtectionState == "held" && prep.Revision == 1 || prep.ProtectionState == "closed" && prep.Revision == 2) {
 		return errOtherCredentialScopeHeld
 	}
 	snapshot.Preparation, snapshot.Attempts = prep, children
@@ -48,8 +61,33 @@ func (s *credentialService) retireExtinctControllerSource(ctx context.Context, p
 	if e != nil {
 		return e
 	}
+	if old != nil {
+		// Manual staging retains its existing extra B-absence requirement.
+		// Automatic privacyReady retires only A-derived authority, not B.
+		successor, e := manualSuccessorProtectionLocked(old.actor, snapshot, old)
+		if e != nil {
+			return e
+		}
+		if successor != nil {
+			sources = append(sources, *successor)
+		}
+	}
+	finishProcesses := func(c context.Context) error { return c.Err() }
+	if pin, ok := backend.(interface {
+		PinCredentialScopeProcesses(context.Context, auth.Principal, []chrome.CredentialProtectionScope) (context.Context, func(context.Context) error, error)
+	}); ok {
+		pinned, finish, e := pin.PinCredentialScopeProcesses(sealed, p, sources)
+		if e != nil {
+			return e
+		}
+		if pinned == nil || finish == nil {
+			return errPrivateCredential
+		}
+		sealed = pinned
+		finishProcesses = finish
+	}
 	guard := func(c context.Context) error {
-		if e := ownerAbsent(c); e != nil {
+		if e := inputIdle(c); e != nil {
 			return e
 		}
 		for _, source := range sources {
@@ -62,10 +100,54 @@ func (s *credentialService) retireExtinctControllerSource(ctx context.Context, p
 	if e = guard(sealed); e != nil {
 		return e
 	}
-	release, e := h.vaultExposure.AcquireExposureContext(sealed)
+	clean, stop, e := data.WithCredentialSourceAbsenceAuthority(sealed, prep, children, credentialRetirementSourceRecords(p, snapshot, sources), guard)
+	if e != nil {
+		return e
+	}
+	defer stop()
+	retire := func(c context.Context) error {
+		if e := guard(c); e != nil {
+			return e
+		}
+		if old != nil {
+			if old.cancel != nil {
+				old.cancel()
+			}
+			if old.selection != nil {
+				old.selection.Revoke()
+			}
+			old.dom = nil
+			old.state = "needsNativeAction"
+			old.attention = "scopeSourceRetirement"
+		}
+		if e := h.retireCredentialSourceRows(c, p, snapshot, sources, guard); e != nil {
+			return e
+		}
+		return finishProcesses(c)
+	}
+	if old != nil {
+		var e error
+		if old.protected != nil {
+			e = old.protected.RecoverRetired(clean, guard, retire)
+		} else if old.preparation != nil {
+			e = old.preparation.RecoverRetired(clean, guard, retire)
+		} else {
+			return errPrivateCredential
+		}
+		if e != nil && !errors.Is(e, vault.ErrRetiredDeliveryAbsent) {
+			if cause := guard(clean); cause != nil {
+				return cause
+			}
+			return e
+		}
+		if e == nil {
+			return nil
+		}
+	}
+	release, e := h.vaultExposure.AcquireExposureContext(clean)
 	if e != nil {
 		return e
 	}
 	defer release()
-	return h.retireCredentialSourceRows(sealed, p, snapshot, sources, guard)
+	return retire(clean)
 }

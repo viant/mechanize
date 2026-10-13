@@ -22,6 +22,8 @@ type readFixture struct {
 	publicReadMarked      atomic.Int64
 	lastValidationMarked  atomic.Bool
 	publicReadMode        atomic.Value
+	lastScope             atomic.Value
+	workerConn            net.Conn
 	valueReadVersion      atomic.Int64
 	valueReadCountDelta   atomic.Int64
 	valueReadCountMissing atomic.Bool
@@ -89,7 +91,7 @@ func newReadFixtureScope(t *testing.T, trustScope string) *readFixture {
 		return b.channels[channelKey("p1", "b1")].inventoryComplete
 	})
 	g, _ := NewGateway(b, GatewayOptions{})
-	f := &readFixture{g: g, p: p, ctx: auth.WithPrincipal(context.Background(), p)}
+	f := &readFixture{g: g, p: p, ctx: auth.WithPrincipal(context.Background(), p), workerConn: conn}
 	f.publicReadMode.Store("ready")
 	f.generation.Store(1)
 	f.value.Store("independent-result")
@@ -104,6 +106,7 @@ func newReadFixtureScope(t *testing.T, trustScope string) *readFixture {
 			if kind.Type == "credentialScope" {
 				var q credentialScopeRequest
 				json.Unmarshal(raw, &q)
+				f.lastScope.Store(q)
 				mode := f.publicReadMode.Load().(string)
 				proof := &credentialPublicDocument{Version: 1, Identity: doc.Identity, RouteSHA256: strings.Repeat("a", 64), Public: true}
 				proof.Identity.Generation = f.generation.Load()
@@ -125,6 +128,9 @@ func newReadFixtureScope(t *testing.T, trustScope string) *readFixture {
 					proof.RouteSHA256 = "PRIVATE_CANARY"
 				case "notPublic":
 					proof.Public = false
+				}
+				if q.Mode != "publicRead" {
+					reply.PublicDocument = nil
 				}
 				if WriteFrame(conn, reply) != nil {
 					return

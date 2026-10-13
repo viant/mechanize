@@ -6,26 +6,37 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/viant/mechanize/auth"
+	"github.com/viant/mechanize/data"
 	"github.com/viant/mechanize/model"
 	"github.com/viant/mechanize/session"
 	"io"
 	"net"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
 
 // Trusted Host persistence only. This binds exposure scope, never input authority.
 type CredentialProtectionScope struct {
-	PreparationID    string   `json:"preparationId"`
-	Identity         Identity `json:"identity"`
-	Origin           string   `json:"origin"`
-	LoginRouteSHA256 string   `json:"loginRouteSHA256"`
-	ChromeStartToken string   `json:"chromeStartToken"`
-	BrokerEpoch      string   `json:"brokerEpoch"`
-	ChannelEpoch     string   `json:"channelEpoch"`
-	ScopeHash        string   `json:"scopeHash"`
+	PreparationID      string   `json:"preparationId"`
+	Identity           Identity `json:"identity"`
+	Origin             string   `json:"origin"`
+	LoginRouteSHA256   string   `json:"loginRouteSHA256"`
+	ChromeStartToken   string   `json:"chromeStartToken"`
+	BrokerEpoch        string   `json:"brokerEpoch"`
+	ChannelEpoch       string   `json:"channelEpoch"`
+	ScopeHash          string   `json:"scopeHash"`
+	retirementAttempts []data.CredentialDeliveryRecord
 }
+
+// WithCredentialRetirementSnapshot carries only the complete original metadata
+// loaded by the trusted Host. No transport field or delivery authority is added.
+func WithCredentialRetirementSnapshot(scope CredentialProtectionScope, rows []data.CredentialDeliveryRecord) CredentialProtectionScope {
+	scope.retirementAttempts = append([]data.CredentialDeliveryRecord(nil), rows...)
+	return scope
+}
+
 type credentialScopeFailure string
 
 func (e credentialScopeFailure) Error() string { return string(e) }
@@ -47,21 +58,30 @@ func validProtectionScope(s CredentialProtectionScope) bool {
 	return fingerprintV2Hash.MatchString(s.PreparationID) && s.Identity.TabID > 0 && s.Identity.FrameID == 0 && s.Identity.DocumentID != "" && s.Identity.ProfileChannel != "" && s.Identity.BrowserInstance != "" && s.Identity.Generation > 0 && OrdinaryWebsiteOrigin(s.Origin) && strings.HasPrefix(s.Origin, "https://") && s.ChromeStartToken != "" && (s.LoginRouteSHA256 == "" || fingerprintV2Hash.MatchString(s.LoginRouteSHA256))
 }
 
+type credentialSourceRetirementCandidate struct {
+	SubmitAttemptID string `json:"submitAttemptId"`
+	ControlLease    Lease  `json:"controlLease"`
+}
+type credentialSourceRetirementProof struct {
+	Candidates []credentialSourceRetirementCandidate `json:"candidates"`
+}
+
 type credentialScopeRequest struct {
-	Type             string   `json:"type"`
-	RequestID        string   `json:"requestId"`
-	Mode             string   `json:"mode"`
-	PreparationID    string   `json:"preparationId"`
-	SourceIdentity   Identity `json:"sourceIdentity"`
-	SourceOrigin     string   `json:"sourceOrigin"`
-	LoginRouteSHA256 string   `json:"loginRouteSHA256"`
-	BrokerEpoch      string   `json:"brokerEpoch"`
-	ChannelEpoch     string   `json:"channelEpoch"`
-	ScopeHash        string   `json:"scopeHash"`
-	DeadlineUnixMS   int64    `json:"deadlineUnixMs"`
-	TargetTabID      int      `json:"targetTabId"`
-	TargetOrigin     string   `json:"targetOrigin"`
-	ControlLease     *Lease   `json:"controlLease,omitempty"`
+	Type             string                           `json:"type"`
+	RequestID        string                           `json:"requestId"`
+	Mode             string                           `json:"mode"`
+	PreparationID    string                           `json:"preparationId"`
+	SourceIdentity   Identity                         `json:"sourceIdentity"`
+	SourceOrigin     string                           `json:"sourceOrigin"`
+	LoginRouteSHA256 string                           `json:"loginRouteSHA256"`
+	BrokerEpoch      string                           `json:"brokerEpoch"`
+	ChannelEpoch     string                           `json:"channelEpoch"`
+	ScopeHash        string                           `json:"scopeHash"`
+	DeadlineUnixMS   int64                            `json:"deadlineUnixMs"`
+	TargetTabID      int                              `json:"targetTabId"`
+	TargetOrigin     string                           `json:"targetOrigin"`
+	ControlLease     *Lease                           `json:"controlLease,omitempty"`
+	RetirementProof  *credentialSourceRetirementProof `json:"retirementProof,omitempty"`
 }
 
 // ScopeTargetMetadata is a browser-owned routing sample, never a Document or
@@ -213,7 +233,17 @@ func (g *Gateway) RetireAbsentCredentialScope(ctx context.Context, p auth.Princi
 		if c.privateFlow != nil && same(c.privateFlow.authority.Document.Identity) {
 			c.privateFlow = nil
 		}
-		if c.privacy != nil && same(c.privacy.identity) {
+		if c.privacy != nil && (same(c.privacy.identity) || same(c.privacy.source.Document.Identity)) {
+			// Revoke the old B capability by its immutable A provenance. B is
+			// not claimed absent; its renderer redactor remains installed.
+			revoked := c.privacy.identity
+			kept := c.documents[:0]
+			for _, document := range c.documents {
+				if document.Identity != revoked {
+					kept = append(kept, document)
+				}
+			}
+			c.documents = kept
 			c.privacy = nil
 		}
 	}
@@ -296,11 +326,44 @@ func (g *Gateway) credentialScopeExchange(ctx context.Context, p auth.Principal,
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	b := g.broker
+	var candidates []credentialSourceRetirementCandidate
+	if mode == "retire" || mode == "absent" {
+		rows := s.retirementAttempts
+		if len(rows) == 0 && mode == "retire" {
+			rows = data.CredentialSourceCleanupAttempts(ctx)
+		}
+		for _, row := range rows {
+			if row.Namespace == p.Namespace && row.SelectionID == s.PreparationID && row.Origin == s.Origin && row.ProfileChannel == s.Identity.ProfileChannel && row.BrowserInstance == s.Identity.BrowserInstance && row.DocumentID == s.Identity.DocumentID && row.TabID == s.Identity.TabID && row.DocumentGeneration == int(s.Identity.Generation) && row.ChromeStartToken == s.ChromeStartToken && row.DispatchState == "dispatched" {
+				candidates = append(candidates, credentialSourceRetirementCandidate{SubmitAttemptID: row.AttemptID, ControlLease: Lease{ID: row.RendererLeaseID, Generation: uint64(row.RendererLeaseGeneration)}})
+			}
+		}
+		sort.Slice(candidates, func(i, j int) bool { return candidates[i].SubmitAttemptID < candidates[j].SubmitAttemptID })
+	}
 	b.mu.Lock()
 	c := b.channels[channelKey(s.Identity.ProfileChannel, s.Identity.BrowserInstance)]
 	if c == nil || c.conn == nil || c.fixtureOnly || c.grant.Principal.Namespace != p.Namespace || !allowedOrigin(c.grant, s.Origin) || !channelScopeQualified(c) {
 		b.mu.Unlock()
 		return empty, scopeFailure("scopeChanged")
+	}
+	var retirementProof *credentialSourceRetirementProof
+	if mode == "retire" || mode == "absent" {
+		if c.privacy != nil && c.privacy.source.Document.Identity == s.Identity && fingerprintV2Hash.MatchString(c.privacy.submitID) && c.privacy.source.Lease.ID != "" && c.privacy.source.Lease.Generation > 0 {
+			candidate := credentialSourceRetirementCandidate{SubmitAttemptID: c.privacy.submitID, ControlLease: c.privacy.source.Lease}
+			found := false
+			for _, v := range candidates {
+				found = found || v == candidate
+			}
+			if !found {
+				candidates = append(candidates, candidate)
+			}
+		}
+		if len(candidates) > 0 {
+			if c.privacySourceRetirementVersion != 1 || len(candidates) > 512 {
+				b.mu.Unlock()
+				return empty, scopeFailure("scopeUnsupported")
+			}
+			retirementProof = &credentialSourceRetirementProof{Candidates: candidates}
+		}
 	}
 	if c.protectionScopeVersion != 1 || mode == "publicRead" && c.credentialPublicReadVersion != 1 && c.credentialPublicReadVersion != 2 {
 		b.mu.Unlock()
@@ -316,7 +379,7 @@ func (g *Gateway) credentialScopeExchange(ctx context.Context, p auth.Principal,
 		b.mu.Unlock()
 		return empty, scopeFailure("scopeChanged")
 	}
-	pending := &credentialScopePending{request: credentialScopeRequest{Type: "credentialScope", RequestID: newID() + newID(), Mode: mode, PreparationID: s.PreparationID, SourceIdentity: s.Identity, SourceOrigin: s.Origin, LoginRouteSHA256: s.LoginRouteSHA256, BrokerEpoch: b.epoch, ChannelEpoch: c.epoch, ScopeHash: c.scopeHash, DeadlineUnixMS: deadline.UnixMilli(), TargetTabID: targetTab, TargetOrigin: targetOrigin, ControlLease: lease}, conn: c.conn, done: make(chan credentialScopeReply, 1)}
+	pending := &credentialScopePending{request: credentialScopeRequest{Type: "credentialScope", RequestID: newID() + newID(), Mode: mode, PreparationID: s.PreparationID, SourceIdentity: s.Identity, SourceOrigin: s.Origin, LoginRouteSHA256: s.LoginRouteSHA256, BrokerEpoch: b.epoch, ChannelEpoch: c.epoch, ScopeHash: c.scopeHash, DeadlineUnixMS: deadline.UnixMilli(), TargetTabID: targetTab, TargetOrigin: targetOrigin, ControlLease: lease, RetirementProof: retirementProof}, conn: c.conn, done: make(chan credentialScopeReply, 1)}
 	c.protectionPending = pending
 	b.mu.Unlock()
 	defer func() {

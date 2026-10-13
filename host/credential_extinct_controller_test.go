@@ -61,7 +61,7 @@ func TestExtinctControllerExactSourcesRetireWithoutChangingReceipts(t *testing.T
 				result, successor, successorSession := prepareForeignLifecycleFixture(t, h, p, input, "controller:"+strings.Repeat("f", 64))
 				if partial {
 					if result.State != "needsNativeAction" {
-						t.Fatal("active owner should inhibit initial preparation")
+						t.Fatal("active input should inhibit initial preparation")
 					}
 					backend.ownerPresent = false
 					commitFirstExtinctRetirementChild(t, h, successor, successorSession, input.Purpose, beforePrep, before)
@@ -104,7 +104,7 @@ func TestExtinctControllerExactSourcesRetireWithoutChangingReceipts(t *testing.T
 }
 
 func TestExtinctControllerSourceRetirementRefusesUnprovedLifecycle(t *testing.T) {
-	for _, kind := range []string{"liveItem", "liveController", "sourcePresent", "canceledProof", "lateProofFailure"} {
+	for _, kind := range []string{"liveController", "sourcePresent", "canceledProof", "lateProofFailure"} {
 		t.Run(kind, func(t *testing.T) {
 			credentialHostFixtureFlow(t, "known", credentialHostFixtureHooks{clientID: "controller:" + strings.Repeat("a", 64), successorClientID: "controller:" + strings.Repeat("f", 64), exercise: func(t *testing.T, h *Host, ctx context.Context, p auth.Principal, ref gateway.CredentialRefInput, input gateway.CredentialPrepareInput, f *credentialBrowserFixture, reads *atomic.Int64) {
 				if _, err := h.CredentialApply(ctx, p, ref); err != nil {
@@ -219,4 +219,11 @@ func commitFirstExtinctRetirementChild(t *testing.T, h *Host, p auth.Principal, 
 	if err != nil {
 		t.Fatal("partial child retirement fixture", err)
 	}
+}
+
+func (f *extinctCredentialControllerFixture) VerifyCredentialSourceIdle(ctx context.Context, p auth.Principal) error {
+	if f.ownerPresent {
+		return chrome.ErrCredentialSourceInputBusy
+	}
+	return ctx.Err()
 }

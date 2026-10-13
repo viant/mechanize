@@ -89,11 +89,20 @@ type credentialPrivacyPending struct {
 }
 
 func (b *Broker) acceptCredentialPrivacyLocked(c *channel, raw []byte) bool {
-	p := c.privacyPending
-	if p == nil {
+	var correlation struct {
+		Type      string
+		RequestID string `json:"requestId"`
+	}
+	if json.Unmarshal(raw, &correlation) != nil || correlation.Type != "credentialPrivacyResult" {
 		return false
 	}
 	defer clear(raw)
+	p := c.privacyPending
+	// Old privacy replies never belong to a successor qualification or a DOM
+	// read. Wipe them without poisoning the current authenticated channel.
+	if p == nil || correlation.RequestID != p.requestID {
+		return true
+	}
 	var r struct {
 		Type      string   `json:"type"`
 		RequestID string   `json:"requestId"`

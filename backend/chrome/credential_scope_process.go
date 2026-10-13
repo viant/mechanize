@@ -12,6 +12,7 @@ type credentialScopeProcessPin struct {
 	broker        *Broker
 	owner, client string
 	binding       auth.ConsentBinding
+	sources       []CredentialProtectionScope
 	channels      map[*channel]credentialScopeChannelPin
 }
 type credentialScopeChannelPin struct {
@@ -33,7 +34,7 @@ func (g *Gateway) PinCredentialScopeProcesses(ctx context.Context, p auth.Princi
 		return ctx, nil, auth.ErrUnauthorized
 	}
 	b := g.broker
-	pin := &credentialScopeProcessPin{broker: b, owner: p.Namespace, client: p.ClientID, binding: binding, channels: map[*channel]credentialScopeChannelPin{}}
+	pin := &credentialScopeProcessPin{broker: b, owner: p.Namespace, client: p.ClientID, binding: binding, channels: map[*channel]credentialScopeChannelPin{}, sources: append([]CredentialProtectionScope(nil), sources...)}
 	for _, source := range sources {
 		if !validProtectionScope(source) {
 			return ctx, nil, scopeFailure("scopeChanged")

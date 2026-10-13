@@ -47,6 +47,9 @@ func protectionAbsenceSourcesForOwner(snapshot durable.CredentialProtection) ([]
 	if len(sources) == 0 {
 		return nil, errPrivateCredential
 	}
+	for i := range sources {
+		sources[i] = chrome.WithCredentialRetirementSnapshot(sources[i], snapshot.Attempts)
+	}
 	return sources, nil
 }
 
@@ -80,7 +83,7 @@ func (s *credentialService) retireAbsentCredentialSources(ctx context.Context, p
 		s.mu.Lock()
 		items := map[string]*credentialSession{}
 		for id, item := range s.pending {
-			if item.actor.Namespace == p.Namespace && item.actor.ClientID == p.ClientID {
+			if item.actor.Namespace == p.Namespace {
 				items[id] = item
 			}
 		}
@@ -98,7 +101,7 @@ func (s *credentialService) retireAbsentCredentialSources(ctx context.Context, p
 			}
 			item.mu.Unlock()
 			if retained && !known[id] {
-				scopes = append(scopes, durable.CredentialProtection{Scope: protectionScopeRecord(p, original)})
+				scopes = append(scopes, durable.CredentialProtection{Scope: protectionScopeRecord(item.actor, original)})
 			}
 		}
 		type cleanup struct {
@@ -128,7 +131,7 @@ func (s *credentialService) retireAbsentCredentialSources(ctx context.Context, p
 				continue
 			}
 			if snapshot.Scope.ClientID != p.ClientID && snapshot.Scope.Origin == targetOrigin && snapshot.Scope.Exact() {
-				if e := s.retireExtinctControllerSource(held, p, snapshot); e != nil {
+				if e := s.retireIdleControllerSource(held, p, snapshot); e != nil {
 					return e
 				}
 				continue
@@ -326,14 +329,7 @@ func (h *Host) retireCredentialSourceRows(ctx context.Context, p auth.Principal,
 		}
 		return nil
 	}
-	records := make([]data.CredentialProtectionScopeRecord, 0, len(sources))
-	for _, source := range sources {
-		record := protectionScopeRecord(p, source)
-		record.ClientID = prep.ClientID
-		record.CreatedAt = snapshot.Scope.CreatedAt
-		record.LoginRouteSHA256 = snapshot.Scope.LoginRouteSHA256
-		records = append(records, record)
-	}
+	records := credentialRetirementSourceRecords(p, snapshot, sources)
 	clean, stop, e := data.WithCredentialSourceAbsenceAuthority(ctx, prep, attempts, records, guard)
 	if e != nil {
 		return e
@@ -376,6 +372,18 @@ func (h *Host) retireCredentialSourceRows(ctx context.Context, p auth.Principal,
 		}
 	}
 	return nil
+}
+
+func credentialRetirementSourceRecords(p auth.Principal, snapshot durable.CredentialProtection, sources []chrome.CredentialProtectionScope) []data.CredentialProtectionScopeRecord {
+	records := make([]data.CredentialProtectionScopeRecord, 0, len(sources))
+	for _, source := range sources {
+		record := protectionScopeRecord(p, source)
+		record.ClientID = snapshot.Preparation.ClientID
+		record.CreatedAt = snapshot.Scope.CreatedAt
+		record.LoginRouteSHA256 = snapshot.Scope.LoginRouteSHA256
+		records = append(records, record)
+	}
+	return records
 }
 
 type credentialPreflightRetirementBrowser interface {
@@ -425,6 +433,10 @@ func manualSuccessorProtection(p auth.Principal, snapshot durable.CredentialProt
 	}
 	item.mu.Lock()
 	defer item.mu.Unlock()
+	return manualSuccessorProtectionLocked(p, snapshot, item)
+}
+
+func manualSuccessorProtectionLocked(p auth.Principal, snapshot durable.CredentialProtection, item *credentialSession) (*chrome.CredentialProtectionScope, error) {
 	if !item.manualDOM {
 		return nil, nil
 	}

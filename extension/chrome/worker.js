@@ -386,7 +386,7 @@ async function receiveCredentialInspect(command) {
 async function receiveCredential(command) {
   const originalPort = port, originalGrant = grant;
   if (!originalPort || privatePending || originalPort === privateSilencedPort && !privateFlow?.awaitingFill) return;
-  privatePending = true; privateSilencedPort = originalPort;
+  privatePending = true;
   let status = "notDispatched", forwarded = false;
   let resultIdentity, requestId, attemptId;
   try {
@@ -428,6 +428,7 @@ async function receiveCredential(command) {
     const current = () => port === originalPort && grant === originalGrant && command.deadlineUnixMs > Date.now() && documentControlLeases.get(key) === held && documents.get(key) === existing;
     if (!current()) throw Error();
     const variants=Array.from(new Set([...privateRedactions,...MechanizeSecureInput.redactionVariants([command.username,command.password])]));if(!MechanizeSecureInput.validRedactions(variants))throw Error();privateRedactions=variants;
+    privateSilencedPort = originalPort;
     forwarded = true;
     const response = await privateRenderer(command);
     if (!current()) throw Error();
@@ -655,9 +656,36 @@ async function receiveCredentialManualPrivacy(command){
   privatePending=false;
  }
 }
+// Retire only the capability descended from this exact original source. An
+// old worker omitted sourceIdentity; its confirmed submit/lease pair is the
+// only accepted correlation with the authenticated broker's retained receipt.
+function privacyForSourceRetirement(command, held) {
+ const proof=command.retirementProof;
+ if(proof!==undefined){
+  if(!['absent','retire'].includes(command.mode)||!proof||Object.keys(proof).join()!=='candidates'||!Array.isArray(proof.candidates)||!proof.candidates.length||proof.candidates.length>512||new TextEncoder().encode(JSON.stringify(command)).length>MechanizeProtocol.MAX_BYTES)throw 'scopeChanged';
+  const seen=new Set();for(const row of proof.candidates){if(!row||Object.keys(row).sort().join()!=='controlLease,submitAttemptId'||typeof row.submitAttemptId!=='string'||!/^[a-f0-9]{64}$/.test(row.submitAttemptId)||!row.controlLease||Object.keys(row.controlLease).sort().join()!=='generation,id'||!channelShape(row.controlLease.id)||!Number.isSafeInteger(row.controlLease.generation)||row.controlLease.generation<1)throw 'scopeChanged';const key=JSON.stringify([row.submitAttemptId,row.controlLease.id,row.controlLease.generation]);if(seen.has(key))throw 'scopeChanged';seen.add(key);}
+ }
+ if(!['absent','retire'].includes(command.mode)||!held)return null;
+ const source=command.sourceIdentity,same=i=>i&&source&&['profileChannel','browserInstance','tabId','frameId','documentId'].every(k=>i[k]===source[k]);
+ const pair=proof&&held.submitConfirmed===true&&proof.candidates.filter(row=>row.submitAttemptId===held.sourceSubmit&&row.controlLease.id===held.sourceLease?.id&&row.controlLease.generation===held.sourceLease?.generation).length===1;
+ // A retained old-port capability is never rebound. Only an independently
+ // authenticated current-fence cleanup with its exact confirmed pair may
+ // dispose of it after the existing source-absence proof.
+ if(held.port!==port&&!pair)throw 'scopeChanged';
+ let matches=same(held.sourceIdentity)||same(held.identity);
+ if(!held.sourceIdentity&&!matches){
+  if(!pair||!manualIdentity(source)||['profileChannel','browserInstance','tabId','frameId'].some(k=>source[k]!==held.identity[k])||command.sourceOrigin!==held.origin)throw 'scopeChanged';
+  matches=true;
+ }
+ if(!matches){if(proof!==undefined)throw 'scopeChanged';return null;}
+ if(command.sourceOrigin!==held.origin)throw 'scopeChanged';
+ if(proof!==undefined&&!pair)throw 'scopeChanged';
+ if(!held.committed||documentControlLeases.has(`${held.identity.tabId}:${held.identity.documentId}`))throw 'scopeChanged';
+ return held;
+}
 async function receiveCredentialPrivacy(command) {
  const originalPort=port,originalGrant=grant;if(!originalPort||privatePending)return;privatePending=true;
- let identity=command.identity,ready=false,redactionReady=false,retiredAuthorityQuiesced=false,accepted=false,documentChanged=false;
+ let identity=command.identity,ready=false,redactionReady=false,retiredAuthorityQuiesced=false,accepted=false,documentChanged=false,heldState=null;
  try {
   const qualification=command.type==="credentialPrivacy",commit=command.type==="credentialPrivacyCommit",f=qualification?(privatePrivacy||privateFlow):privatePrivacy;
   const lease=f?.sourceLease||f?.lease,sourceSubmit=f?.sourceSubmit||f?.submitted;
@@ -670,7 +698,7 @@ async function receiveCredentialPrivacy(command) {
      ["brokerEpoch","channelEpoch","scopeHash"].some(k=>command[k]!==originalGrant[k])||command.origin!==f.origin||
      !Number.isSafeInteger(command.deadlineUnixMs)||command.deadlineUnixMs<=Date.now()||command.deadlineUnixMs>Date.now()+10000||mutationBusy||setupActiveCommands||unknownAttempts.size||lifecycleGuardId||
      !MechanizeSecureInput.validRedactions(privateRedactions)||!qualification&&command.permitId!==f.permitId||commit&&f.committed||!qualification&&!commit&&!f.committed)throw Error();
-  accepted=true;
+  accepted=true;heldState=f;
   // An already committed redactor is independent same-document evidence.
   // Initial login promotion still requires the private post-submit proof.
   const sameDocumentPrivacy=f===privatePrivacy&&f.committed===true||f.sameDocumentPrivacy===true;
@@ -706,11 +734,11 @@ async function receiveCredentialPrivacy(command) {
   } while(Date.now()<settleDeadline);
   identity={...result.identity};redactionReady=result.redactionReady;retiredAuthorityQuiesced=result.privateInputRetired;ready=result.ready&&redactionReady&&retiredAuthorityQuiesced;
   if(ready){
-   if(qualification)privatePrivacy={port:originalPort,identity,sameDocumentPrivacy:true,origin:f.origin,sourceLease:{...lease},sourceSubmit,submitConfirmed:true,permitId:command.permitId,active:false,committed:false};
+   if(qualification)privatePrivacy={port:originalPort,identity,...(f.sourceIdentity?{sourceIdentity:{...f.sourceIdentity}}:f===privateFlow?{sourceIdentity:{...f.identity}}:{}),sameDocumentPrivacy:true,origin:f.origin,sourceLease:{...lease},sourceSubmit,submitConfirmed:true,permitId:command.permitId,active:false,committed:false};
    if(commit){privatePrivacy.active=true;privatePrivacy.committed=true;privatePrivacy.identity=identity;privatePrivacy.publicRoute=new URL(frame.url).origin+new URL(frame.url).pathname;privateAdmission=null;privateFlow=null;privateSilencedPort=null;
      const key=`${identity.tabId}:${identity.documentId}`;documents.set(key,identity);documentOrigins.set(key,f.origin);documentFingerprintVersions.set(key,2);}
   }else{if(privatePrivacy)privatePrivacy.active=false;privateSilencedPort=originalPort;}
- }catch{ready=false;if(privatePrivacy)privatePrivacy.active=false;privateSilencedPort=originalPort;}
+ }catch{ready=false;if(accepted&&port===originalPort&&grant===originalGrant&&(privatePrivacy===heldState||privateFlow===heldState)){if(privatePrivacy)privatePrivacy.active=false;privateSilencedPort=originalPort;}}
  finally {if(accepted&&port===originalPort)try{originalPort.postMessage({type:"credentialPrivacyResult",requestId:command.requestId,attemptId:command.attemptId,identity,ready,retiredAuthorityQuiesced,redactionReady,permitId:command.permitId,...(documentChanged?{documentChanged:true}:{})});}catch{}privatePending=false;}
 }
 // A broker reconnect is an executor handoff, never a storage reset or replay.
@@ -1675,22 +1703,32 @@ async function receive(command) {
   }
 
   if(command?.type==='credentialScope'){
-   const heldPort=port,heldFence=setupFence;try{
-    const current=()=>{if(!heldPort||port!==heldPort||setupFence!==heldFence||!heldFence||['brokerEpoch','channelEpoch','scopeHash'].some(k=>command[k]!==heldFence[k])||privatePending||mutationBusy||activeBrowserInputs.size||command.mode==='publicRead'&&(lifecycleGuardId||reconnectBusy||setupActiveCommands))throw 'scopeChanged';};
+   const heldPort=port,heldFence=setupFence,heldPrivacy=privatePrivacy,heldAdmission=privateAdmission,heldFlow=privateFlow;let retiringPrivacy=null;try{
+    const current=()=>{if(!heldPort||port!==heldPort||setupFence!==heldFence||!heldFence||['brokerEpoch','channelEpoch','scopeHash'].some(k=>command[k]!==heldFence[k])||privatePending||mutationBusy||activeBrowserInputs.size||command.mode==='publicRead'&&(lifecycleGuardId||reconnectBusy||setupActiveCommands))throw 'scopeChanged';if(['absent','retire'].includes(command.mode)&&(privatePrivacy!==heldPrivacy||privateAdmission!==heldAdmission||privateFlow!==heldFlow))throw 'scopeChanged';retiringPrivacy=privacyForSourceRetirement(command,heldPrivacy);};
     const captureAllowed=q=>Boolean(privateAdmission?.port===heldPort&&q.sourceIdentity&&['profileChannel','browserInstance','tabId','frameId','documentId','documentGeneration'].every(k=>q.sourceIdentity[k]===privateAdmission.identity[k])&&documentControlLeases.get(`${q.sourceIdentity.tabId}:${q.sourceIdentity.documentId}`)?.id===q.controlLease?.id&&documentControlLeases.get(`${q.sourceIdentity.tabId}:${q.sourceIdentity.documentId}`)?.generation===q.controlLease?.generation);
     if(command.mode==='publicRead')for(const [key,value]of publicReadScopes)if(value.proof.identity.tabId===command.targetTabId)publicReadScopes.delete(key);
-    const reply=await protectionScopes.respond(command,current,captureAllowed);current();
+    // The optional proof belongs to worker capability retirement, not the
+    // protection record schema. The existing module still validates every
+    // other field and independently proves source absence before persistence.
+    const scopeCommand={...command};delete scopeCommand.retirementProof;
+    const reply=await protectionScopes.respond(scopeCommand,current,captureAllowed);current();
     if(reply?.ready&&command.mode==='publicRead'&&reply.publicDocument){for(const [key,value]of publicReadScopes)if(value.port!==heldPort||Date.now()>=value.deadline)publicReadScopes.delete(key);if(publicReadScopes.size>=200)throw 'scopeLimit';publicReadScopes.set(`${reply.publicDocument.identity.tabId}:${reply.publicDocument.identity.documentId}`,{port:heldPort,fence:heldFence,origin:command.targetOrigin,deadline:command.deadlineUnixMs,proof:reply.publicDocument});}
     if(reply?.ready&&command.mode==='disjoint'&&reply.targetIdentity)disjointDocuments.set(`${reply.targetIdentity.tabId}:${reply.targetIdentity.documentId}`,{port:heldPort,origin:command.targetOrigin});
     if(reply?.ready&&command.mode==='retire'){
      const same=i=>i&&['profileChannel','browserInstance','tabId','frameId','documentId'].every(k=>i[k]===command.sourceIdentity[k]);
-     if(same(privateAdmission?.identity))privateAdmission=null;if(same(privateFlow?.identity))privateFlow=null;if(same(privatePrivacy?.identity))privatePrivacy=null;
+     if(same(privateAdmission?.identity))privateAdmission=null;if(same(privateFlow?.identity))privateFlow=null;if(retiringPrivacy&&privatePrivacy===retiringPrivacy){
+      // Remove only volatile admission caches. The successor's content realm
+      // and persistent credential redactor remain installed; no input lease
+      // exists here, and later reads/control require fresh qualification.
+      const successorKey=`${retiringPrivacy.identity.tabId}:${retiringPrivacy.identity.documentId}`;
+      documents.delete(successorKey);documentOrigins.delete(successorKey);documentFingerprintVersions.delete(successorKey);publicReadScopes.delete(successorKey);privateRecipients.delete(successorKey);privatePrivacy=null;
+     }
      if(!privateAdmission&&!privateFlow&&!privatePrivacy)privateSilencedPort=null;
      const key=`${command.sourceIdentity.tabId}:${command.sourceIdentity.documentId}`;documents.delete(key);documentControlLeases.delete(key);documentOrigins.delete(key);privateRecipients.delete(key);
     }
     if(reply?.ready&&command.mode==='capture')disjointDocuments.delete(`${command.sourceIdentity.tabId}:${command.sourceIdentity.documentId}`);
     if(reply)heldPort.postMessage(reply);
-   }catch{}return;
+   }catch{if(['absent','retire'].includes(command.mode)&&heldPort&&port===heldPort&&setupFence===heldFence&&/^[a-f0-9]{64}$/.test(command.requestId)&&['brokerEpoch','channelEpoch','scopeHash'].every(k=>command[k]===heldFence?.[k]))try{heldPort.postMessage({type:'credentialScopeResult',requestId:command.requestId,brokerEpoch:command.brokerEpoch,channelEpoch:command.channelEpoch,scopeHash:command.scopeHash,ready:false,reason:'scopeChanged',loginRouteSHA256:'',targetIdentity:null});}catch{}}return;
   }
   if(command?.type==='tabInventory'){
     const heldPort=port,heldFence=setupFence;
@@ -2198,7 +2236,7 @@ async function connectNativeOnce(token,valid=()=>true) {
     }catch{metadataStartupBarrier='inventoryUnavailable';}
     // This fixed metadata hello is independent of secret/document visibility.
     // No retained document or input payload is replayed on a replacement port.
-    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,selectOptionVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:32,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
+    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:32,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
 
   } catch {
     if (lifecycleGuardId) connectionAttention = "lifecycleInhibited";

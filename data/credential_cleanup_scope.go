@@ -105,7 +105,7 @@ func WithCredentialSourceAbsenceAuthority(ctx context.Context, r CredentialPrepa
 func withCredentialCleanupAuthority(ctx context.Context, r CredentialPreparationRecord, attempts []CredentialDeliveryRecord, retiredBirth string, guard func(context.Context) error, preflightOnly, sourceLifecycle bool) (context.Context, func(), error) {
 	p, e := auth.FromContext(ctx)
 	c, ok := auth.ConsentBindingFromContext(ctx)
-	if e != nil || p.Validate() != nil || !p.HasScope("desktop:control") || p.ClientID == "" || p.Namespace != r.Namespace || (p.ClientID != r.ClientID && !(preflightOnly && len(attempts) == 0 && retiredBirth == "" && credentialPreflightLifecyclePreparationMatches(ctx, r)) && !(sourceLifecycle && !preflightOnly && credentialSourceLifecyclePreparationMatches(ctx, r, retiredBirth))) || !ok || c.SessionID == "" || c.GrantID == "" || c.Purpose == "" || guard == nil || !credentialDeliveryGuard(ctx, guard) || r.ProtectionState != "held" || r.Revision != 1 || !deliveryHex.MatchString(r.PreparationID) || len(attempts) > 512 {
+	if e != nil || p.Validate() != nil || !p.HasScope("desktop:control") || p.ClientID == "" || p.Namespace != r.Namespace || (p.ClientID != r.ClientID && !(preflightOnly && len(attempts) == 0 && retiredBirth == "" && credentialPreflightLifecyclePreparationMatches(ctx, r)) && !(sourceLifecycle && !preflightOnly && credentialSourceLifecyclePreparationMatches(ctx, r, retiredBirth))) || !ok || c.SessionID == "" || c.GrantID == "" || c.Purpose == "" || guard == nil || !credentialDeliveryGuard(ctx, guard) || !(r.ProtectionState == "held" && r.Revision == 1 || sourceLifecycle && r.ProtectionState == "closed" && r.Revision == 2) || !deliveryHex.MatchString(r.PreparationID) || len(attempts) > 512 {
 		return nil, nil, ErrCredentialDeliveryAuthority
 	}
 	if _, e = RequireScope(ctx, r.Namespace); e != nil {
@@ -113,6 +113,9 @@ func withCredentialCleanupAuthority(ctx context.Context, r CredentialPreparation
 	}
 	a := &credentialCleanupAuthority{preparation: r, attempts: make(map[string]CredentialDeliveryRecord), guard: guard, retiredBirth: retiredBirth, sourceLifecycle: sourceLifecycle}
 	for _, v := range attempts {
+		if r.ProtectionState == "closed" && !(v.ProtectionState == "closed" || v.ProtectionState == "retired" && v.DispatchState == "unknown") {
+			return nil, nil, ErrCredentialDeliveryAuthority
+		}
 		unknownRetired := retiredBirth != "" && v.ChromeStartToken == retiredBirth && v.DispatchState == "unknown"
 		if v.Namespace != r.Namespace || v.ClientID != r.ClientID || v.SessionID != r.SessionID || v.SelectionID != r.PreparationID || v.GrantID != r.GrantID || v.PurposeHash != r.PurposeHash || v.SelectedRevision != r.SelectedRevision || v.Origin != r.Origin || !deliveryHex.MatchString(v.AttemptID) || a.attempts[v.AttemptID].AttemptID != "" || (v.DispatchState != "dispatched" && v.DispatchState != "notDispatched" && !unknownRetired) || (v.ProtectionState != "held" && v.ProtectionState != "closed" && !(unknownRetired && v.ProtectionState == "retired")) || (v.Revision < 2 && !(unknownRetired && v.Revision == 1)) || retiredBirth != "" && v.ChromeStartToken != retiredBirth {
 			return nil, nil, ErrCredentialDeliveryAuthority
@@ -135,7 +138,7 @@ func requireCredentialCleanup(ctx context.Context) *credentialCleanupAuthority {
 }
 func cleanupPreparationAllowed(ctx context.Context, r CredentialPreparationRecord) bool {
 	a := requireCredentialCleanup(ctx)
-	if a == nil {
+	if a == nil || a.preparation.ProtectionState == "closed" {
 		return false
 	}
 	if r == a.preparation {
@@ -148,7 +151,7 @@ func cleanupPreparationAllowed(ctx context.Context, r CredentialPreparationRecor
 }
 func cleanupDeliveryAllowed(ctx context.Context, value CredentialDeliveryAuthority) bool {
 	a := requireCredentialCleanup(ctx)
-	if a == nil {
+	if a == nil || a.preparation.ProtectionState == "closed" {
 		return false
 	}
 	old, ok := a.attempts[value.Record.AttemptID]
@@ -178,7 +181,7 @@ func cleanupDeliveryAllowed(ctx context.Context, value CredentialDeliveryAuthori
 // original. SQLite separately refuses closure while any child is held or has an unretired unknown outcome.
 func ValidateCredentialPreparationClose(ctx context.Context, row, previous any) error {
 	a := requireCredentialCleanup(ctx)
-	if a == nil {
+	if a == nil || a.preparation.ProtectionState == "closed" {
 		return ErrCredentialDeliveryAuthority
 	}
 	expected := a.preparation
@@ -199,4 +202,30 @@ func ValidateCredentialPreparationClose(ctx context.Context, row, previous any) 
 		return ErrCredentialDeliveryAuthority
 	}
 	return nil
+}
+
+// CredentialSourceCleanupMatches recognizes only the complete source-absence
+// cleanup seal, not its metadata-read precursor. It releases the matching old
+// volatile protection; it cannot confer that client's delivery/read authority.
+func CredentialSourceCleanupMatches(ctx context.Context, namespace, client, session, grant, purpose, origin, account string) bool {
+	a := requireCredentialCleanup(ctx)
+	if a == nil || !a.sourceLifecycle {
+		return false
+	}
+	r := a.preparation
+	return r.Namespace == namespace && r.ClientID == client && r.SessionID == session && r.GrantID == grant && r.PurposeHash == CredentialDeliveryPurposeHash(purpose) && r.Origin == origin && r.PreparationID == account
+}
+
+// CredentialSourceCleanupAttempts returns only the original metadata snapshot
+// from an active complete source-absence seal. It conveys no delivery authority.
+func CredentialSourceCleanupAttempts(ctx context.Context) []CredentialDeliveryRecord {
+	a := requireCredentialCleanup(ctx)
+	if a == nil || a.retiredBirth == "" || a.preflightOnly {
+		return nil
+	}
+	result := make([]CredentialDeliveryRecord, 0, len(a.attempts))
+	for _, row := range a.attempts {
+		result = append(result, row)
+	}
+	return result
 }

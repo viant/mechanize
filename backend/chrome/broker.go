@@ -55,23 +55,24 @@ type pending struct {
 	done              chan Reply
 }
 type channel struct {
-	consentReconnect             *consentReconnectProof
-	credentialPublicReadVersion  int
-	controllerResultChunkVersion int
-	reconnectBindings            *reconnectBindingExchange
-	tabMetadataVersion           int
-	tabInventoryVersion          int
-	extensionMaintenanceVersion  int
-	extensionMaintenancePending  *extensionMaintenancePending
-	extensionMaintenanceBlocked  bool
-	tabInventoryPending          *tabInventoryPending
-	tabLocationPending           *tabLocationPending
-	controlBadgePending          *controlBadgePending
-	controlBadgeVersion          int
-	openOriginVersion            int
-	openOriginPending            *openOriginPending
-	manualPending                *manualCredentialPending
-	manualTransition             *ManualCredentialTransition
+	consentReconnect               *consentReconnectProof
+	credentialPublicReadVersion    int
+	privacySourceRetirementVersion int
+	controllerResultChunkVersion   int
+	reconnectBindings              *reconnectBindingExchange
+	tabMetadataVersion             int
+	tabInventoryVersion            int
+	extensionMaintenanceVersion    int
+	extensionMaintenancePending    *extensionMaintenancePending
+	extensionMaintenanceBlocked    bool
+	tabInventoryPending            *tabInventoryPending
+	tabLocationPending             *tabLocationPending
+	controlBadgePending            *controlBadgePending
+	controlBadgeVersion            int
+	openOriginVersion              int
+	openOriginPending              *openOriginPending
+	manualPending                  *manualCredentialPending
+	manualTransition               *ManualCredentialTransition
 
 	playwrightLocatorVersion           int
 	playwrightRelayVersion             int
@@ -431,6 +432,7 @@ func (b *Broker) serve(conn net.Conn) {
 		OpenOriginVersion                  int             `json:"openOriginVersion"`
 		ProtectionScopeVersion             int             `json:"protectionScopeVersion"`
 		CredentialPublicReadVersion        int             `json:"credentialPublicReadVersion"`
+		PrivacySourceRetirementVersion     int             `json:"privacySourceRetirementVersion"`
 		ControllerResultChunkVersion       int             `json:"controllerResultChunkVersion"`
 		PrivateInspectionDiagnosticVersion int             `json:"privateInspectionDiagnosticVersion"`
 		PlaywrightRelayVersion             int             `json:"playwrightRelayVersion"`
@@ -535,6 +537,7 @@ func (b *Broker) serve(conn net.Conn) {
 	c.openOriginVersion = hello.OpenOriginVersion
 	c.protectionScopeVersion = hello.ProtectionScopeVersion
 	c.credentialPublicReadVersion = hello.CredentialPublicReadVersion
+	c.privacySourceRetirementVersion = hello.PrivacySourceRetirementVersion
 	c.controllerResultChunkVersion = hello.ControllerResultChunkVersion
 	c.privateInspectionDiagnosticVersion = hello.PrivateInspectionDiagnosticVersion
 	b.mu.Unlock()

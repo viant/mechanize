@@ -16,7 +16,7 @@ type credentialSourceLifecycleAuthority struct {
 	active  atomic.Bool
 }
 
-// WithCredentialSourceLifecycleAuthority reads only one extinct controller's
+// WithCredentialSourceLifecycleAuthority reads only one retained predecessor controller's
 // original metadata. The successor actor is unchanged. Protection closure still
 // requires the separate complete-child source-absence seal; no input is granted.
 func WithCredentialSourceLifecycleAuthority(ctx context.Context, scope CredentialProtectionScopeRecord, guard func(context.Context) error) (context.Context, func(), error) {
