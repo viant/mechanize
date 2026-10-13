@@ -89,6 +89,11 @@ func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step
 			if err == nil {
 				err = errors.New("held executor authority required")
 			}
+			failure := integration.CaptureStepPreparationFailure(err)
+			if failure != nil {
+				timing.PreparationMs = time.Since(started).Milliseconds()
+				return integration.StepResult{DispatchState: "notDispatched", VerificationState: "unverified", ExecutionFailure: failure}, err
+			}
 			return integration.StepResult{}, err
 		}
 	}

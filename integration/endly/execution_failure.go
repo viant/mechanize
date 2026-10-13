@@ -11,9 +11,10 @@ import (
 // errors into text. It is live operational metadata, not business verification,
 // a reconstructed receipt, or permission to retry an input.
 type ExecutionFailure struct {
-	Playwright    *PlaywrightDiagnostic `json:"playwright,omitempty"`
-	Code          string                `json:"code"`
-	DispatchState string                `json:"dispatchState"`
+	Preparation   *PreparationDiagnostic `json:"preparation,omitempty"`
+	Playwright    *PlaywrightDiagnostic  `json:"playwright,omitempty"`
+	Code          string                 `json:"code"`
+	DispatchState string                 `json:"dispatchState"`
 }
 
 // Native adapters implement this only for correlated, qualified helper replies.
@@ -23,6 +24,11 @@ type nativeExecutionFailure interface{ NativeExecutionFailure() (string, string,
 func executionFailure(result StepResult, err error) *ExecutionFailure {
 	if err == nil {
 		return nil
+	}
+	var prepared *stepPreparationFailure
+	if errors.As(err, &prepared) && prepared != nil && prepared.diagnostic.valid() && result.DispatchState == "notDispatched" && result.ExecutionFailure != nil && result.ExecutionFailure.Valid() && result.ExecutionFailure.Code == "webPreparationUnavailable" && *result.ExecutionFailure.Preparation == prepared.diagnostic {
+		diagnostic := prepared.diagnostic
+		return &ExecutionFailure{Code: "webPreparationUnavailable", DispatchState: "notDispatched", Preparation: &diagnostic}
 	}
 	code, reported := "", ""
 	var typed *model.MechanizeError
@@ -70,6 +76,12 @@ func executionFailure(result StepResult, err error) *ExecutionFailure {
 // Valid is also used at the controller projection boundary; unknown provider
 // strings cannot become a public diagnostic through a loosely typed response.
 func (f ExecutionFailure) Valid() bool {
+	if f.Code == "webPreparationUnavailable" {
+		return f.DispatchState == "notDispatched" && f.Preparation != nil && f.Preparation.valid() && f.Playwright == nil
+	}
+	if f.Preparation != nil {
+		return false
+	}
 	return executionFailureCode(f.Code) && executionDispatchState(f.DispatchState) && (f.Playwright == nil || f.Playwright.valid(f.Code))
 }
 func executionDispatchState(s string) bool {
@@ -111,6 +123,10 @@ func (r *Runtime) ExecutionFailure(ctx context.Context, session, operation strin
 				return nil, nil
 			}
 			copied := *p.executionFailure
+			if copied.Preparation != nil {
+				value := *copied.Preparation
+				copied.Preparation = &value
+			}
 			if copied.Playwright != nil {
 				value := *copied.Playwright
 				copied.Playwright = &value

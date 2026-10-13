@@ -322,26 +322,37 @@ func supportsWebAction(ready WebControlReadiness, action string) bool {
 // context, commit BeginAttempt, then invoke Execute with that data invocation scope.
 // A physical desktop lease is never acquired or borrowed for renderer authority.
 func (m *WebControlManager) Prepare(ctx context.Context, p auth.Principal, step model.Step) (returned context.Context, epoch int, returnErr error) {
+	stage := "executor"
+	defer func() {
+		if returnErr != nil {
+			returnErr = automation.NewStepPreparationFailure(stage, webPreparationCause(returnErr), returnErr)
+		}
+	}()
 	if !m.beginWork() {
 		return ctx, 0, ErrWebControlUnqualified
 	}
 	defer m.active.Done()
+	stage = "actor"
 	actual, err := webControlActor(ctx, p)
 	if err != nil {
 		return ctx, 0, err
 	}
+	stage = "validation"
 	if err = webMutationStep(step); err != nil {
 		return ctx, 0, err
 	}
+	stage = "intent"
 	meta, ok := automation.ExecutionFromContext(ctx)
 	binding, bound := auth.ConsentBindingFromContext(ctx)
 	if !ok || meta.RunID == "" || meta.PlanID == "" || meta.Resumed && meta.OperationID == "" || meta.SessionID == "" || meta.StepIndex < 0 || !bound || binding.GrantID == "" || binding.Purpose == "" {
 		return ctx, 0, ErrWebControlIntent
 	}
+	stage = "qualify"
 	ready, err := m.qualify(ctx, actual, step.Target.Surface)
 	if err != nil {
 		return ctx, 0, err
 	}
+	stage = "newLease"
 	if !ready.NewlyAcquired {
 		return ctx, 0, ErrWebControlIntent
 	}
@@ -350,6 +361,7 @@ func (m *WebControlManager) Prepare(ctx context.Context, p auth.Principal, step 
 			returnErr = m.retireOwnedAuthority(ctx, actual, ready.Authority, returnErr)
 		}
 	}()
+	stage = "capability"
 	if !supportsWebAction(ready, step.Action) || !supportsWebStepLocator(ready, step) {
 		return ctx, 0, ErrWebControlUnqualified
 	}
@@ -357,6 +369,7 @@ func (m *WebControlManager) Prepare(ctx context.Context, p auth.Principal, step 
 	if err != nil {
 		return ctx, 0, err
 	}
+	stage = "readPin"
 	if ready.postconditionRead != nil {
 		if err := ready.postconditionRead.validate(actual, ready.Authority); err != nil {
 			return ctx, 0, err
@@ -364,6 +377,7 @@ func (m *WebControlManager) Prepare(ctx context.Context, p auth.Principal, step 
 	} else if step.Postcondition != nil && step.Postcondition.Adapter == "web" {
 		return ctx, 0, ErrWebControlUnqualified
 	}
+	stage = "publish"
 	intent := &webControlIntent{ownerContext: context.WithoutCancel(ctx), manager: m, principal: actual, binding: binding, metadata: meta, stepHash: hash, authority: ready.Authority, postconditionRead: ready.postconditionRead}
 	m.mu.Lock()
 	if m.closed {
