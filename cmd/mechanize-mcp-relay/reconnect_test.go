@@ -62,6 +62,9 @@ func (b *reconnectBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Name string `json:"name"`
 		}
 		json.Unmarshal(req.Params, &p)
+		if p.Name == "fixture_mutation_once" {
+			b.mutations.Add(1)
+		}
 		if p.Name == "fixture_mutation_lost_reply" {
 			b.mutations.Add(1)
 			conn, _, err := w.(http.Hijacker).Hijack()
@@ -115,7 +118,7 @@ func relayCall(id int, name string) *jsonrpc.Request {
 	p, _ := json.Marshal(map[string]any{"name": name, "arguments": map[string]any{}})
 	return &jsonrpc.Request{Id: id, Jsonrpc: "2.0", Method: "tools/call", Params: p}
 }
-func TestRelayNextCallReinitializesAfterBrokerSessionRestart(t *testing.T) {
+func TestRelayRejectedPostReinitializesWithinOriginalCall(t *testing.T) {
 	r, b := liveReconnectFixture(t)
 	initializeRelay(t, r)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -124,17 +127,17 @@ func TestRelayNextCallReinitializesAfterBrokerSessionRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.generation.Store(2)
-	if _, err := r.Send(ctx, relayCall(3, "mechanize_capabilities")); err == nil {
-		t.Fatal("expired session was retained as an ordinary RPC response")
+	if res, err := r.Send(ctx, relayCall(3, "fixture_mutation_once")); err != nil || res == nil || res.Error != nil || idKey(res.Id) != idKey(3) {
+		t.Fatal("explicit rejected POST did not transparently recover", err)
 	}
-	if b.initializations.Load() != 1 || b.requests.Load() != 1 {
-		t.Fatal("failed call was transparently reinitialized or replayed")
+	if b.initializations.Load() != 2 || b.requests.Load() != 2 || b.mutations.Load() != 1 {
+		t.Fatal("recovery did not dispatch original request exactly once")
 	}
 	res, err := r.Send(ctx, relayCall(4, "mechanize_capabilities"))
 	if err != nil || res == nil || res.Error != nil {
 		t.Fatal("next distinct call did not recover", err)
 	}
-	if b.initializations.Load() != 2 || b.requests.Load() != 2 {
+	if b.initializations.Load() != 2 || b.requests.Load() != 3 {
 		t.Fatal("recovery replayed operations or failed to initialize new session")
 	}
 }
@@ -242,5 +245,43 @@ func TestRelayLateOldConnectionFailureCannotCloseRecoveredPeer(t *testing.T) {
 	}
 	if _, err := manager.Send(context.Background(), &jsonrpc.Request{Id: "again", Method: "tools/list"}); err != nil || creates.Load() != 1 {
 		t.Fatal("healthy recovered peer was replaced")
+	}
+}
+
+func TestRelayRetryRequiresRejectedPostAndStopsAtSecondExpiry(t *testing.T) {
+	for _, cause := range []error{errMCPPostSessionExpired, errMCPSessionExpired, errMCPHTTPTransport, errMCPAuthDenied, context.DeadlineExceeded} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			var calls, creates atomic.Int32
+			original := relayCall(42, "fixture_mutation_once")
+			factory := func(context.Context) (connection, error) {
+				creates.Add(1)
+				return &closedFake{fakeTransport: &fakeTransport{send: func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+					if req.Method == "initialize" {
+						return &jsonrpc.Response{Id: req.Id, Jsonrpc: "2.0", Result: json.RawMessage(`{}`)}, nil
+					}
+					calls.Add(1)
+					if req != original {
+						t.Error("original request identity changed")
+					}
+					return nil, cause
+				}}}, nil
+			}
+			initial, _ := factory(context.Background())
+			r := newRecoveringTransport(context.Background(), initial, factory)
+			defer r.Close()
+			initializeRelay(t, r)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if _, err := r.Send(ctx, original); !errors.Is(err, cause) {
+				t.Fatal("failure lost", err)
+			}
+			want := int32(1)
+			if cause == errMCPPostSessionExpired {
+				want = 2
+			}
+			if calls.Load() != want || creates.Load() != want {
+				t.Fatalf("unexpected retry calls=%d creates=%d", calls.Load(), creates.Load())
+			}
+		})
 	}
 }

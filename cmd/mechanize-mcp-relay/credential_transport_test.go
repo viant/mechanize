@@ -305,3 +305,17 @@ func TestSecureTransportCannotForwardCredentialThroughRedirect(t *testing.T) {
 		t.Fatal("redirect received credentials or was dispatched")
 	}
 }
+
+func TestSessionExpiryRetryProofRequiresRejectedPost(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodGet} {
+		req, _ := http.NewRequest(method, "http://127.0.0.1:9191/mcp", nil)
+		req.Header.Set("Mcp-Session-Id", "expired-fixture")
+		tr := &secureTransport{endpoint: req.URL.String(), loadCredential: func(context.Context) (string, error) { return strings.Repeat("x", 32), nil }, base: credentialRoundTrip(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("fixture"))}, nil
+		})}
+		_, err := tr.RoundTrip(req)
+		if !errors.Is(err, errMCPSessionExpired) || errors.Is(err, errMCPPostSessionExpired) != (method == http.MethodPost) {
+			t.Fatal("unbound session failure became replay proof", method, err)
+		}
+	}
+}

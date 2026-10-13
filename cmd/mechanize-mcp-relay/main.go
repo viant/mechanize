@@ -34,10 +34,11 @@ const maxMessage = 4 << 20
 const protocol = "2025-06-18"
 
 var (
-	errMCPHTTPTransport     = errors.New("MCP HTTP transport failed")
-	errMCPAuthDenied        = errors.New("MCP authentication denied")
-	errMCPSessionExpired    = errors.New("MCP session expired")
-	errMCPProtocolReconnect = errors.New("MCP protocol reconnection failed")
+	errMCPHTTPTransport      = errors.New("MCP HTTP transport failed")
+	errMCPAuthDenied         = errors.New("MCP authentication denied")
+	errMCPSessionExpired     = errors.New("MCP session expired")
+	errMCPPostSessionExpired = errors.New("MCP POST rejected before dispatch")
+	errMCPProtocolReconnect  = errors.New("MCP protocol reconnection failed")
 )
 
 func privateRead(path string) ([]byte, error) {
@@ -162,10 +163,13 @@ func (t *secureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		res.Body.Close()
 		return nil, errMCPAuthDenied
 	}
-	// MCP stateful-session 404 requires a fresh protocol session. Never surface
-	// it as a tool response or transparently resend the failed operation.
+	// Only a rejected POST proves this request was not dispatched. A GET stream
+	// failure cannot establish the outcome of a concurrent accepted operation.
 	if res.StatusCode == http.StatusNotFound && clone.Header.Get("Mcp-Session-Id") != "" {
 		res.Body.Close()
+		if clone.Method == http.MethodPost {
+			return nil, errors.Join(errMCPSessionExpired, errMCPPostSessionExpired)
+		}
 		return nil, errMCPSessionExpired
 	}
 	res.Body = &boundedBody{ReadCloser: res.Body, remaining: 32 << 20}

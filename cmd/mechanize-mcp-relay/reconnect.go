@@ -22,7 +22,8 @@ type connectionGeneration struct {
 }
 
 // recoveringTransport creates a new MCP session for a subsequent request after
-// a failed connection. It never resends the request whose outcome was uncertain.
+// a failed connection. It never resends the request whose outcome was uncertain;
+// an explicit rejected POST may refresh and retry once before any dispatch.
 // Only the protocol handshake is repeated; tool/session/workflow operations are
 // never retained for replay. Old-generation errors cannot invalidate a new peer.
 type recoveringTransport struct {
@@ -129,7 +130,20 @@ func (r *recoveringTransport) Send(ctx context.Context, request *jsonrpc.Request
 	reply, err := generation.client.Send(ctx, request)
 	if err != nil {
 		r.invalidate(generation)
-		return nil, err
+		if !errors.Is(err, errMCPPostSessionExpired) || request.Method == "initialize" || ctx.Err() != nil {
+			return nil, err
+		}
+		// The original POST was rejected before broker dispatch. Refresh only
+		// protocol state and attempt this same request once within its deadline.
+		generation, err = r.acquire(ctx)
+		if err != nil {
+			return nil, err
+		}
+		reply, err = generation.client.Send(ctx, request)
+		if err != nil {
+			r.invalidate(generation)
+			return nil, err
+		}
 	}
 	if request.Method == "initialize" && reply != nil && reply.Error == nil {
 		r.mu.Lock()
