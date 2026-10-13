@@ -57,7 +57,7 @@ func TestProductionWorkerJournalAttentionThroughMCP(t *testing.T) {
 			t.Fatal("invalid MCP status")
 		}
 		row := status.Channels[0]
-		if row.WorkerBuild != 32 || !row.ProcessQualified || !row.ScopeQualified || row.ReconnectPhase != "journal" || row.ReconnectReason != "journalChanged" || row.ReconnectJournal == nil || *row.ReconnectJournal != (chrome.ReconnectJournalDiagnostic{Reason: "recordChanged", Version: 1, HistoryCount: 64, State: "adopted", GrantRelation: "new"}) {
+		if row.WorkerBuild != 32 || !row.ProcessQualified || !row.ScopeQualified || row.ReconnectPhase != "inventory" || row.ReconnectReason != "journalChanged" || row.ReconnectJournal == nil || *row.ReconnectJournal != (chrome.ReconnectJournalDiagnostic{Reason: "lineageInvalid", Version: 1, HistoryCount: 64, State: "adopted", GrantRelation: "new"}) {
 			t.Fatalf("worker diagnostic lost through MCP: %s", raw)
 		}
 	}

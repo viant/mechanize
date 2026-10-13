@@ -177,6 +177,7 @@ func reconnectBindingLineage(raw json.RawMessage, scope string) ([]ReconnectFenc
 			return errReconnectBindings
 		}
 		var r struct {
+			Format  string         `json:"format,omitempty"`
 			Version int            `json:"version"`
 			Phase   string         `json:"phase"`
 			Nonce   string         `json:"nonce"`
@@ -193,19 +194,70 @@ func reconnectBindingLineage(raw json.RawMessage, scope string) ([]ReconnectFenc
 				Original  json.RawMessage `json:"originalPending,omitempty"`
 				Reference json.RawMessage `json:"originalPendingRef,omitempty"`
 			} `json:"recovery,omitempty"`
-			Archive json.RawMessage `json:"archive,omitempty"`
-			Sources json.RawMessage `json:"sourceInventory,omitempty"`
+			Archive        json.RawMessage  `json:"archive,omitempty"`
+			Sources        json.RawMessage  `json:"sourceInventory,omitempty"`
+			Audit          json.RawMessage  `json:"audit,omitempty"`
+			RecoveryFences []ReconnectFence `json:"recoveryFences,omitempty"`
 		}
 		if decodeReconnectClosed(value, &r) != nil || r.Phase != "pending" || r.Version < 1 || r.Version > 6 || !setupHash.MatchString(r.Nonce) || seenNonce[r.Nonce] || r.Old == r.New || len(r.History) > 64 {
 			return errReconnectBindings
 		}
 		seenNonce[r.Nonce] = true
+		active := r.Format == "activeHandoff"
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(value, &fields) != nil {
+			return errReconnectBindings
+		}
+		_, hasFormat := fields["format"]
+		_, hasRecovery := fields["recovery"]
+		_, hasAudit := fields["audit"]
+		_, hasCandidates := fields["recoveryFences"]
+		if r.Format != "" && !active || active && (r.Version != 1 || hasRecovery || r.History == nil || len(r.History) != 0 || len(r.Archive) > 0 || len(r.RecoveryFences) < 1 || len(r.RecoveryFences) > 202) || !active && (hasFormat || hasAudit || hasCandidates) {
+			return errReconnectBindings
+		}
 		if add(r.Old) != nil || add(r.New) != nil {
 			return errReconnectBindings
 		}
 		for _, h := range r.History {
 			if !setupHash.MatchString(h.Nonce) || add(h.Old) != nil || add(h.New) != nil {
 				return errReconnectBindings
+			}
+		}
+		if active {
+			candidates := map[ReconnectFence]bool{}
+			for _, fence := range r.RecoveryFences {
+				if candidates[fence] || add(fence) != nil {
+					return errReconnectBindings
+				}
+				candidates[fence] = true
+			}
+			if !candidates[r.New] {
+				return errReconnectBindings
+			}
+			if len(r.Audit) > 0 {
+				var ref struct {
+					Digest  string         `json:"digest"`
+					Bytes   int            `json:"bytes"`
+					Format  string         `json:"format"`
+					Version int            `json:"version"`
+					Phase   string         `json:"phase"`
+					Nonce   string         `json:"nonce"`
+					Old     ReconnectFence `json:"oldFence"`
+					New     ReconnectFence `json:"newFence"`
+				}
+				if !reconnectTopFields(r.Audit, "digest", "bytes", "format", "version", "phase", "nonce", "oldFence", "newFence") || decodeReconnectClosed(r.Audit, &ref) != nil || !setupHash.MatchString(ref.Digest) || !setupHash.MatchString(ref.Nonce) || ref.Nonce == r.Nonce || ref.Bytes < 1 || ref.Bytes > MaxFrameBytes || ref.Version < 1 || ref.Version > 6 || ref.Format != "legacy" && ref.Format != "activeHandoff" || ref.Format == "activeHandoff" && ref.Version != 1 || ref.Phase != "pending" && ref.Phase != "adopted" || ref.Old == ref.New || add(ref.Old) != nil || add(ref.New) != nil {
+					return errReconnectBindings
+				}
+				if ref.Phase == "pending" {
+					if r.Old != ref.Old {
+						return errReconnectBindings
+					}
+				} else if r.Old != ref.New {
+					return errReconnectBindings
+				}
+				// This hash identifies immutable evidence only. The worker verifies
+				// its exact bytes; authority comes from the fresh current census and
+				// executor proofs, never recursive admission of old recovery state.
 			}
 		}
 		// Archived predecessor fences are covered by the all-epochs channel/scope

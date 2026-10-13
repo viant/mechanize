@@ -90,6 +90,16 @@ tabs can continue. A successor document in the same tab remains covered until
 the earlier input is retired. Connection loss and input without a trustworthy
 target still require broader recovery.
 
+Connection setup keeps one bounded current handoff and retains earlier records
+as immutable audit data. Interrupted reconnects do not accumulate nested recovery
+state. After a timed-out Chrome setup call settles, one automatic metadata retry
+can obtain a fresh connection without replaying browser input.
+
+Native control can also recover after delayed cleanup once the exact old helper
+is confirmed stopped and existing input-release checks pass. Completed text
+delivery remains recorded even if a later focus observation is unavailable;
+partial input and uncertain key release retain their original uncertain outcome.
+
 The local Playwright process is reused across calls, with fresh target and
 action authorization for each invocation. Cancellation or a broken transport
 discards that process without retrying the action. Browser and native tools

@@ -5,6 +5,21 @@ const fs = require('node:fs');
 const path = require('node:path');
 const targetGuard = require('../playwright-target.js');
 const {identity,grant,command,sortedStorageValue,fixture,privateFrame,privateFixture,privateSubmitFrame,privacyFrame,playwrightNative,playwrightCommand}=require('./worker-fixture.cjs');
+
+function auditOriginal(f,record=f.storage.mechanizeReconnect) {
+ if(record?.format==='activeHandoff')return JSON.parse(f.storage['mechanizeReconnectAudit:'+record.audit.digest].journalJSON);
+ if(record?.recovery?.originalPending)return record.recovery.originalPending;
+ return JSON.parse(f.storage['mechanizeReconnectPendingArchive:'+record.recovery.originalPendingRef.digest].pendingJSON);
+}
+function respondBindings(f,rows=[]) {
+ const hash=value=>require('node:crypto').createHash('sha256').update(JSON.stringify(value)).digest('hex');
+ f.state.emptyRendererReceipts=true;
+ if(!f.state.frameRows)f.state.frameRows=[{frameId:0,parentFrameId:-1,documentId:f.state.documentId||'d1',url:f.state.frameURL,frameType:'outermost_frame',documentLifecycle:'active'}];
+ f.state.nativePost=message=>{
+  if(message.type==='reconnectBindings')queueMicrotask(()=>f.receive({type:'reconnectBindingsResult',requestId:message.requestId,pendingDigest:hash(message.pending),bindingsDigest:hash(rows),total:rows.length,offset:0,nextOffset:rows.length,bindings:rows}));
+  if(message.type==='reconnectBindingsDone'&&message.complete)queueMicrotask(()=>f.receive({type:'reconnectBindingsCommitReady',requestId:message.requestId,complete:true}));
+ };
+}
 test('worker rejects unauthorized top-level and cross-origin frame documents', async () => {
   const f = await fixture();
   f.state.url = 'https://untrusted.example.test';
@@ -680,7 +695,7 @@ test('trusted fresh native connection adopts changed epoch only after renderer p
  assert.ok(f.messages.some(x=>x.type==='executorPrepared'&&x.executorChallenge==='fresh-challenge'));assert.equal(f.state.deliveries,0);
  f.disconnect();await f.connect();f.messages.length=0;
  await f.receive({...restartQualification(),brokerEpoch:'broker3',channelEpoch:'channel3',executorChallenge:'next-challenge'});
- assert.equal(f.storage.mechanizeReconnect.history.length,2);assert.equal(f.storage.mechanizeReconnect.history[0].oldFence.brokerEpoch,'broker1');
+ assert.equal(f.storage.mechanizeReconnect.history.length,1);assert.equal(JSON.parse(f.storage['mechanizeReconnectAudit:'+f.storage.mechanizeReconnect.audit.digest].journalJSON).history[0].oldFence.brokerEpoch,'broker1');
 });
 test('reconnect refuses changed scope unknown/private/recording proofs and old content without deleting lastGrant',async()=>{
  for(const mode of ['scope','private','unknown','recording','oldContent']){
@@ -714,6 +729,9 @@ test('native peer change while proof is pending cannot commit a new fence',async
 async function interruptedReconnectFixture() {
  const f=await reconnectFixture();f.state.reconnectError='adopt';
  await f.receive({...restartQualification(),brokerEpoch:'abandoned-broker',channelEpoch:'abandoned-channel'});
+ // Seed the legacy v1 representation for migration tests. New active-format
+ // production is covered separately; this fixture preserves old stored data.
+ delete f.storage.mechanizeReconnect.format;delete f.storage.mechanizeReconnect.recoveryFences;delete f.storage.mechanizeReconnect.audit;
  const original=JSON.parse(JSON.stringify(f.storage.mechanizeReconnect));
  assert.equal(original.phase,'pending');f.disconnect();f.state.inventoryTabs=[];delete f.state.reconnectError;
  return {...f,original};
@@ -728,6 +746,7 @@ async function interruptedEmptyRecoveryFixture() {
  f.state.afterPendingWrite=()=>f.disconnect();
  await f.receive({...restartQualification(),brokerEpoch:'interrupted-empty',channelEpoch:'interrupted-empty'});
  delete f.state.afterPendingWrite;
+ delete f.storage.mechanizeReconnect.format;delete f.storage.mechanizeReconnect.recoveryFences;delete f.storage.mechanizeReconnect.audit;f.storage.mechanizeReconnect.version=2;f.storage.mechanizeReconnect.recovery={kind:'emptySetupDocuments',originalPending:structuredClone(f.original)};
  assert.equal(f.storage.mechanizeReconnect.version,2);assert.equal(f.storage.mechanizeReconnect.phase,'pending');
  assert.equal(f.storage.lastGrant.brokerEpoch,'broker1');
  return {...f,interrupted:JSON.parse(JSON.stringify(f.storage.mechanizeReconnect))};
@@ -735,13 +754,13 @@ async function interruptedEmptyRecoveryFixture() {
 test('interrupted v2 empty preparation recovers with sorted storage and retains the entire v2 and v1 lineage',async()=>{
  const f=await interruptedEmptyRecoveryFixture();await f.connect();f.messages.length=0;
  await f.receive({...restartQualification(),brokerEpoch:'recovered-v3',channelEpoch:'recovered-v3'});
- assert.equal(f.storage.mechanizeReconnect.version,3);assert.equal(f.storage.mechanizeReconnect.phase,'adopted');
- assert.deepEqual(JSON.parse(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending)),f.interrupted);
- assert.deepEqual(JSON.parse(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending.recovery.originalPending)),f.original);
+ assert.equal(f.storage.mechanizeReconnect.version,1);assert.equal(f.storage.mechanizeReconnect.phase,'adopted');
+ assert.deepEqual(JSON.parse(JSON.stringify(auditOriginal(f))),f.interrupted);
+ assert.deepEqual(JSON.parse(JSON.stringify(auditOriginal(f).recovery.originalPending)),f.original);
  assert.ok(f.messages.some(x=>x.type==='executorPrepared'));assert.equal(f.state.deliveries,0);
  f.disconnect();await f.connect();f.messages.length=0;
  await f.receive({...restartQualification(),brokerEpoch:'later-v3',channelEpoch:'later-v3'});
- assert.equal(f.storage.mechanizeReconnect.history.length,2);assert.deepEqual(JSON.parse(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending)),f.interrupted);
+ assert.equal(f.storage.mechanizeReconnect.history.length,1);assert.deepEqual(JSON.parse(JSON.stringify(auditOriginal(f,auditOriginal(f)))),f.interrupted);
  assert.ok(f.messages.some(x=>x.type==='executorPrepared'));
 });
 test('v2 recovery refuses committed or malformed lineage, fresh websites and all private or unknown barriers',async()=>{
@@ -779,12 +798,12 @@ test('legacy pending recovery requires fresh native qualification and empty inve
  f.messages.length=0;
  await f.receive({...restartQualification(),brokerEpoch:'recovered-broker',channelEpoch:'recovered-channel'});
  const recovered=f.storage.mechanizeReconnect;
- assert.equal(recovered.version,2);assert.equal(recovered.phase,'adopted');assert.deepEqual(JSON.parse(JSON.stringify(recovered.recovery.originalPending)),f.original);
+ assert.equal(recovered.format,'activeHandoff');assert.equal(recovered.version,1);assert.equal(recovered.phase,'adopted');assert.deepEqual(JSON.parse(JSON.stringify(auditOriginal(f,recovered))),f.original);
  assert.equal(recovered.newFence.brokerEpoch,'recovered-broker');assert.equal(recovered.history.at(-1).executors.length,0);
  assert.ok(f.messages.some(x=>x.type==='executorPrepared'));assert.equal(f.state.deliveries,0);
  f.disconnect();await f.connect();f.messages.length=0;
  await f.receive({...restartQualification(),brokerEpoch:'later-broker',channelEpoch:'later-channel'});
- assert.equal(f.storage.mechanizeReconnect.history.length,2);assert.deepEqual(JSON.parse(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending)),f.original);
+ assert.equal(f.storage.mechanizeReconnect.history.length,1);assert.deepEqual(JSON.parse(JSON.stringify(auditOriginal(f,auditOriginal(f)))),f.original);
 });
 test('pending startup refuses websites outside scope, incomplete tabs, pending navigation and malformed journals',async()=>{
  for(const mode of ['website','outsideScope','missingURL','pendingURL','incognito','discarded','unknownPage','scope','history','extra','nonce','v2Pending']){
@@ -811,8 +830,8 @@ test('pending recovery retains prior executor receipt lineage and rejects a mism
   const original=JSON.parse(JSON.stringify(f.storage.mechanizeReconnect));await f.connect();
   if(mismatch){assert.equal(f.state.nativeConnections,3);await f.receive({...restartQualification(),brokerEpoch:'blocked-new',channelEpoch:'blocked-new'});assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));assert.deepEqual(JSON.parse(JSON.stringify(f.storage.mechanizeReconnect)),original);continue;}
   f.messages.length=0;await f.receive({...restartQualification(),brokerEpoch:'recovered',channelEpoch:'recovered'});
-  assert.ok(f.messages.some(x=>x.type==='executorPrepared'));assert.equal(f.storage.mechanizeReconnect.history[0].executors[0].receiptCount,3);
-  assert.deepEqual(JSON.parse(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending)),original);
+  assert.ok(f.messages.some(x=>x.type==='executorPrepared'));assert.equal(auditOriginal(f).history[0].executors[0].receiptCount,3);
+  assert.deepEqual(JSON.parse(JSON.stringify(auditOriginal(f))),original);
  }
 });
 test('empty recovery refuses changed qualification, unknown browser receipts and retained private/lifecycle barriers',async()=>{
@@ -848,8 +867,8 @@ test('empty recovery retains inhibition if inventory changes, storage fails or n
   if(mode==='port'){while(!f.state.commitEntered)await new Promise(resolve=>setImmediate(resolve));f.disconnect();release();}
   await receiving;assert.ok(!f.messages.some(x=>x.type==='executorPrepared'),mode);
   assert.equal(f.storage.mechanizeReconnect.phase,['port','readback'].includes(mode)?'adopted':'pending',mode);
-  assert.equal(f.storage.mechanizeReconnect.phase==='pending'?f.pendingReconnectValid(f.storage.mechanizeReconnect,f.storage.lastGrant):true,true,mode);
-  const original=f.storage.mechanizeReconnect.recovery?.originalPending||f.storage.mechanizeReconnect;
+  await f.verifyArchives(f.storage.mechanizeReconnect);assert.equal(f.storage.mechanizeReconnect.phase==='pending'?f.pendingReconnectValid(f.storage.mechanizeReconnect,f.storage.lastGrant):true,true,mode);
+  const original=f.storage.mechanizeReconnect.format==='activeHandoff'?auditOriginal(f):f.storage.mechanizeReconnect.recovery?.originalPending||f.storage.mechanizeReconnect;
   assert.deepEqual(JSON.parse(JSON.stringify(original)),f.original,mode);assert.equal(f.state.deliveries,0,mode);
   assert.equal(f.pendingReconnectValid(f.storage.mechanizeReconnect,f.storage.lastGrant)||f.journalValid(f.storage.mechanizeReconnect,f.storage.lastGrant),true,mode);
   if(['storage','readback','setupChange','port'].includes(mode)){
@@ -1383,7 +1402,7 @@ test('pending recovery accepts independently verified built-in New Tab without i
   const calls=f.state.nativeConnections,injections=f.state.injections;
   await f.connect();assert.equal(f.state.nativeConnections,calls+1);f.messages.length=0;
   await f.receive({...restartQualification(),brokerEpoch:'new-tab-recovery',channelEpoch:'new-tab-recovery'});
-  assert.ok(f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.storage.mechanizeReconnect.phase,'adopted');assert.deepEqual(JSON.parse(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending)),f.original);
+  assert.ok(f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.storage.mechanizeReconnect.phase,'adopted');assert.deepEqual(JSON.parse(JSON.stringify(auditOriginal(f))),f.original);
   assert.equal(f.state.injections,injections);assert.equal(f.state.deliveries,0);assert.equal((f.state.debuggerInputs||[]).length,0);
  }
 });
@@ -1402,7 +1421,7 @@ test('New Tab document changes during recovery preserve the interrupted journal 
  const f=await interruptedReconnectFixture();f.state.inventoryTabs=[{id:11,url:'chrome://newtab/'}];f.state.frameRows=builtinNewTabFrames();await f.connect();f.messages.length=0;
  f.state.afterPendingWrite=()=>{f.state.frameRows[0].documentId='replaced-new-tab';};
  await f.receive({...restartQualification(),brokerEpoch:'new-tab-changed',channelEpoch:'new-tab-changed'});
- assert.equal(f.diagnostic().reason,'inventoryChanged');assert.equal(f.inventoryReason(),'inventoryDrift');assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.storage.mechanizeReconnect.phase,'pending');assert.deepEqual(JSON.parse(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending)),f.original);assert.equal(f.storage.lastGrant.brokerEpoch,'broker1');
+ assert.equal(f.diagnostic().reason,'inventoryChanged');assert.equal(f.inventoryReason(),'inventoryDrift');assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.storage.mechanizeReconnect.phase,'pending');assert.deepEqual(JSON.parse(JSON.stringify(auditOriginal(f))),f.original);assert.equal(f.storage.lastGrant.brokerEpoch,'broker1');
 });
 test('verified built-in New Tab never bypasses unknown receipt or lifecycle recovery barriers',async()=>{
  for(const mode of ['unknown','lifecycle','retirement']){
@@ -1425,27 +1444,49 @@ test('produced pending v3 and further interrupted recoveries retain full lineage
   const f=await interruptedReconnectFixture();f.storage.mechanizeProtectedOrigins=['https://fixture.example.test'];
   const lineage=[f.original];
   for(let index=0;index<interruptions;index++)lineage.push(await interruptNextEmptyRecovery(f,'interruption-'+index));
-  assert.equal(f.storage.mechanizeReconnect.version,interruptions+1);assert.equal(f.storage.lastGrant.brokerEpoch,'broker1');
+  assert.equal(f.storage.mechanizeReconnect.version,1);assert.equal(f.storage.lastGrant.brokerEpoch,'broker1');
   await f.connect();f.messages.length=0;await f.receive({...restartQualification(),brokerEpoch:'successful-recovery',channelEpoch:'successful-recovery'});
-  assert.ok(f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.storage.mechanizeReconnect.version,interruptions+2);assert.equal(f.storage.mechanizeReconnect.phase,'adopted');
-  let node=f.storage.mechanizeReconnect.recovery.originalPending;
-  for(const original of lineage.toReversed()){assert.deepEqual(JSON.parse(JSON.stringify(node)),original);node=node.recovery?.originalPending;}
+  assert.ok(f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.storage.mechanizeReconnect.version,1);assert.equal(f.storage.mechanizeReconnect.phase,'adopted');
+  let node=auditOriginal(f);
+  for(const original of lineage.toReversed()){assert.deepEqual(JSON.parse(JSON.stringify(node)),original);node=node?.format==='activeHandoff'?auditOriginal(f,node):node.recovery?.originalPending;}
   assert.deepEqual(f.storage.mechanizeProtectedOrigins,['https://fixture.example.test']);assert.equal(f.state.deliveries,0);
  }
 });
 test('ordinary transition interrupted after an adopted recovery remains a readable recoverable pending record',async()=>{
  const f=await interruptedReconnectFixture();await f.connect();await f.receive({...restartQualification(),brokerEpoch:'first-recovery',channelEpoch:'first-recovery'});
- assert.equal(f.storage.mechanizeReconnect.version,2);const old=JSON.parse(JSON.stringify(f.storage.mechanizeReconnect));f.disconnect();
- const pending=await interruptNextEmptyRecovery(f,'ordinary-interrupted');assert.equal(pending.version,2);assert.deepEqual(pending.history,old.history);
+ assert.equal(f.storage.mechanizeReconnect.version,1);const old=JSON.parse(JSON.stringify(f.storage.mechanizeReconnect));f.disconnect();
+ const pending=await interruptNextEmptyRecovery(f,'ordinary-interrupted');assert.equal(pending.version,1);assert.deepEqual(pending.history,[]);assert.deepEqual(auditOriginal(f),old);
  await f.connect();f.messages.length=0;await f.receive({...restartQualification(),brokerEpoch:'after-ordinary',channelEpoch:'after-ordinary'});
- assert.ok(f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.storage.mechanizeReconnect.version,3);assert.deepEqual(JSON.parse(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending)),pending);
+ assert.ok(f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.storage.mechanizeReconnect.version,1);assert.deepEqual(JSON.parse(JSON.stringify(auditOriginal(f))),pending);
 });
-test('recovery writer stops at its readable lineage bound before creating an unsupported version',async()=>{
- const f=await interruptedReconnectFixture();for(let index=0;index<5;index++)await interruptNextEmptyRecovery(f,'bounded-'+index);
- assert.equal(f.storage.mechanizeReconnect.version,6);assert.equal(f.pendingReconnectValid(f.storage.mechanizeReconnect,f.storage.lastGrant),true);
- const before=JSON.stringify(f.storage);await f.connect();f.messages.length=0;await f.receive({...restartQualification(),brokerEpoch:'would-be-seven',channelEpoch:'would-be-seven'});
- assert.equal(JSON.stringify(f.storage),before);assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.diagnostic().phase,'journal');assert.equal(f.diagnostic().reason,'journalChanged');
- const diagnostic=f.messages.at(-1).reconnectJournal;assert.equal(diagnostic.reason,'recoveryDepthLimit');assert.equal(diagnostic.version,6);assert.equal(diagnostic.historyCount,0);assert.equal(diagnostic.state,'pending');assert.equal(diagnostic.grantRelation,'old');
+test('maximum valid legacy depth migrates without creating another recursive level',async()=>{
+ const f=await interruptedReconnectFixture();let record=structuredClone(f.original);
+ for(let version=2;version<=6;version++)record={...structuredClone(f.original),version,nonce:String(version).repeat(64),newFence:{...grant,brokerEpoch:'legacy-'+version,channelEpoch:'legacy-'+version},recovery:{kind:'emptySetupDocuments',originalPending:record}};
+ f.storage.mechanizeReconnect=record;const original=JSON.stringify(record);
+ await f.connect();f.messages.length=0;await f.receive({...restartQualification(),brokerEpoch:'migrated-six',channelEpoch:'migrated-six'});
+ assert.ok(f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.storage.mechanizeReconnect.format,'activeHandoff');assert.equal(f.storage.mechanizeReconnect.version,1);
+ assert.equal(f.storage['mechanizeReconnectAudit:'+f.storage.mechanizeReconnect.audit.digest].journalJSON,original);assert.equal(f.state.deliveries,0);
+});
+test('repeated interrupted handoffs recover beyond legacy depth without losing historical receipts',async()=>{
+ const f=await interruptedReconnectFixture();
+ delete f.storage.mechanizeReconnect.format;delete f.storage.mechanizeReconnect.recoveryFences;
+ f.storage.mechanizeReconnect.history=Array.from({length:37},(_,index)=>({nonce:(1000+index).toString(16).padStart(64,'0'),oldFence:index?{...grant,brokerEpoch:'audit-'+index,channelEpoch:'audit-'+index}:{...grant,brokerEpoch:'audit-0',channelEpoch:'audit-0'},newFence:index===36?{...grant}:{...grant,brokerEpoch:'audit-'+(index+1),channelEpoch:'audit-'+(index+1)},executors:[{identity,receiptRevision:3,receiptCount:3}]}));
+ f.sessionState['browserIntent:retained-fixture']={attemptId:'retained-fixture'};
+ f.sessionState['browserReceipt:retained-fixture']={dispatchState:'dispatched',effectState:'dispatched'};
+ const history=JSON.stringify(f.storage.mechanizeReconnect.history),receipts=JSON.stringify(f.sessionState),originals=[];
+ for(let index=0;index<12;index++){
+  originals.push(JSON.stringify(f.storage.mechanizeReconnect));
+  await interruptNextEmptyRecovery(f,'flat-interruption-'+index);
+  if(f.storage.mechanizeReconnect.newFence.brokerEpoch!=='flat-interruption-'+index)console.log(JSON.stringify({interruption:index+1,version:f.storage.mechanizeReconnect.version,historyCount:f.storage.mechanizeReconnect.history.length,diagnostic:f.diagnostic()}));
+  assert.ok(f.storage.mechanizeReconnect.newFence.brokerEpoch==='flat-interruption-'+index,'every interruption must write a readable current handoff');
+ }
+ await f.connect();f.messages.length=0;await f.receive({...restartQualification(),brokerEpoch:'flat-success',channelEpoch:'flat-success'});
+ assert.ok(f.messages.some(m=>m.type==='executorPrepared'),'a reconciled current handoff must not exhaust a lifetime recovery-depth counter');
+ assert.equal(f.storage.mechanizeReconnect.format,'activeHandoff');assert.equal(f.storage.mechanizeReconnect.version,1);assert.equal(f.storage.mechanizeReconnect.history.length,1);
+ const archived=Object.entries(f.storage).filter(([key])=>key.startsWith('mechanizeReconnectAudit:')).map(([,value])=>value.journalJSON);
+ for(const original of originals)assert.ok(archived.includes(original),'all exact prior records remain immutable');
+ assert.ok(archived.some(bytes=>JSON.stringify(JSON.parse(bytes).history)===history));
+ assert.equal(JSON.stringify(f.sessionState),receipts);assert.equal(f.state.deliveries,0);assert.equal(f.state.debuggerInputs,undefined);
 });
 test('invalid pending lineage reports journalChanged over a metadata-only native port',async()=>{
  for(const mode of ['duplicateNonce','foreignScope','wrongVersion','foreignHistory','tooDeep','tooManyNodes','tooManyBytes']){
@@ -1470,7 +1511,7 @@ test('maximum readable lineage retains preexisting receipts and rejects a nonadj
 });
 test('enrollment failures before pending-journal validation have closed scope diagnostics rather than idle',async()=>{
  for(const mode of ['missing','invalidScope','storageRead']){
-  const f=await interruptedEmptyRecoveryFixture();await interruptNextEmptyRecovery(f,'pending-three');assert.equal(f.storage.mechanizeReconnect.version,3);
+  const f=await interruptedEmptyRecoveryFixture();await interruptNextEmptyRecovery(f,'pending-three');assert.equal(f.storage.mechanizeReconnect.version,1);
   const retained=JSON.stringify(f.storage.mechanizeReconnect),connections=f.state.nativeConnections;f.setReconnectDiagnostic('idle','none');
   if(mode==='missing')delete f.storage.enrollment;
   if(mode==='invalidScope')f.storage.enrollment.origins=['https://fixture.example.test/path'];
@@ -1503,52 +1544,49 @@ async function fullReconnectHistoryFixture(){
  const tail=history.at(-1);f.storage.mechanizeReconnect={version:1,phase:'adopted',nonce:tail.nonce,oldFence:tail.oldFence,newFence:tail.newFence,history};return f;
 }
 const archiveKeys=f=>Object.keys(f.storage).filter(key=>key.startsWith('mechanizeReconnectArchive:'));
-test('full adopted history rolls over losslessly and continues normal admission',async()=>{
+const auditKeys=f=>Object.keys(f.storage).filter(key=>key.startsWith('mechanizeReconnectAudit:'));
+const retainedAudit=(f,bytes)=>auditKeys(f).some(key=>f.storage[key].journalJSON===bytes);
+test('full adopted legacy history migrates losslessly without active history rollover',async()=>{
  const f=await fullReconnectHistoryFixture(),retained=JSON.stringify(f.storage.mechanizeReconnect);f.sessionState['browserIntent:known']={};f.sessionState['browserReceipt:known']={dispatchState:'dispatched'};const receipts=JSON.stringify(f.sessionState);
  await f.receive({...restartQualification(),brokerEpoch:'next-broker',channelEpoch:'next-channel'});
- assert.ok(f.messages.some(m=>m.type==='executorPrepared'));assert.equal(archiveKeys(f).length,1);assert.equal(JSON.stringify(f.storage[archiveKeys(f)[0]].journal),retained);assert.equal(f.storage.mechanizeReconnect.history.length,2);assert.equal(f.storage.mechanizeReconnect.archive.segments,1);assert.equal(JSON.stringify(f.sessionState),receipts);assert.equal(f.state.deliveries,0);
+ assert.ok(f.messages.some(m=>m.type==='executorPrepared'));assert.ok(retainedAudit(f,retained));assert.equal(f.storage.mechanizeReconnect.history.length,1);assert.equal(f.storage.mechanizeReconnect.archive,undefined);assert.equal(JSON.stringify(f.sessionState),receipts);assert.equal(f.state.deliveries,0);
 });
-test('archive-first and checkpoint-first interruption retain the original history and resume idempotently',async()=>{
- for(const phase of ['archive','checkpoint']){
+test('audit-first and pending-first interruption retain original history and resume idempotently',async()=>{
+ for(const phase of ['audit','pending']){
   const f=await fullReconnectHistoryFixture(),retained=JSON.stringify(f.storage.mechanizeReconnect);let interrupted=false;
-  f.state.afterStorageWrite=value=>{if(!interrupted&&(phase==='archive'?Object.keys(value).some(k=>k.startsWith('mechanizeReconnectArchive:')):value.mechanizeReconnect?.archive&&value.mechanizeReconnect.phase==='adopted')){interrupted=true;f.disconnect();}};
+  f.state.afterStorageWrite=value=>{if(!interrupted&&(phase==='audit'?Object.keys(value).some(k=>k.startsWith('mechanizeReconnectAudit:')):value.mechanizeReconnect?.format==='activeHandoff'&&value.mechanizeReconnect.phase==='pending')){interrupted=true;f.disconnect();}};
   await f.receive({...restartQualification(),brokerEpoch:'interrupted',channelEpoch:'interrupted'});delete f.state.afterStorageWrite;
-  assert.equal(archiveKeys(f).length,1);assert.equal(JSON.stringify(f.storage[archiveKeys(f)[0]].journal),retained);assert.equal(f.storage.lastGrant.brokerEpoch,grant.brokerEpoch);
-  await f.connect();f.messages.length=0;await f.receive({...restartQualification(),brokerEpoch:'resumed',channelEpoch:'resumed'});
-  assert.ok(f.messages.some(m=>m.type==='executorPrepared'),phase);assert.equal(archiveKeys(f).length,1);assert.equal(JSON.stringify(f.storage[archiveKeys(f)[0]].journal),retained);assert.equal(f.state.deliveries,0);
+  assert.ok(retainedAudit(f,retained));assert.equal(f.storage.lastGrant.brokerEpoch,grant.brokerEpoch);
+  await f.connect();f.messages.length=0;respondBindings(f);await f.receive({...restartQualification(),brokerEpoch:'resumed',channelEpoch:'resumed',reconnectBindingsVersion:1});
+  assert.ok(f.messages.some(m=>m.type==='executorPrepared'),phase+JSON.stringify(f.diagnostic()));assert.ok(retainedAudit(f,retained));assert.equal(f.state.deliveries,phase==='pending'?1:0);if(f.state.deliveries)assert.equal(f.state.lastRendererMessage.action,'executor.receipts');assert.equal(f.state.debuggerInputs,undefined);
  }
 });
-test('archive corruption, absence, foreign fences and bounded references deny reconnect without clearing history',async()=>{
- for(const mode of ['changed','missing','foreign','segments','anchor','digest']){
-  const f=await fullReconnectHistoryFixture();await f.receive({...restartQualification(),brokerEpoch:'first',channelEpoch:'first'});f.disconnect();const key=archiveKeys(f)[0];
-  if(mode==='changed')f.storage[key].journal.history[0].executors[0].receiptCount=99;
-  if(mode==='missing')delete f.storage[key];
-  if(mode==='foreign')f.storage.mechanizeReconnect.archive.endFence.scopeHash='b'.repeat(64);
-  if(mode==='segments')f.storage.mechanizeReconnect.archive.segments=1025;
-  if(mode==='anchor')f.storage.mechanizeReconnect.archive.nonce='e'.repeat(64);
-  if(mode==='digest')f.storage.mechanizeReconnect.archive.digest='f'.repeat(64);
+test('immediate audit corruption absence foreign fences and bounded references deny reconnect without clearing history',async()=>{
+ for(const mode of ['changed','missing','foreign','bytes','nonce','digest']){
+  const f=await fullReconnectHistoryFixture();await f.receive({...restartQualification(),brokerEpoch:'first',channelEpoch:'first'});f.disconnect();const key='mechanizeReconnectAudit:'+f.storage.mechanizeReconnect.audit.digest;
+  if(mode==='changed'){const record=JSON.parse(f.storage[key].journalJSON);record.history[0].executors[0].receiptCount=99;f.storage[key].journalJSON=JSON.stringify(record);}
+  if(mode==='missing')delete f.storage[key];if(mode==='foreign')f.storage.mechanizeReconnect.audit.oldFence.scopeHash='b'.repeat(64);
+  if(mode==='bytes')f.storage.mechanizeReconnect.audit.bytes=262145;if(mode==='nonce')f.storage.mechanizeReconnect.audit.nonce='e'.repeat(64);if(mode==='digest')f.storage.mechanizeReconnect.audit.digest='f'.repeat(64);
   const retained=JSON.stringify(f.storage),connections=f.state.nativeConnections;f.messages.length=0;await f.connect();assert.equal(f.state.nativeConnections,connections+1,mode);await f.receive({...restartQualification(),brokerEpoch:'blocked-new',channelEpoch:'blocked-new'});assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));assert.equal(JSON.stringify(f.storage),retained,mode);assert.equal(f.state.deliveries,0);
  }
 });
-test('archive write/readback disagreement refuses before replacing the active journal',async()=>{
- const f=await fullReconnectHistoryFixture(),retained=JSON.stringify(f.storage.mechanizeReconnect);f.state.afterStorageWrite=value=>{for(const key of Object.keys(value))if(key.startsWith('mechanizeReconnectArchive:'))f.storage[key]={version:1,journal:{}};};
- await f.receive({...restartQualification(),brokerEpoch:'next',channelEpoch:'next'});assert.equal(JSON.stringify(f.storage.mechanizeReconnect),retained);const frame=f.messages.at(-1);assert.equal(frame.error.code,'storedFenceMismatch');assert.equal(frame.reconnectJournal.reason,'recordChanged');assert.equal(frame.reconnectJournal.historyCount,64);assert.equal(f.state.deliveries,0);
+test('audit write/readback disagreement refuses before replacing active journal',async()=>{
+ const f=await fullReconnectHistoryFixture(),retained=JSON.stringify(f.storage.mechanizeReconnect);f.state.afterStorageWrite=value=>{for(const key of Object.keys(value))if(key.startsWith('mechanizeReconnectAudit:'))f.storage[key]={version:1,journalJSON:'{}'};};
+ await f.receive({...restartQualification(),brokerEpoch:'next',channelEpoch:'next'});assert.equal(JSON.stringify(f.storage.mechanizeReconnect),retained);const frame=f.messages.at(-1);assert.equal(frame.error.code,'storedFenceMismatch');assert.equal(frame.reconnectJournal.reason,'lineageInvalid');assert.equal(frame.reconnectJournal.historyCount,64);assert.equal(f.state.deliveries,0);
 });
-test('archive rollover preserves private, unknown and lifecycle inhibition',async()=>{
- for(const mode of ['flow','unknown','lifecycle']){const f=await fullReconnectHistoryFixture(),retained=JSON.stringify(f.storage);f.reconnectBarrier(mode);await f.receive({...restartQualification(),brokerEpoch:'next',channelEpoch:'next'});assert.equal(archiveKeys(f).length,0);assert.equal(JSON.stringify(f.storage),retained);}
+test('legacy history migration preserves private unknown and lifecycle inhibition',async()=>{
+ for(const mode of ['flow','unknown','lifecycle']){const f=await fullReconnectHistoryFixture(),retained=JSON.stringify(f.storage);f.reconnectBarrier(mode);await f.receive({...restartQualification(),brokerEpoch:'next',channelEpoch:'next'});assert.equal(auditKeys(f).length,0);assert.equal(JSON.stringify(f.storage),retained);}
 });
-
-test('adopted v4 full lineage survives two archived segments and interrupted next recovery',async()=>{
- const f=await interruptedReconnectFixture();for(let i=0;i<2;i++)await interruptNextEmptyRecovery(f,'original-'+i);
- await f.connect();await f.receive({...restartQualification(),brokerEpoch:'recovered-v4',channelEpoch:'recovered-v4'});assert.equal(f.storage.mechanizeReconnect.version,4);
- const lineage=JSON.stringify(f.storage.mechanizeReconnect.recovery);const originals=[];
+test('flat handoffs retain every exact predecessor across a long ordinary admission history',async()=>{
+ const f=await interruptedReconnectFixture(),originals=[JSON.stringify(f.storage.mechanizeReconnect)];
+ await f.connect();await f.receive({...restartQualification(),brokerEpoch:'initial-recovered',channelEpoch:'initial-recovered'});
  for(let index=0;index<128;index++){
-  if(f.storage.mechanizeReconnect.history.length===64)originals.push(JSON.stringify(f.storage.mechanizeReconnect));
-  f.disconnect();await f.connect();f.messages.length=0;await f.receive({...restartQualification(),brokerEpoch:'chain-'+index,channelEpoch:'chain-'+index});assert.ok(f.messages.some(m=>m.type==='executorPrepared'),'step '+index);
+  originals.push(JSON.stringify(f.storage.mechanizeReconnect));f.disconnect();await f.connect();f.messages.length=0;
+  await f.receive({...restartQualification(),brokerEpoch:'chain-'+index,channelEpoch:'chain-'+index});assert.ok(f.messages.some(m=>m.type==='executorPrepared'),'step '+index);assert.equal(f.storage.mechanizeReconnect.history.length,1);assert.equal(f.storage.mechanizeReconnect.recoveryFences.length,1);
  }
- assert.equal(archiveKeys(f).length,2);assert.equal(f.storage.mechanizeReconnect.archive.segments,2);
- for(const original of originals)assert.ok(archiveKeys(f).some(key=>JSON.stringify(f.storage[key].journal)===original));assert.ok(archiveKeys(f).some(key=>JSON.stringify(f.storage[key].journal.recovery)===lineage));
- f.disconnect();await interruptNextEmptyRecovery(f,'archived-pending');await f.connect();f.messages.length=0;await f.receive({...restartQualification(),brokerEpoch:'archived-recovered',channelEpoch:'archived-recovered'});assert.ok(f.messages.some(m=>m.type==='executorPrepared'));assert.equal(archiveKeys(f).length,2);assert.equal(f.storage.mechanizeReconnect.archive.segments,2);assert.equal(f.state.deliveries,0);
+ for(const original of originals)assert.ok(retainedAudit(f,original));
+ f.disconnect();await interruptNextEmptyRecovery(f,'flat-pending');await f.connect();f.messages.length=0;await f.receive({...restartQualification(),brokerEpoch:'flat-recovered',channelEpoch:'flat-recovered'});
+ assert.ok(f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.storage.mechanizeReconnect.history.length,1);assert.equal(f.state.deliveries,0);
 });
 
 test('archive byte verification budget is enforced without deleting any segment',async()=>{
@@ -1926,12 +1964,23 @@ async function legacyCurrentReconnectFixture(t,rows=[],options={}){
  };
  return{...f,w,run:()=>f.receive({...restartQualification(),brokerEpoch:'recover-current',channelEpoch:'recover-current',reconnectBindingsVersion:1})};
 }
+test('active handoff cannot hide missing or UNKNOWN still-live old-epoch receipts outside its candidate fences',async t=>{
+ for(const state of ['dispatched','unknown']){
+  const row={identity:{...identity,documentId:'successor'},fence:{...grant,brokerEpoch:'omitted-old',channelEpoch:'omitted-old'},attemptId:'8'.repeat(64),fingerprintSHA256:'9'.repeat(64),dispatchState:state};
+  const f=await legacyCurrentReconnectFixture(t,[row]),old=f.storage.mechanizeReconnect;
+  f.storage.mechanizeReconnect={format:'activeHandoff',version:1,phase:'pending',nonce:old.nonce,oldFence:old.oldFence,newFence:old.newFence,history:[],recoveryFences:[old.newFence],sourceInventory:old.sourceInventory};
+  assert.ok(!f.storage.mechanizeReconnect.recoveryFences.some(fence=>fence.brokerEpoch===row.fence.brokerEpoch));
+  const before=JSON.stringify(f.storage.mechanizeReconnect),receipt=JSON.stringify(row);await f.run();
+  assert.ok(f.messages.some(m=>m.type==='reconnectBindings'));assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));
+  assert.equal(JSON.stringify(f.storage.mechanizeReconnect),before);assert.equal(JSON.stringify(row),receipt);assert.equal(f.state.deliveries,0);assert.equal(f.state.debuggerInputs,undefined);
+ }
+});
 test('complete native binding snapshot recovers legacy pending with an independently absent source and ordinary live successor',async t=>{
  const row={identity:{...identity,documentId:'original-absent'},fence:grant,attemptId:'8'.repeat(64),fingerprintSHA256:'9'.repeat(64),dispatchState:'unknown'};
  const f=await legacyCurrentReconnectFixture(t,[row]);const original=JSON.stringify(f.storage.mechanizeReconnect);await f.run();
  assert.ok(f.messages.some(x=>x.type==='executorPrepared'),JSON.stringify(f.diagnostic()));
- assert.equal(f.storage.mechanizeReconnect.phase,'adopted');assert.equal(f.storage.mechanizeReconnect.recovery.kind,'verifiedCurrentDocuments');
- assert.equal(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending),original);
+ assert.equal(f.storage.mechanizeReconnect.phase,'adopted');assert.equal(f.storage.mechanizeReconnect.format,'activeHandoff');
+ assert.equal(JSON.stringify(auditOriginal(f)),original);
  assert.ok(f.messages.some(x=>x.type==='reconnectBindingsDone'&&x.complete));assert.equal(f.state.deliveries,0);assert.equal(f.state.permissionRequests||0,0);
 });
 test('legacy current recovery denies missing live receipt, changed snapshot, private renderer and original frozen executor',async t=>{
@@ -1950,7 +1999,7 @@ test('legacy current recovery denies missing live receipt, changed snapshot, pri
 
 test('lost final binding acknowledgement preserves recoverable pending lineage without publishing a grant',async t=>{
  const f=await legacyCurrentReconnectFixture(t,[],{releaseRefused:true}),original=JSON.stringify(f.storage.mechanizeReconnect),old=JSON.stringify(f.storage.lastGrant);await f.run();
- assert.ok(!f.messages.some(x=>x.type==='executorPrepared'));assert.equal(f.storage.mechanizeReconnect.phase,'pending');assert.equal(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending),original);assert.equal(JSON.stringify(f.storage.lastGrant),old);assert.equal(f.pendingReconnectValid(f.storage.mechanizeReconnect,f.storage.lastGrant),true);assert.equal(f.state.deliveries,0);
+ assert.ok(!f.messages.some(x=>x.type==='executorPrepared'));assert.equal(f.storage.mechanizeReconnect.phase,'pending');assert.equal(JSON.stringify(auditOriginal(f)),original);assert.equal(JSON.stringify(f.storage.lastGrant),old);await f.verifyArchives(f.storage.mechanizeReconnect);assert.equal(f.pendingReconnectValid(f.storage.mechanizeReconnect,f.storage.lastGrant),true);assert.equal(f.state.deliveries,0);
 });
 
 test('opaque active children remain in census metadata without receiving executable authority',async t=>{
@@ -2013,7 +2062,7 @@ test('failed built-in New Tab child requires full binding census and never hides
   const before=JSON.stringify(f.storage.mechanizeReconnect);
   if(mode==='legacyPeer')await f.receive({...restartQualification(),brokerEpoch:'recover-current',channelEpoch:'recover-current'});else await f.run();
   assert.equal(f.messages.some(m=>m.type==='executorPrepared'),['absent','opaqueAbsent'].includes(mode),mode);
-  if(['absent','opaqueAbsent'].includes(mode)){assert.ok(f.messages.some(m=>m.type==='reconnectBindings'));assert.equal(f.storage.mechanizeReconnect.recovery.kind,'verifiedCurrentDocuments');assert.equal(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending),before);}
+  if(['absent','opaqueAbsent'].includes(mode)){assert.ok(f.messages.some(m=>m.type==='reconnectBindings'));assert.equal(f.storage.mechanizeReconnect.format,'activeHandoff');assert.equal(JSON.stringify(auditOriginal(f)),before);}
   else assert.equal(JSON.stringify(f.storage.mechanizeReconnect),before,mode);
   if(['sourcePresent','opaquePresent'].includes(mode))assert.equal(f.messages.find(m=>m.type==='attention'&&m.reconnectRecovery)?.reconnectRecovery.unavailableExecutors,1);
   if(mode==='rootError')assert.equal(f.inventoryReason(),'builtInRootFrameError');
@@ -2061,7 +2110,7 @@ test('missing tabs URL uses exact Chrome-owned frame metadata only in complete r
   if(mode==='foreignRoot')frames[0].url='https://PRIVATE_CANARY.test/';if(mode==='missingIdentity')delete frames[1].documentId;if(mode==='cycle')frames[1].parentFrameId=1;if(mode==='rootError')frames[0].errorOccurred=true;
   f.state.framesByTab={11:frames};const original=JSON.stringify(f.storage.mechanizeReconnect);await f.run();
   assert.equal(f.messages.some(m=>m.type==='executorPrepared'),mode==='absent',mode);
-  if(mode==='absent'){assert.equal(f.storage.mechanizeReconnect.recovery.kind,'verifiedCurrentDocuments');assert.equal(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending),original);}
+  if(mode==='absent'){assert.equal(f.storage.mechanizeReconnect.format,'activeHandoff');assert.equal(JSON.stringify(auditOriginal(f)),original);}
   else assert.equal(JSON.stringify(f.storage.mechanizeReconnect),original,mode);
   if(['rootPresent','childPresent'].includes(mode))assert.equal(f.messages.find(m=>m.reconnectRecovery)?.reconnectRecovery.unavailableExecutors,1);
   assert.equal(f.state.deliveries,0);assert.equal(f.state.permissionRequests||0,0);assert.ok(!JSON.stringify(f.messages).includes('PRIVATE_CANARY'));
@@ -2102,7 +2151,7 @@ test('inactive identified child stays in complete census and never becomes a sou
   const original=JSON.stringify(f.storage.mechanizeReconnect);const injected=[];f.state.injectionHook=d=>injected.push(...d.target.documentIds);await f.run();
   assert.equal(f.messages.some(m=>m.type==='executorPrepared'),state==='absent',kind+':'+lifecycle+':'+state);
   assert.equal(injected.includes('dormant-child'),false);assert.equal(f.state.deliveries,0);
-  assert.equal(JSON.stringify(state==='absent'?f.storage.mechanizeReconnect.recovery.originalPending:f.storage.mechanizeReconnect),original);
+  assert.equal(JSON.stringify(state==='absent'?auditOriginal(f):f.storage.mechanizeReconnect),original);
   if(state!=='absent'){const a=f.messages.find(m=>m.reconnectRecovery);assert.equal(a.reconnectRecovery.unavailableExecutors,1);if(state==='unknown')assert.equal(a.reconnectRecovery.unknownLiveReceipts,1);}
  }
 });
@@ -2135,7 +2184,7 @@ test('identified fenced children are non-executable census entries and never era
   else f.state.frameRows.push(child);
   const original=JSON.stringify(f.storage.mechanizeReconnect),injected=[];f.state.injectionHook=d=>injected.push(...d.target.documentIds);await f.run();
   assert.equal(f.messages.some(m=>m.type==='executorPrepared'),state==='absent',kind+':'+lifecycle+':'+state);assert.equal(injected.includes('fenced-child'),false);assert.equal(f.state.deliveries,0);
-  assert.equal(JSON.stringify(state==='absent'?f.storage.mechanizeReconnect.recovery.originalPending:f.storage.mechanizeReconnect),original);
+  assert.equal(JSON.stringify(state==='absent'?auditOriginal(f):f.storage.mechanizeReconnect),original);
   if(state!=='absent'){const a=f.messages.find(m=>m.reconnectRecovery);assert.equal(a.reconnectRecovery.unavailableExecutors,1);if(state==='unknown')assert.equal(a.reconnectRecovery.unknownLiveReceipts,1);}
  }
 });
@@ -2161,7 +2210,7 @@ test('prerender and cached outermost forests retain every source identity withou
   else f.state.frameRows.push(...extra);
   const original=JSON.stringify(f.storage.mechanizeReconnect),injected=[];f.state.injectionHook=d=>injected.push(...d.target.documentIds);await f.run();
   assert.equal(f.messages.some(m=>m.type==='executorPrepared'),source==='absent',kind+':'+lifecycle+':'+source);assert.equal(injected.some(id=>['forest-root','forest-descendant'].includes(id)),false);assert.equal(f.state.deliveries,0);
-  assert.equal(JSON.stringify(source==='absent'?f.storage.mechanizeReconnect.recovery.originalPending:f.storage.mechanizeReconnect),original);assert.ok(!JSON.stringify(f.messages).includes('PRIVATE_CANARY'));
+  assert.equal(JSON.stringify(source==='absent'?auditOriginal(f):f.storage.mechanizeReconnect),original);assert.ok(!JSON.stringify(f.messages).includes('PRIVATE_CANARY'));
   if(source!=='absent'){const a=f.messages.find(m=>m.reconnectRecovery);assert.equal(a.reconnectRecovery.unavailableExecutors,1);if(source==='unknown')assert.equal(a.reconnectRecovery.unknownLiveReceipts,1);}
  }
 });
@@ -2204,9 +2253,9 @@ test('version two pending recovery with thirty-six history rows distinguishes bo
   const before=JSON.stringify(record);await f.run();const prepared=f.messages.some(m=>m.type==='executorPrepared');
   console.log(JSON.stringify({fixture:'synthetic-v2-history36',perEntry,bytes:before.length,prepared,phase:f.diagnostic().phase,reason:f.diagnostic().reason}));
   assert.equal(prepared,true);assert.equal(f.state.deliveries,0);
-  const ref=f.storage.mechanizeReconnect.recovery.originalPendingRef;
-  if(ref){assert.equal(ref.bytes,before.length);assert.equal(f.storage['mechanizeReconnectPendingArchive:'+ref.digest].pendingJSON,before);assert.equal(require('node:crypto').createHash('sha256').update(before).digest('hex'),ref.digest);}
-  else assert.equal(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending),before);
+  const ref=f.storage.mechanizeReconnect.audit;
+  if(ref){assert.equal(ref.bytes,before.length);assert.equal(f.storage['mechanizeReconnectAudit:'+ref.digest].journalJSON,before);assert.equal(require('node:crypto').createHash('sha256').update(before).digest('hex'),ref.digest);}
+  else assert.equal(JSON.stringify(auditOriginal(f)),before);
  }
 });
 
@@ -2224,22 +2273,22 @@ test('archived pending predecessor is append-only and crash-safe before the curr
  for(const mode of ['archiveDisconnect','archiveLostAck','pendingDisconnect','tamper','missing','recordChanged']){
   const f=await largePendingReconnectFixture(t),original=JSON.stringify(f.storage.mechanizeReconnect);let injected=false;
   f.state.afterStorageWrite=value=>{
-   const key=Object.keys(value).find(k=>k.startsWith('mechanizeReconnectPendingArchive:'));
+   const key=Object.keys(value).find(k=>k.startsWith('mechanizeReconnectAudit:'));
    if(injected)return;
    if(key){
     assert.equal(JSON.stringify(f.storage.mechanizeReconnect),original);injected=true;
     if(mode==='archiveDisconnect')f.disconnect();if(mode==='archiveLostAck')throw Error('PRIVATE_CANARY');
-    if(mode==='tamper')f.storage[key].pendingJSON+=' ';if(mode==='missing')delete f.storage[key];if(mode==='recordChanged')f.storage.mechanizeReconnect={...f.storage.mechanizeReconnect,nonce:'e'.repeat(64)};
+    if(mode==='tamper')f.storage[key].journalJSON+=' ';if(mode==='missing')delete f.storage[key];if(mode==='recordChanged')f.storage.mechanizeReconnect={...f.storage.mechanizeReconnect,nonce:'e'.repeat(64)};
     if(mode==='pendingDisconnect')injected=false;
-   } else if(mode==='pendingDisconnect'&&value.mechanizeReconnect?.recovery?.originalPendingRef){injected=true;f.disconnect();}
+   } else if(mode==='pendingDisconnect'&&value.mechanizeReconnect?.audit){injected=true;f.disconnect();}
   };
   await f.run();delete f.state.afterStorageWrite;
   assert.equal(f.messages.some(m=>m.type==='executorPrepared'),false,mode);assert.equal(f.state.deliveries,0);assert.ok(!JSON.stringify(f.messages).includes('PRIVATE_CANARY'));
-  if(mode==='pendingDisconnect'){assert.ok(f.storage.mechanizeReconnect.recovery.originalPendingRef);}
+  if(mode==='pendingDisconnect'){assert.ok(f.storage.mechanizeReconnect.audit);}
   else if(mode==='recordChanged')assert.equal(f.storage.mechanizeReconnect.nonce,'e'.repeat(64));
   else assert.equal(JSON.stringify(f.storage.mechanizeReconnect),original);
   if(['archiveDisconnect','archiveLostAck','pendingDisconnect'].includes(mode)){
-   const archiveKeys=Object.keys(f.storage).filter(k=>k.startsWith('mechanizeReconnectPendingArchive:')),saved=Object.fromEntries(archiveKeys.map(k=>[k,JSON.stringify(f.storage[k])]));
+   const archiveKeys=Object.keys(f.storage).filter(k=>k.startsWith('mechanizeReconnectAudit:')),saved=Object.fromEntries(archiveKeys.map(k=>[k,JSON.stringify(f.storage[k])]));
    f.disconnect();await f.connect();f.messages.length=0;await f.run();assert.equal(f.messages.some(m=>m.type==='executorPrepared'),true,mode);assert.equal(f.state.deliveries,0);for(const k of archiveKeys)assert.equal(JSON.stringify(f.storage[k]),saved[k]);
   }
  }
@@ -2247,8 +2296,8 @@ test('archived pending predecessor is append-only and crash-safe before the curr
 test('missing or tampered committed pending archive blocks fresh qualification without modifying current journal',async t=>{
  for(const mode of ['missing','tamper','refBytes','refVersion','refFence']){
   const f=await largePendingReconnectFixture(t);await f.run();assert.ok(f.messages.some(m=>m.type==='executorPrepared'));
-  const ref=f.storage.mechanizeReconnect.recovery.originalPendingRef,key='mechanizeReconnectPendingArchive:'+ref.digest;
-  if(mode==='missing')delete f.storage[key];if(mode==='tamper')f.storage[key].pendingJSON+=' ';if(mode==='refBytes')ref.bytes++;if(mode==='refVersion')ref.version--;if(mode==='refFence')ref.oldFence.scopeHash='0'.repeat(64);
+  const ref=f.storage.mechanizeReconnect.audit,key='mechanizeReconnectAudit:'+ref.digest;
+  if(mode==='missing')delete f.storage[key];if(mode==='tamper')f.storage[key].journalJSON+=' ';if(mode==='refBytes')ref.bytes++;if(mode==='refVersion')ref.version--;if(mode==='refFence')ref.oldFence.scopeHash='0'.repeat(64);
   const before=JSON.stringify(f.storage),injections=f.state.injections;f.disconnect();await f.connect();f.messages.length=0;await f.run();
   assert.equal(f.messages.some(m=>m.type==='executorPrepared'),false,mode);assert.equal(JSON.stringify(f.storage),before);assert.equal(f.state.injections,injections);assert.equal(f.state.deliveries,0);
  }
@@ -2281,26 +2330,16 @@ test('boolean journal validators neither throw nor mutate closed diagnostic stat
 
 test('ordinary reconnect rechecks archived pending ancestry after commit without publishing a grant on tamper',async t=>{
  const f=await largePendingReconnectFixture(t);await f.run();assert.ok(f.messages.some(m=>m.type==='executorPrepared'));
- const ref=f.storage.mechanizeReconnect.recovery.originalPendingRef,key='mechanizeReconnectPendingArchive:'+ref.digest;
- f.disconnect();await f.connect();f.messages.length=0;f.state.afterReconnectCommit=()=>{f.storage[key].pendingJSON+=' ';};
+ const ref=f.storage.mechanizeReconnect.audit,key='mechanizeReconnectAudit:'+ref.digest;
+ f.disconnect();await f.connect();f.messages.length=0;f.state.afterReconnectCommit=()=>{f.storage[key].journalJSON+=' ';};
  await f.receive({...restartQualification(),brokerEpoch:'archive-followup',channelEpoch:'archive-followup',reconnectBindingsVersion:1});
  assert.equal(f.messages.some(m=>m.type==='executorPrepared'),false);const attention=f.messages.find(m=>m.error?.code==='storedFenceMismatch');assert.ok(attention);assert.equal(attention.reconnectPhase,'commit');assert.equal(f.state.deliveries,0);
 });
 test('storage key reordering preserves archived pending bytes and reuses its verified orphan',async t=>{
  const f=await largePendingReconnectFixture(t);f.state.sortedStorage=true;const original=JSON.stringify(sortedStorageValue(f.storage.mechanizeReconnect));let writes=0;
- f.state.afterStorageWrite=value=>{if(Object.keys(value).some(k=>k.startsWith('mechanizeReconnectPendingArchive:'))){writes++;f.disconnect();}};
- await f.run();assert.equal(writes,1);const key=Object.keys(f.storage).find(k=>k.startsWith('mechanizeReconnectPendingArchive:'));assert.equal(f.storage[key].pendingJSON,original);
- delete f.state.afterStorageWrite;await f.connect();f.messages.length=0;await f.run();assert.equal(f.messages.some(m=>m.type==='executorPrepared'),true);assert.equal(Object.keys(f.storage).filter(k=>k.startsWith('mechanizeReconnectPendingArchive:')).length,1);assert.equal(f.storage[key].pendingJSON,original);assert.equal(f.state.deliveries,0);
-});
-
-test('adopted history rollover retains referenced pending predecessor archives',async t=>{
- const f=await largePendingReconnectFixture(t);await f.run();assert.ok(f.messages.some(m=>m.type==='executorPrepared'));
- const ref=f.storage.mechanizeReconnect.recovery.originalPendingRef,key='mechanizeReconnectPendingArchive:'+ref.digest,archived=JSON.stringify(f.storage[key]);
- const record=JSON.parse(JSON.stringify(f.storage.mechanizeReconnect));
- for(let i=record.history.length;i<64;i++){const oldFence=record.history.at(-1).newFence,newFence={...oldFence,brokerEpoch:'after-'+i,channelEpoch:'after-'+i};record.history.push({nonce:(1000+i).toString(16).padStart(64,'0'),oldFence,newFence,executors:[]});}
- const tail=record.history.at(-1);Object.assign(record,{nonce:tail.nonce,oldFence:tail.oldFence,newFence:tail.newFence});f.storage.mechanizeReconnect=record;f.storage.lastGrant={...f.storage.lastGrant,...tail.newFence};
- f.state.inventoryTabs=[];f.disconnect();await f.connect();f.messages.length=0;await f.run();
- assert.equal(f.messages.some(m=>m.type==='executorPrepared'),true);assert.equal(archiveKeys(f).length,1);assert.equal(f.storage.mechanizeReconnect.history.length,2);assert.equal(JSON.stringify(f.storage[key]),archived);await f.verifyArchives(f.storage.mechanizeReconnect);assert.equal(f.state.deliveries,0);
+ f.state.afterStorageWrite=value=>{if(Object.keys(value).some(k=>k.startsWith('mechanizeReconnectAudit:'))){writes++;f.disconnect();}};
+ await f.run();assert.equal(writes,1);const key=Object.keys(f.storage).find(k=>k.startsWith('mechanizeReconnectAudit:'));assert.equal(f.storage[key].journalJSON,original);
+ delete f.state.afterStorageWrite;await f.connect();f.messages.length=0;await f.run();assert.equal(f.messages.some(m=>m.type==='executorPrepared'),true);assert.equal(Object.keys(f.storage).filter(k=>k.startsWith('mechanizeReconnectAudit:')).length,1);assert.equal(f.storage[key].journalJSON,original);assert.equal(f.state.deliveries,0);
 });
 
 test('ordinary reconnect archives a carried embedded predecessor when fresh inventory exceeds the record budget',async()=>{
@@ -2309,23 +2348,23 @@ test('ordinary reconnect archives a carried embedded predecessor when fresh inve
   const history=Array.from({length:36},(_,i)=>({nonce:(100+i).toString(16).padStart(64,'0'),oldFence:{...grant,brokerEpoch:'carry-'+i,channelEpoch:'carry-'+i},newFence:i===35?{...grant}:{...grant,brokerEpoch:'carry-'+(i+1),channelEpoch:'carry-'+(i+1)},executors:Array.from({length:perEntry},(_,n)=>({identity:{...identity,tabId:n+20,documentId:'carried-original-'+n},receiptCount:3,receiptRevision:3}))}));
   const predecessor={version:1,phase:'pending',nonce:'c'.repeat(64),oldFence:history[29].newFence,newFence:{...grant,brokerEpoch:'carry-abandoned',channelEpoch:'carry-abandoned'},history:history.slice(0,30)};
   const tail=history.at(-1),candidate={version:2,phase:'adopted',nonce:tail.nonce,oldFence:tail.oldFence,newFence:tail.newFence,history,recovery:{kind:'verifiedCurrentDocuments',originalPending:predecessor}};
-  if(JSON.stringify(candidate).length<245000){record=candidate;original=JSON.stringify(predecessor);}else break;
+  if(JSON.stringify(candidate).length<245000){record=candidate;original=JSON.stringify(candidate);}else break;
  }
  assert.ok(JSON.stringify(record).length>225000);assert.equal(f.journalValid(record,f.storage.lastGrant),true);f.storage.mechanizeReconnect=record;f.state.frameCount=200;
  await f.receive({...restartQualification(),brokerEpoch:'carry-next',channelEpoch:'carry-next'});
- assert.equal(f.messages.some(m=>m.type==='executorPrepared'),true,JSON.stringify(f.diagnostic()));const ref=f.storage.mechanizeReconnect.recovery.originalPendingRef;assert.ok(ref);assert.equal(f.storage['mechanizeReconnectPendingArchive:'+ref.digest].pendingJSON,original);assert.equal(f.state.deliveries,0);
+ assert.equal(f.messages.some(m=>m.type==='executorPrepared'),true,JSON.stringify(f.diagnostic()));const ref=f.storage.mechanizeReconnect.audit;assert.ok(ref);assert.equal(f.storage['mechanizeReconnectAudit:'+ref.digest].journalJSON,original);assert.equal(f.state.deliveries,0);
 });
 test('cold pending archive cache resolves afresh and missing references never terminate nonce proof silently',async t=>{
- const f=await largePendingReconnectFixture(t);await f.run();const current=f.storage.mechanizeReconnect,ref=current.recovery.originalPendingRef;
+ const f=await largePendingReconnectFixture(t);await f.run();const current=f.storage.mechanizeReconnect,ref=current.audit;
  assert.equal(f.journalValid(current,f.storage.lastGrant),false,'qualification end must discard the cache');
  await f.verifyArchives(current);assert.equal(f.journalValid(current,f.storage.lastGrant),true);
- delete f.storage['mechanizeReconnectPendingArchive:'+ref.digest];await assert.rejects(()=>f.verifyArchives(current));assert.equal(f.journalValid(current,f.storage.lastGrant),false);assert.equal(f.state.deliveries,0);
+ delete f.storage['mechanizeReconnectAudit:'+ref.digest];await assert.rejects(()=>f.verifyArchives(current));assert.equal(f.journalValid(current,f.storage.lastGrant),false);assert.equal(f.state.deliveries,0);
 });
 test('blocked archive read obeys qualification deadline without publishing input or overwriting history',async t=>{
  t.mock.timers.enable({apis:['setTimeout','Date'],now:Date.now()});
  const f=await largePendingReconnectFixture(t);await f.run();f.disconnect();await f.connect();f.messages.length=0;
- const original=JSON.stringify(f.storage.mechanizeReconnect),ref=f.storage.mechanizeReconnect.recovery.originalPendingRef;let release;
- f.state.blockStorageReadKey='mechanizeReconnectPendingArchive:'+ref.digest;f.state.blockStorageRead=new Promise(r=>release=r);
+ const original=JSON.stringify(f.storage.mechanizeReconnect),ref=f.storage.mechanizeReconnect.audit;let release;
+ f.state.blockStorageReadKey='mechanizeReconnectAudit:'+ref.digest;f.state.blockStorageRead=new Promise(r=>release=r);
  const pending=f.receive({...restartQualification(),brokerEpoch:'blocked-archive',channelEpoch:'blocked-archive',reconnectBindingsVersion:1});for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));
  t.mock.timers.tick(10001);await new Promise(r=>setImmediate(r));
  assert.ok(f.messages.some(m=>m.type==='attention'&&m.reconnectReason==='deadline'));
@@ -2443,7 +2482,7 @@ test('unrelated discarded tab is scoped metadata and never wakes during complete
   if(frameMode==='unavailable')f.state.framesByTab[11]=null;
   const sent=[];const renderer=f.state.renderer;f.state.renderer=(tab,message)=>{sent.push(tab);return renderer(tab,message);};
   await f.run();assert.ok(f.messages.some(m=>m.type==='executorPrepared'),JSON.stringify(f.diagnostic()));
-  assert.equal(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending),original);assert.ok(sent.every(tab=>tab===7));
+  assert.equal(JSON.stringify(auditOriginal(f)),original);assert.ok(sent.every(tab=>tab===7));
   assert.ok(f.messages.filter(m=>m.type==='documents').every(m=>m.documents.every(d=>d.tabId===7)));
   assert.equal(f.state.createdSetupTabs||0,0);assert.equal(f.state.activatedSetupTab,undefined);assert.equal(f.state.deliveries,0);assert.equal(f.state.debuggerInputs,undefined);assert.ok(!JSON.stringify(f.messages).includes('PRIVATE_CANARY'));
  }
@@ -2511,7 +2550,7 @@ test('missing receipt source navigation requests one full proof and qualifies on
   else for(let n=0;n<20;n++)sourceCommitted(f,{tabId:7,frameId:0,documentId:'fresh-public'});
   await waitRetry(f,()=>f.messages.some(m=>m.type==='executorPrepared'));
   assert.equal(f.state.nativeConnections,before+1);assert.equal(f.state.deliveries,0);assert.equal(f.state.permissionRequests||0,0);assert.equal(f.state.activatedSetupTab,undefined);assert.equal(f.state.createdSetupTabs||0,0);assert.equal(f.state.debuggerInputs,undefined);
-  assert.equal(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending),oldJournal);
+  assert.equal(JSON.stringify(auditOriginal(f)),oldJournal);
  }
 });
 test('missing receipt retry cannot turn a source-change notification into absence proof or a retry storm',async t=>{
@@ -2539,7 +2578,7 @@ test('missing source retry rechecks quiescence after its coalescing delay',async
 test('successful authenticated recovery renews the event budget across two episodes without resetting history',async t=>{
  const f=await missingSourceRetryFixture(t);f.seedRecoveryEvents(199);const original=JSON.stringify(f.storage.mechanizeReconnect);
  f.state.frameRows[0].documentId='first-recovered';sourceCommitted(f,{tabId:7,frameId:0,documentId:'first-recovered'});
- await waitRetry(f,()=>f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.recoveryEventCount(),0);assert.equal(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending),original);
+ await waitRetry(f,()=>f.messages.some(m=>m.type==='executorPrepared'));assert.equal(f.recoveryEventCount(),0);assert.equal(JSON.stringify(auditOriginal(f)),original);
  const first=structuredClone(f.storage.mechanizeReconnect),firstHistory=JSON.stringify(first.history);
  // A separate document/attempt and genuine failed commit create the next
  // pending recovery episode on the SAME worker, preserving its history.
@@ -2552,7 +2591,7 @@ test('successful authenticated recovery renews the event budget across two episo
  await waitRetry(f,()=>f.missingReceiptSources()?.count===1);assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));
  const pending=JSON.stringify(f.storage.mechanizeReconnect),third=await shippedBindingFixture(t);f.state.renderer=third.f.state.renderer;f.state.frameRows[0].documentId='second-recovered';const before=f.state.nativeConnections;
  sourceCommitted(f,{tabId:7,frameId:0,documentId:'second-recovered'});await waitRetry(f,()=>f.messages.some(m=>m.type==='executorPrepared'));
- assert.equal(f.state.nativeConnections,before+1);assert.equal(f.recoveryEventCount(),0);assert.equal(JSON.stringify(f.storage.mechanizeReconnect.recovery.originalPending),pending);assert.equal(JSON.stringify(f.storage.mechanizeReconnect.history.slice(0,first.history.length)),firstHistory);assert.equal(f.state.deliveries,0);assert.equal(f.state.permissionRequests||0,0);
+ assert.equal(f.state.nativeConnections,before+1);assert.equal(f.recoveryEventCount(),0);assert.equal(JSON.stringify(auditOriginal(f)),pending);assert.ok(auditKeys(f).some(key=>JSON.stringify(JSON.parse(f.storage[key].journalJSON).history)===firstHistory));assert.equal(f.state.deliveries,0);assert.equal(f.state.permissionRequests||0,0);
 });
 
 test('adoption refusals expose finite existing causes while retaining pending lineage and no input',async()=>{
@@ -2578,7 +2617,7 @@ test('committed adoption capacity archives completed prefix before renderer hand
  }
  assert.ok(record);assert.equal(f.journalValid(record,f.storage.lastGrant),true);f.storage.mechanizeReconnect=record;f.state.frameCount=200;
  const original=JSON.stringify(record),priorGrant=JSON.stringify(f.storage.lastGrant);await f.receive({...restartQualification(),brokerEpoch:'budget-next',channelEpoch:'budget-next'});
- assert.ok(f.messages.some(m=>m.type==='executorPrepared'),JSON.stringify(f.diagnostic()));assert.equal(archiveKeys(f).length,1);assert.equal(JSON.stringify(f.storage[archiveKeys(f)[0]].journal),original);assert.equal(f.storage.mechanizeReconnect.history.length,2);assert.equal(f.state.deliveries,0);assert.notEqual(JSON.stringify(f.storage.lastGrant),priorGrant);
+ assert.ok(f.messages.some(m=>m.type==='executorPrepared'),JSON.stringify(f.diagnostic()));assert.ok(retainedAudit(f,original));assert.equal(f.storage.mechanizeReconnect.history.length,1);assert.equal(f.state.deliveries,0);assert.notEqual(JSON.stringify(f.storage.lastGrant),priorGrant);
 });
 
 async function metadataActivationFixture(){
@@ -2631,16 +2670,16 @@ async function pending49HistoryFixture(t){
 }
 test('pending v4 history49 compacts losslessly before handoff and retains original pending and UNKNOWN',async t=>{
  const f=await pending49HistoryFixture(t);let historyArchivedBeforePrepare=false;const receive=f.state.renderer;
- f.state.renderer=(tab,message)=>{if(message.type==='brokerReconnect'&&message.phase==='prepare'){assert.equal(archiveKeys(f).length,1);historyArchivedBeforePrepare=true;}return receive(tab,message);};
- await f.run();assert.ok(f.messages.some(m=>m.type==='executorPrepared'),JSON.stringify(f.diagnostic()));assert.equal(historyArchivedBeforePrepare,true);assert.equal(f.storage.mechanizeReconnect.history.length,2);
- const ref=f.storage.mechanizeReconnect.recovery.originalPendingRef;assert.equal(f.storage['mechanizeReconnectPendingArchive:'+ref.digest].pendingJSON,f.originalJSON);assert.equal(ref.version,4);
- const prefix=f.storage[archiveKeys(f)[0]].journal;assert.equal(prefix.phase,'adopted');assert.equal(prefix.history.length,49);assert.equal(prefix.nonce,prefix.history.at(-1).nonce);assert.notEqual(prefix.nonce,JSON.parse(f.originalJSON).nonce);assert.deepEqual(prefix.history,JSON.parse(f.originalJSON).history);assert.equal(f.retainedUnknown.dispatchState,'unknown');assert.equal(f.state.deliveries,0);await f.verifyArchives(f.storage.mechanizeReconnect);
+ f.state.renderer=(tab,message)=>{if(message.type==='brokerReconnect'&&message.phase==='prepare'){assert.ok(retainedAudit(f,f.originalJSON));historyArchivedBeforePrepare=true;}return receive(tab,message);};
+ await f.run();assert.ok(f.messages.some(m=>m.type==='executorPrepared'),JSON.stringify(f.diagnostic()));assert.equal(historyArchivedBeforePrepare,true);assert.equal(f.storage.mechanizeReconnect.history.length,1);
+ const ref=f.storage.mechanizeReconnect.audit;assert.equal(f.storage['mechanizeReconnectAudit:'+ref.digest].journalJSON,f.originalJSON);assert.equal(ref.version,4);
+ const prefix=auditOriginal(f);assert.equal(prefix.phase,'pending');assert.equal(prefix.history.length,49);assert.deepEqual(prefix,JSON.parse(f.originalJSON));assert.equal(f.retainedUnknown.dispatchState,'unknown');assert.equal(f.state.deliveries,0);await f.verifyArchives(f.storage.mechanizeReconnect);
 });
 test('pending main-history archive tamper missing order and current-record races never publish authority',async t=>{
  for(const mode of ['tamper','missing','order','currentRace']){
   const f=await pending49HistoryFixture(t),beforeGrant=JSON.stringify(f.storage.lastGrant);let changed,handled=false;
-  f.state.afterStorageWrite=value=>{const key=Object.keys(value).find(k=>k.startsWith('mechanizeReconnectArchive:'));if(!key||handled)return;handled=true;f.storage[key]=structuredClone(f.storage[key]); // Chrome storage detaches persisted values.
-   if(mode==='tamper')f.storage[key].journal.history[0].nonce='f'.repeat(64);if(mode==='missing')delete f.storage[key];if(mode==='order')f.storage[key].journal.history.reverse();if(mode==='currentRace'){f.storage.mechanizeReconnect={...f.storage.mechanizeReconnect,nonce:'f'.repeat(64)};changed=JSON.stringify(f.storage.mechanizeReconnect);}
+  f.state.afterStorageWrite=value=>{const key=Object.keys(value).find(k=>k.startsWith('mechanizeReconnectAudit:'));if(!key||handled)return;handled=true;f.storage[key]=structuredClone(f.storage[key]); // Chrome storage detaches persisted values.
+   if(mode==='tamper'){const journal=JSON.parse(f.storage[key].journalJSON);journal.history[0].nonce='f'.repeat(64);f.storage[key].journalJSON=JSON.stringify(journal);}if(mode==='missing')delete f.storage[key];if(mode==='order'){const journal=JSON.parse(f.storage[key].journalJSON);journal.history.reverse();f.storage[key].journalJSON=JSON.stringify(journal);}if(mode==='currentRace'){f.storage.mechanizeReconnect={...f.storage.mechanizeReconnect,nonce:'f'.repeat(64)};changed=JSON.stringify(f.storage.mechanizeReconnect);}
   };
   await f.run();assert.equal(handled,true);assert.ok(!f.messages.some(m=>m.type==='executorPrepared'),mode);assert.equal(JSON.stringify(f.storage.lastGrant),beforeGrant);assert.equal(JSON.stringify(f.storage.mechanizeReconnect),mode==='currentRace'?changed:f.originalJSON);assert.equal(f.state.deliveries,0);
  }
@@ -2654,7 +2693,7 @@ test('failed archive graph verification clears prior and partially loaded proof 
   await f.verifyArchives(current);assert.equal(f.journalValid(current,f.storage.lastGrant),true);
   const invalid=structuredClone(current);
   if(mode==='canonicalBudget')invalid.oversized='x'.repeat(300000);
-  else invalid.archive.nonce='f'.repeat(64);
+  else invalid.audit.nonce='f'.repeat(64);
   await assert.rejects(()=>f.verifyArchives(invalid));
   assert.equal(f.journalValid(current,f.storage.lastGrant),false,mode);
   assert.equal(f.state.deliveries,0);

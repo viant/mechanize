@@ -863,6 +863,59 @@ function reconnectCanonical(value) {
 // refuses another nesting level before persisting an unreadable record.
 const MAX_RECONNECT_VERSION=6;
 const reconnectVersionValid=value=>Number.isSafeInteger(value)&&value>=1&&value<=MAX_RECONNECT_VERSION;
+// Active handoffs have a fixed format. Legacy versions remain readable audit
+// evidence; their recursive recovery depth is never an active lifetime counter.
+const activeReconnectJournal=value=>value?.format==='activeHandoff';
+const reconnectAuditPrefix='mechanizeReconnectAudit:';
+const verifiedReconnectAudits=new Map();
+function reconnectAuditReferenceValid(ref,scope){
+ return reconnectRecordKeys(ref)==='bytes,digest,format,newFence,nonce,oldFence,phase,version'&&
+  /^[a-f0-9]{64}$/.test(ref.digest)&&/^[a-f0-9]{64}$/.test(ref.nonce)&&Number.isSafeInteger(ref.bytes)&&ref.bytes>0&&ref.bytes<=MechanizeProtocol.MAX_BYTES&&
+  ['pending','adopted'].includes(ref.phase)&&['legacy','activeHandoff'].includes(ref.format)&&reconnectVersionValid(ref.version)&&(ref.format!=='activeHandoff'||ref.version===1)&&
+  reconnectFenceValid(ref.oldFence)&&reconnectFenceValid(ref.newFence)&&ref.oldFence.scopeHash===scope&&ref.newFence.scopeHash===scope&&!sameReconnectFence(ref.oldFence,ref.newFence);
+}
+function reconnectAuditMatches(ref,value){return value&&ref.version===value.version&&ref.phase===value.phase&&ref.format===(value.format||'legacy')&&ref.nonce===value.nonce&&sameReconnectFence(ref.oldFence,value.oldFence)&&sameReconnectFence(ref.newFence,value.newFence);}
+function activeReconnectShape(record){
+ if(!activeReconnectJournal(record)||record.version!==1||record.recovery!==undefined||record.archive!==undefined||!Array.isArray(record.history)||record.history.length!==(record.phase==='pending'?0:1)||!Array.isArray(record.recoveryFences)||record.recoveryFences.length<1||record.recoveryFences.length>MAX_INVENTORY_DOCUMENTS+2)return false;
+ const seen=new Set();for(const fence of record.recoveryFences){if(!reconnectFenceValid(fence)||fence.scopeHash!==record.oldFence?.scopeHash)return false;const key=JSON.stringify(fence);if(seen.has(key))return false;seen.add(key);}
+ return record.recoveryFences.some(fence=>sameReconnectFence(fence,record.newFence))&&
+  (record.audit===undefined||reconnectAuditReferenceValid(record.audit,record.oldFence?.scopeHash));
+}
+async function loadReconnectAudit(record,qualification){
+ if(record?.audit===undefined)return;
+ const ref=record.audit;if(!activeReconnectShape(record))throw reconnectJournalRefuse('lineageInvalid');
+ const stored=(await reconnectStorage(()=>chrome.storage.local.get(reconnectAuditPrefix+ref.digest),qualification))[reconnectAuditPrefix+ref.digest];
+ if(reconnectRecordKeys(stored)!=='journalJSON,version'||stored.version!==1||typeof stored.journalJSON!=='string'||new TextEncoder().encode(stored.journalJSON).length!==ref.bytes||await reconnectPendingDigest(stored.journalJSON)!==ref.digest)throw reconnectJournalRefuse('lineageInvalid');
+ let prior;try{prior=JSON.parse(stored.journalJSON);if(JSON.stringify(prior)!==stored.journalJSON)throw Error();}catch{throw reconnectJournalRefuse('lineageInvalid');}
+ reconnectCanonical(prior);if(!reconnectAuditMatches(ref,prior))throw reconnectJournalRefuse('lineageInvalid');
+ if(qualification)qualificationCurrent(qualification);
+ verifiedReconnectAudits.set(ref.digest,freezeReconnectJSON(prior));
+}
+function reconnectAuditConsistent(record){
+ if(!activeReconnectShape(record))return false;
+ if(record.audit===undefined)return true;
+ const prior=verifiedReconnectAudits.get(record.audit.digest);
+ if(!reconnectAuditMatches(record.audit,prior)||record.nonce===prior.nonce)return false;
+ return sameReconnectFence(record.oldFence,prior.phase==='pending'?prior.oldFence:prior.newFence)&&
+  (prior.phase!=='pending'||!record.history.some(entry=>entry.nonce===prior.nonce));
+}
+async function archiveReconnectAudit(journal,previous,barriers,qualification){
+ if(journal===undefined)return undefined;
+ await verifyReconnectArchives(journal,qualification);
+ if(!(journal.phase==='pending'?pendingReconnectValid(journal,previous):reconnectJournalValid(journal,previous)))throw reconnectJournalRefuse('lineageInvalid');
+ await barriers();const before=reconnectCanonical(journal),journalJSON=JSON.stringify(journal),bytes=new TextEncoder().encode(journalJSON).length;
+ if(bytes>MechanizeProtocol.MAX_BYTES)throw reconnectJournalRefuse('historyLimit');
+ const digest=await reconnectPendingDigest(journalJSON),key=reconnectAuditPrefix+digest;
+ const existing=(await reconnectStorage(()=>chrome.storage.local.get(key),qualification))[key];
+ if(existing!==undefined&&(reconnectRecordKeys(existing)!=='journalJSON,version'||existing.version!==1||existing.journalJSON!==journalJSON))throw reconnectJournalRefuse('lineageInvalid');
+ if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==before)throw reconnectJournalRefuse('recordChanged');
+ if(existing===undefined)await reconnectStorage(()=>chrome.storage.local.set({[key]:{version:1,journalJSON}}),qualification);
+ const saved=(await reconnectStorage(()=>chrome.storage.local.get(key),qualification))[key];
+ if(reconnectRecordKeys(saved)!=='journalJSON,version'||saved.version!==1||saved.journalJSON!==journalJSON||await reconnectPendingDigest(saved.journalJSON)!==digest)throw reconnectJournalRefuse('lineageInvalid');
+ await barriers();if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==before)throw reconnectJournalRefuse('recordChanged');
+ verifiedReconnectAudits.set(digest,freezeReconnectJSON(JSON.parse(journalJSON)));
+ return{digest,bytes,format:journal.format||'legacy',version:journal.version,phase:journal.phase,nonce:journal.nonce,oldFence:reconnectFence(journal.oldFence),newFence:reconnectFence(journal.newFence)};
+}
 // Archives retain complete adopted records, including original recovery trees.
 // Only the active window is compacted; archive values are content-addressed and
 // never overwritten or deleted. Verification work and bytes are explicitly bounded.
@@ -930,35 +983,26 @@ async function loadReconnectPendingArchives(record,budget,depth=0,qualification)
  if(!original||original.version!==record.version-1)throw reconnectJournalRefuse('lineageInvalid');
  await loadReconnectPendingArchives(original,budget,depth+1,qualification);
 }
-async function archiveReconnectPending(journal,previous,barriers,qualification,currentJournal=journal){
- await verifyReconnectArchives(currentJournal,qualification);
- if(!pendingReconnectValid(journal,previous))throw reconnectJournalRefuse('lineageInvalid');
- await barriers();
- const pendingJSON=JSON.stringify(journal),bytes=new TextEncoder().encode(pendingJSON).length;
- if(bytes>MechanizeProtocol.MAX_BYTES)throw reconnectJournalRefuse('historyLimit');
- const digest=await reconnectPendingDigest(pendingJSON),key=reconnectPendingArchivePrefix+digest;
- const reference={digest,bytes,version:journal.version,nonce:journal.nonce,oldFence:reconnectFence(journal.oldFence),newFence:reconnectFence(journal.newFence)};
- const before=reconnectCanonical(currentJournal),existing=(await reconnectStorage(()=>chrome.storage.local.get(key),qualification))[key];
- if(existing!==undefined&&(reconnectRecordKeys(existing)!=='pendingJSON,version'||existing.version!==1||existing.pendingJSON!==pendingJSON))throw reconnectJournalRefuse('lineageInvalid');
- if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==before)throw reconnectJournalRefuse('recordChanged');
- if(qualification)qualificationCurrent(qualification);
- if(existing===undefined)await reconnectStorage(()=>chrome.storage.local.set({[key]:{version:1,pendingJSON}}),qualification);
- await loadReconnectPendingArchives({version:journal.version+1,recovery:{kind:'verifiedCurrentDocuments',originalPendingRef:reference}},{bytes:0,pending:new Set()},0,qualification);
- await barriers();if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==before)throw reconnectJournalRefuse('recordChanged');
- return reference;
-}
 async function verifyReconnectArchives(record,qualification){
- verifiedPendingArchives.clear();verifiedHistoryArchives.clear();
- try{return await verifyReconnectArchiveGraph(record,qualification);}
- catch(error){verifiedPendingArchives.clear();verifiedHistoryArchives.clear();throw error;}
+ const legacySignature=!activeReconnectJournal(record)&&qualification?reconnectCanonical(record):undefined;
+ if(legacySignature!==undefined&&qualification.legacyProofSignature===legacySignature)return;
+ verifiedPendingArchives.clear();verifiedHistoryArchives.clear();verifiedReconnectAudits.clear();
+ try{const result=await verifyReconnectArchiveGraph(record,qualification);if(legacySignature!==undefined)qualification.legacyProofSignature=legacySignature;return result;}
+ catch(error){verifiedPendingArchives.clear();verifiedHistoryArchives.clear();verifiedReconnectAudits.clear();throw error;}
 }
 async function verifyReconnectArchiveGraph(record,qualification){
  reconnectCanonical(record);if(record===undefined)return;
+ if(activeReconnectJournal(record)){
+  await loadReconnectAudit(record,qualification);
+  if(!reconnectAuditConsistent(record))throw reconnectJournalRefuse('lineageInvalid');
+  return;
+ }
  const budget={bytes:0,pending:new Set()},queue=[record],roots=[],visited=new Set(),checkedArchives=new Map();
  // Load the bounded graph before pure validation: different recovery generations
  // may reference different history windows, but all immutable bytes remain.
  while(queue.length){
   const root=queue.shift(),signature=reconnectCanonical(root);if(visited.has(signature))continue;visited.add(signature);roots.push(root);
+  await loadReconnectAudit(root,qualification);
   await loadReconnectPendingArchives(root,budget,0,qualification);
   for(let original=reconnectOriginalPending(root.recovery);original;original=reconnectOriginalPending(original.recovery))queue.push(original);
   let cursor=root,remaining=root?.archive?.segments||0;const seen=new Set();
@@ -985,53 +1029,6 @@ async function verifyReconnectArchiveGraph(record,qualification){
  for(const nonce of pendingNonces.keys())if(completedNonces.has(nonce))throw reconnectJournalRefuse('lineageInvalid');
  for(const [digest,endFence]of checkedArchives)if(!reconnectJournalValid(verifiedHistoryArchives.get(digest).journal,endFence))throw reconnectJournalRefuse('lineageInvalid');
 }
-async function compactReconnectHistory(pending,currentJournal,previous,barriers,qualification){
- await verifyReconnectArchives(currentJournal,qualification);await barriers();
- if(!Array.isArray(currentJournal?.history)||currentJournal.history.length<2||reconnectCanonical(pending.history)!==reconnectCanonical(currentJournal.history))throw reconnectJournalRefuse('historyLimit');
- const original=reconnectCanonical(currentJournal),tail=currentJournal.history.at(-1);
- // A pending nonce is never certified completed. Only its already-completed
- // prefix is archived here; the entire pending record is preserved separately.
- if(currentJournal.phase==='pending'){
-  const originalPendingRef=await archiveReconnectPending(currentJournal,previous,barriers,qualification,currentJournal);
-  pending={...pending,recovery:{kind:pending.recovery.kind,originalPendingRef}};
- }
- const journal=currentJournal.phase==='adopted'?currentJournal:{version:1,phase:'adopted',nonce:tail.nonce,oldFence:tail.oldFence,newFence:tail.newFence,history:currentJournal.history,...(currentJournal.archive?{archive:currentJournal.archive}:{})};
- if(!reconnectJournalValid(journal,tail.newFence))throw reconnectJournalRefuse('lineageInvalid');
- const segments=(journal.archive?.segments||0)+1;if(segments>MAX_RECONNECT_ARCHIVES)throw reconnectJournalRefuse('historyLimit');
- const segment={version:1,journal},digest=await reconnectArchiveDigest(segment),key=reconnectArchivePrefix+digest;
- const existing=(await reconnectStorage(()=>chrome.storage.local.get(key),qualification))[key];
- if(existing!==undefined&&reconnectArchiveCanonical(existing)!==reconnectArchiveCanonical(segment))throw reconnectJournalRefuse('lineageInvalid');
- if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==original)throw reconnectJournalRefuse('recordChanged');
- if(existing===undefined)await reconnectStorage(()=>chrome.storage.local.set({[key]:segment}),qualification);
- const stored=(await reconnectStorage(()=>chrome.storage.local.get(key),qualification))[key];
- if(reconnectArchiveCanonical(stored)!==reconnectArchiveCanonical(segment)||await reconnectArchiveDigest(stored)!==digest)throw reconnectJournalRefuse('lineageInvalid');
- const compact={...pending,history:[tail],archive:{digest,segments,endFence:tail.newFence,nonce:tail.nonce}};
- await verifyReconnectArchives(compact,qualification);await barriers();
- if(!pendingReconnectValid(compact,previous))throw reconnectJournalRefuse('lineageInvalid');
- if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==original)throw reconnectJournalRefuse('recordChanged');
- return compact;
-}
-async function rolloverReconnectJournal(journal,previous,barriers,qualification){
-  if(journal?.phase!=='adopted'||journal.history?.length!==64||!reconnectJournalValid(journal,previous))throw reconnectJournalRefuse('lineageInvalid');
-  await verifyReconnectArchives(journal,qualification);await barriers();
-  const segments=(journal.archive?.segments||0)+1;if(segments>MAX_RECONNECT_ARCHIVES)throw reconnectJournalRefuse('historyLimit');
-  const segment={version:1,journal},digest=await reconnectArchiveDigest(segment),key=reconnectArchivePrefix+digest;
-  const existing=(await reconnectStorage(()=>chrome.storage.local.get(key),qualification))[key];
-  if(existing!==undefined&&reconnectArchiveCanonical(existing)!==reconnectArchiveCanonical(segment))throw reconnectJournalRefuse('lineageInvalid');
-  if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==reconnectCanonical(journal))throw reconnectJournalRefuse('recordChanged');
-  if(existing===undefined)await reconnectStorage(()=>chrome.storage.local.set({[key]:segment}),qualification);
-  const persisted=(await reconnectStorage(()=>chrome.storage.local.get(key),qualification))[key];
-  if(reconnectRecordKeys(persisted)!=='journal,version'||persisted.version!==1||reconnectCanonical(persisted.journal)!==reconnectCanonical(segment.journal))throw reconnectJournalRefuse('recordChanged');
-  verifiedHistoryArchives.set(digest,freezeReconnectJSON(JSON.parse(JSON.stringify(persisted))));
-  const compact={version:1,phase:'adopted',nonce:journal.nonce,oldFence:journal.oldFence,newFence:journal.newFence,history:[journal.history.at(-1)],
-    archive:{digest,segments,endFence:journal.newFence,nonce:journal.nonce}};
-  if(!reconnectJournalValid(compact,previous))throw reconnectJournalRefuse('lineageInvalid');
-  await verifyReconnectArchives(compact,qualification);await barriers();
-  if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==reconnectCanonical(journal))throw reconnectJournalRefuse('recordChanged');
-  await reconnectStorage(()=>chrome.storage.local.set({[reconnectKey]:compact}),qualification);
-  if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==reconnectCanonical(compact))throw reconnectJournalRefuse('recordChanged');
-  await barriers();return compact;
-}
 // This is the exact eligible renderer set selected before prepare, not a claim
 // that protected, inaccessible or non-website documents were inspected.
 function reconnectSourceInventoryValid(value) {
@@ -1051,6 +1048,10 @@ function reconnectSourceInventoryValid(value) {
 function reconnectCoreKeys(record,recovery){
   const keys=["history","newFence","nonce","oldFence","phase","version"];
   if(recovery)keys.push("recovery");
+  if(activeReconnectJournal(record)){
+    if(!activeReconnectShape(record))return false;
+    keys.push('format','recoveryFences');if(record.audit!==undefined)keys.push('audit');
+  }
   if(Object.hasOwn(record||{},"sourceInventory")){
     if(!reconnectSourceInventoryValid(record.sourceInventory))return false;
     keys.push("sourceInventory");
@@ -1068,13 +1069,14 @@ function pendingReconnectValidCore(value,lastGrant) {
   const nonces=new Set();
   const validate=(record,expectedOld,depth)=>{
     if(record?.archive!==undefined&&!reconnectArchiveReferenceValid(record.archive,record.history))return false;
-    const sourceRecord=record,history=reconnectLogicalHistory(record);record=reconnectWithoutArchive(record);
+    const sourceRecord=record,history=activeReconnectJournal(record)?record.history:reconnectLogicalHistory(record);record=reconnectWithoutArchive(record);
     const recovery=record?.version>1;
     if(depth>=MAX_RECONNECT_VERSION||!record||!reconnectVersionValid(record.version)||!reconnectCoreKeys(record,recovery)||record.phase!=="pending"||
        typeof record.nonce!=="string"||!/^[a-f0-9]{64}$/.test(record.nonce)||nonces.has(record.nonce)||!reconnectFenceValid(record.oldFence)||!reconnectFenceValid(record.newFence)||
        !sameReconnectFence(record.oldFence,expectedOld)||record.oldFence.scopeHash!==record.newFence.scopeHash||sameReconnectFence(record.oldFence,record.newFence)||
        !Array.isArray(record.history)||record.history.length>=64||history.some(entry=>entry?.nonce===record.nonce))return false;
     nonces.add(record.nonce);
+    if(activeReconnectJournal(record)&&!reconnectAuditConsistent(sourceRecord))return false;
     if(recovery){
       const original=reconnectOriginalPending(record.recovery);
       if(!reconnectRecoveryShape(record.recovery)||original?.version!==record.version-1||!validate(original,original?.oldFence,depth+1))return false;
@@ -1092,7 +1094,7 @@ function pendingReconnectValidCore(value,lastGrant) {
     return !tail||reconnectJournalValid({version:1,phase:"adopted",nonce:tail.nonce,oldFence:tail.oldFence,newFence:tail.newFence,history:record.history,...(sourceRecord.archive?{archive:sourceRecord.archive}:{})},expectedOld);
   };
   const valid=validate(value,lastGrant,0);
-  return valid&&!reconnectLogicalHistory(value).some(entry=>nonces.has(entry.nonce));
+  return valid&&!(activeReconnectJournal(value)?value.history:reconnectLogicalHistory(value)).some(entry=>nonces.has(entry.nonce));
 }
 // Legacy pending records contain no complete original renderer inventory. Recovery
 // is deliberately limited to no tabs or only our known browser setup surfaces.
@@ -1228,7 +1230,7 @@ function reconnectJournalValid(value,lastGrant){return reconnectBooleanValidatio
 function reconnectJournalValidInner(value,lastGrant) {
   if(value===undefined)return true;
   if(value?.archive!==undefined&&!reconnectArchiveReferenceValid(value.archive,value.history))return false;
-  return reconnectJournalCoreValid(reconnectWithoutArchive(value),lastGrant,reconnectLogicalHistory(value));
+  return reconnectJournalCoreValid(reconnectWithoutArchive(value),lastGrant,activeReconnectJournal(value)?value.history:reconnectLogicalHistory(value));
 }
 function reconnectJournalCoreValid(value,lastGrant,history=value?.history) {
   if(value===undefined)return true;
@@ -1245,6 +1247,7 @@ function reconnectJournalCoreValid(value,lastGrant,history=value?.history) {
     if(history.length<=originalHistory.length || !reconnectHistoryPrefix(history,originalHistory) ||
        history.some(entry=>entry?.nonce===original.nonce) || !sameReconnectFence(history[originalHistory.length]?.oldFence,original.oldFence) || recovery.kind==="emptySetupDocuments"&&history[originalHistory.length]?.executors?.length!==0)return false;
   }
+  if(activeReconnectJournal(value)&&!reconnectAuditConsistent(value))return false;
   const lineageNonces=new Set();
   for(let cursor=reconnectOriginalPending(value.recovery);cursor;cursor=reconnectOriginalPending(cursor.recovery)){
     if(lineageNonces.has(cursor.nonce))return false;lineageNonces.add(cursor.nonce);
@@ -1499,10 +1502,8 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
   captureReconnectJournal(journal,previous);
   await verifyReconnectArchives(journal,qualification);
   const recovering=pendingReconnectValid(journal,previous);
-  if(recovering&&journal.version>=MAX_RECONNECT_VERSION)throw reconnectJournalRefuse("recoveryDepthLimit");
   if(recovering && sameReconnectFence(previous,candidate))throw reconnectRefuse("scopeChanged");
   if(!recovering&&!reconnectJournalValid(journal,previous))throw reconnectJournalRefuse("lineageInvalid");
-  if((journal?.history.length||0)>=64)journal=await rolloverReconnectJournal(journal,previous,barriers,qualification);
   if(recovering)reconnectDiagnosticPhase="inventory";
   let recoveryInventory=null,recoveryBinding=null,recoveryCensus=null,recoverySession=null;
   if(recovering||qualification.retirementSnapshot){
@@ -1553,22 +1554,18 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
   const inventoryKey=stable(snapshot.documents);
   const sourceInventory={version:1,kind:"eligibleDocuments",documents:snapshot.documents.map(item=>Object.fromEntries(["profileChannel","browserInstance","tabId","frameId","documentId","documentGeneration","origin"].map(key=>[key,item[key]])))};
   if(!reconnectSourceInventoryValid(sourceInventory))throw reconnectInventoryRefuse('frameMetadataInvalid');
-  let pending={sourceInventory,version:recovering?journal.version+1:journal?.version>=2?journal.version:1,phase:"pending",nonce,oldFence,newFence,history:journal?.history||[],...(journal?.archive?{archive:journal.archive}:{}),
-    ...(recovering?{recovery:{kind:recoveryBinding?"verifiedCurrentDocuments":"emptySetupDocuments",originalPending:journal}}:journal?.version>=2?{recovery:journal.recovery}:{})};
+  const audit=await archiveReconnectAudit(journal,previous,barriers,qualification);
+  const candidateFences=[oldFence,newFence];
+  if(activeReconnectJournal(journal)&&journal.phase==='pending')candidateFences.push(...journal.recoveryFences);
+  else for(let cursor=journal;cursor;cursor=reconnectOriginalPending(cursor.recovery))candidateFences.push(cursor.oldFence,cursor.newFence);
+  const uniqueFences=items=>[...new Map(items.map(f=>[reconnectCanonical(f),reconnectFence(f)])).values()];
+  let pending={format:'activeHandoff',sourceInventory,version:1,phase:"pending",nonce,oldFence,newFence,history:[],recoveryFences:uniqueFences(candidateFences),...(audit?{audit}:{})};
   // Reserve the largest permitted adoption proof BEFORE writing pending or
   // asking any renderer to retire/adopt. The actual generation/counts can grow
   // during preparation, but their numeric bounds cannot exceed this budget.
   const committedBudget=record=>({...record,phase:'adopted',history:[...record.history,{nonce,oldFence,newFence,executors:snapshot.documents.map(item=>({identity:{...Object.fromEntries(['profileChannel','browserInstance','tabId','frameId','documentId'].map(key=>[key,item[key]])),documentGeneration:Number.MAX_SAFE_INTEGER},receiptRevision:512,receiptCount:512}))}]});
   const checkCandidateBudget=()=>{reconnectPendingWireBound(pending);reconnectCanonical(committedBudget(pending));};
-  // An existing embedded predecessor may use the established immutable archive.
-  // Other capacity failures remain explicit and leave the current journal intact.
-  try{checkCandidateBudget();}catch(error){
-    const predecessor=recovering?journal:journal.recovery?.originalPending;
-    if(error?.journalReason!=='historyLimit')throw error;
-    if(predecessor){const originalPendingRef=await archiveReconnectPending(predecessor,predecessor.oldFence,barriers,qualification,journal);pending={...pending,recovery:{kind:pending.recovery.kind,originalPendingRef}};}
-    try{checkCandidateBudget();}catch(capacity){if(capacity?.journalReason!=='historyLimit')throw capacity;pending=await compactReconnectHistory(pending,journal,previous,barriers,qualification);checkCandidateBudget();}
-    reconnectDiagnosticReason='none';reconnectJournalDiagnostic.reason='none';
-  }
+  checkCandidateBudget();
   if(!pendingReconnectValid(pending,previous))throw reconnectJournalRefuse("lineageInvalid");
   await verifyReconnectArchives(pending,qualification);
   if(!reconnectJournalValid(committedBudget(pending),candidate))throw reconnectJournalRefuse('lineageInvalid');
@@ -1596,23 +1593,26 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
     if(!Number.isSafeInteger(result.receiptRevision)||result.receiptRevision<0||result.receiptRevision>512||result.receiptCount!==result.receiptRevision)throw reconnectRefuse('unknownReceipts');
     return result;
   }
-  const recoveryRenderers=[];
+  const recoveryRenderers=[],currentFences=[];
   reconnectDiagnosticPhase = "inspect";
   for(const item of snapshot.documents) {
     const identity=Object.fromEntries(["profileChannel","browserInstance","tabId","frameId","documentId","documentGeneration"].map(key=>[key,item[key]]));
     try {await chrome.scripting.executeScript({target:{tabId:identity.tabId,documentIds:[identity.documentId]},world:"ISOLATED",files:["protocol.js","fingerprint.js","accessibility-provider.js","dom.js","recorder.js","secure-input.js","content.js"]});}
     catch (error) {throw reconnectRefuse(injectionFailureReason(error));}
     if(recoveryBinding){
-      const fences=[oldFence,...recoveryBinding.bindings.filter(r=>r.identity.tabId===identity.tabId&&r.identity.documentId===identity.documentId).map(r=>r.fence)];
-      for(let cursor=journal;cursor;cursor=reconnectOriginalPending(cursor.recovery))fences.push(cursor.oldFence,cursor.newFence);
+      const fences=[oldFence,...recoveryBinding.bindings.filter(r=>r.identity.tabId===identity.tabId&&r.identity.documentId===identity.documentId).map(r=>r.fence),...candidateFences];
       const unique=[...new Map(fences.map(f=>[reconnectCanonical(f),f])).values()];
       let selected;
       for(const fence of unique){if(sameReconnectFence(fence,newFence))continue;if(await exchange(identity,"inspect",undefined,fence,true)){selected=fence;break;}}
       if(!selected){reconnectRecoveryDiagnostic.unavailableExecutors++;throw reconnectRefuse("executorRefused");}
+      currentFences.push(selected);
       recoveryRenderers.push({identity,fence:selected,export:await reconnectRendererReceipts(identity,selected,deadline)});
-    }else await exchange(identity,"inspect");
+    }else{await exchange(identity,"inspect");currentFences.push(oldFence);}
   }
   if(recoveryBinding)await reconnectMatchReceipts(recoveryBinding.bindings,recoveryCensus,recoveryRenderers,recoverySession);
+  // Keep only fences actually witnessed on current documents plus this new
+  // candidate. Failed historical candidates remain immutable audit evidence.
+  pending.recoveryFences=uniqueFences([...currentFences,newFence]);
   reconnectDiagnosticPhase = "barriers";
   await barriers();
   await recoveryCheck();
@@ -1640,7 +1640,7 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
     item.proof=adopted;
   }
   const history=[...pending.history,{nonce,oldFence,newFence,executors:proofs.map(({proof})=>({identity:proof.identity,receiptRevision:proof.receiptRevision,receiptCount:proof.receiptCount}))}];
-  const committed={...pending,phase:"adopted",history};
+  const committed={...pending,phase:"adopted",history,recoveryFences:[newFence]};
   reconnectCanonical(committed); // Preserve the finite resource-budget cause.
   if(!reconnectJournalValid(committed,candidate))throw reconnectJournalRefuse('lineageInvalid');
   await recoveryCheck();const final=await inventory(enrollment,qualification);if(final.truncated||stable(final.documents)!==inventoryKey)throw reconnectInventoryRefuse('inventoryDrift');
@@ -1650,13 +1650,14 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
     await recoveryCheck();
     if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==reconnectCanonical(pending))throw reconnectRefuse("journalChanged");
   }
-  if(recovering||recoveryBinding||committed.archive||committed.recovery)reconnectRecoveryChecks.set(committed,async afterCommit=>{
+  if(recovering||recoveryBinding||committed.archive||committed.recovery||committed.audit)reconnectRecoveryChecks.set(committed,async afterCommit=>{
     await recoveryCheck(afterCommit);
     if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==reconnectCanonical(afterCommit?committed:pending))throw reconnectRefuse("journalChanged");
     current();
   });
   reconnectPendingRecords.set(committed,{pending:freezeReconnectJSON(JSON.parse(JSON.stringify(pending))),previous:freezeReconnectJSON(JSON.parse(JSON.stringify(previous)))});
   if(recoveryBinding)qualification.releaseReconnectBindings=recoveryBinding.release;
+  qualification.recoveryUsesCurrentDocuments=Boolean(recoveryBinding);
   return committed;
 }
 async function restoreOwnedReconnectPending(committed,candidate,qualification){
@@ -1698,7 +1699,7 @@ async function receive(command) {
     finally{
       clearTimeout(timer);qualificationFlight===owner&&owner.cancelReconnectBindings?.();setupActiveCommands--;
       if(qualificationFlight===owner){
-        qualificationFlight=null;reconnectBusy=false;verifiedPendingArchives.clear();verifiedHistoryArchives.clear();
+        qualificationFlight=null;reconnectBusy=false;verifiedPendingArchives.clear();verifiedHistoryArchives.clear();verifiedReconnectAudits.clear();
         const queued=queuedQualification;queuedQualification=null;
         if(queued?.port===port)void receive(queued.command);
         else if(owner.expired&&owner.port===port)scheduleInventoryRecovery(true);
@@ -1839,7 +1840,7 @@ async function retireReconnectUnknownTargets(journal,previous,candidate,enrollme
  if(command.type!=='processQualified'||!previous||sameReconnectFence(previous,candidate)||!setupFence||mutationBusy||privatePending||privateAdmission||privateFlow||privatePrivacy||lifecycleGuardId||activeBrowserInputs.size||setupActiveCommands!==1)throw reconnectRefuse('unknownReceipts');
  let pending=journal;
  if(!pendingReconnectValid(pending,previous)){
-  pending={version:journal?.version||1,phase:'pending',nonce:Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join(''),oldFence:reconnectFence(previous),newFence:reconnectFence(candidate),history:journal?.history||[],...(journal?.archive?{archive:journal.archive}:{}),...(journal?.recovery?{recovery:journal.recovery}:{})};
+  pending={version:activeReconnectJournal(journal)?1:journal?.version||1,phase:'pending',nonce:Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join(''),oldFence:reconnectFence(previous),newFence:reconnectFence(candidate),history:journal?.history||[],...(journal?.archive?{archive:journal.archive}:{}),...(journal?.recovery?{recovery:journal.recovery}:{})};
  }
  if(!pendingReconnectValid(pending,previous))throw reconnectJournalRefuse('lineageInvalid');
  await verifyReconnectArchives(pending,qualification);
@@ -1993,8 +1994,8 @@ async function receiveCommand(command, qualification) {
       const snapshot = await inventory(await qualificationRead(qualification,config),qualification);
       if (snapshot.truncated) { replyTo({type: "attention", error: MechanizeProtocol.error("inventoryIncomplete", "Complete root inventory required")}); return; }
       if(port!==commandPort)throw reconnectFail();
-      const emptyRecovery=reconnectRecord?.version>=2 && savedReconnect?.phase==="pending";
-      const verifyCommit=emptyRecovery||Boolean(reconnectRecord?.archive||reconnectRecord?.recovery||qualification.retirementSnapshot);
+      const emptyRecovery=Boolean(reconnectRecord)&&savedReconnect?.phase==="pending";
+      const verifyCommit=emptyRecovery||Boolean(reconnectRecord?.archive||reconnectRecord?.recovery||reconnectRecord?.audit||qualification.retirementSnapshot);
       try {
         if(verifyCommit)await reconnectRecoveryChecks.get(reconnectRecord)(false);
         // Obtain commit readiness while Host admission stays held. Lost
@@ -2016,7 +2017,7 @@ async function receiveCommand(command, qualification) {
       } catch(error) {
         // A commit racing native-port loss or inventory change must remain
         // durably inhibited, retaining the original pending journal and history.
-        if(emptyRecovery&&reconnectRecord.recovery?.kind!=="verifiedCurrentDocuments")try{await restoreOwnedReconnectPending(reconnectRecord,candidate,qualification);}catch{}
+        if(emptyRecovery&&!qualification.recoveryUsesCurrentDocuments)try{await restoreOwnedReconnectPending(reconnectRecord,candidate,qualification);}catch{}
         throw error;
       }
       qualificationCurrent(qualification);

@@ -5,6 +5,7 @@ const qualify = channelEpoch => ({type:'processQualified', ...grant, channelEpoc
   trustScope:'desktop', scopeQualified:true, profileQualified:false, fixtureOnly:false,
   executorChallenge:'fixture-challenge-'+channelEpoch, mutationFingerprintVersion:2});
 const flush = async () => { for(let i=0;i<20;i++) await new Promise(resolve=>setImmediate(resolve)); };
+const until = async predicate => { const deadline=process.hrtime.bigint()+2000000000n;while(!predicate()&&process.hrtime.bigint()<deadline)await new Promise(resolve=>setImmediate(resolve));assert.ok(predicate(),'bounded asynchronous metadata proof did not settle'); };
 async function historicalFixture() {
   const f = await fixture({}, {enroll:false});
   f.state.inventoryTabs = [{id:7,url:f.state.url}];
@@ -35,14 +36,15 @@ test('a drained qualification commit deadline automatically requests metadata re
   f.state.nativePost=message=>{if(message.type==='hello')queueMicrotask(()=>f.nativeMessage(qualify('fresh-retry-channel')));};
   release(); delete f.state.blockReconnectCommit; await pending; await flush();
   assert.equal(f.storage.lastGrant.channelEpoch,'replacement-channel');
-  assert.equal(f.storage.mechanizeReconnect.history.length,2);
+  assert.equal(f.storage.mechanizeReconnect.history.length,1);
   assert.equal(JSON.stringify(f.sessionState),originalReceipts);
   assert.equal(f.state.deliveries,0); assert.equal(f.state.debuggerInputs,undefined);
   t.mock.timers.tick(60000); await flush();
+  await until(()=>f.messages.some(m=>m.type==='executorPrepared'&&m.executorChallenge==='fixture-challenge-fresh-retry-channel'));
   assert.equal(f.state.nativeConnections,connections+1,'metadata qualification must recover once after the original commit drains');
   assert.ok(f.messages.some(m=>m.type==='executorPrepared'&&m.executorChallenge==='fixture-challenge-fresh-retry-channel'));
   assert.equal(f.storage.lastGrant.channelEpoch,'fresh-retry-channel');
-  assert.equal(JSON.stringify(f.storage.mechanizeReconnect.history.slice(0,1)),originalHistory);
+  assert.ok(Object.entries(f.storage).some(([key,value])=>key.startsWith('mechanizeReconnectAudit:')&&JSON.stringify(JSON.parse(value.journalJSON).history)===originalHistory));
   assert.equal(JSON.stringify(f.sessionState),originalReceipts);
   assert.equal(f.state.permissionRequests||0,0); assert.equal(f.state.deliveries,0);
 });

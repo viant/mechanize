@@ -96,7 +96,7 @@ func reconnectMCPFixture(t *testing.T, success bool) (*Gateway, auth.Principal) 
 		Preserved    bool              `json:"preserved"`
 		HistoryCount int               `json:"historyCount"`
 	}
-	if json.Unmarshal(frame, &output) != nil || success && (!output.Preserved || output.HistoryCount != 3) {
+	if json.Unmarshal(frame, &output) != nil || success && (!output.Preserved || output.HistoryCount != 1) {
 		t.Fatal("worker archive proof unavailable")
 	}
 	for _, item := range output.Frames {
