@@ -133,6 +133,11 @@ locators, reads, fills, clicks, and bounded assertions. Validate any proposed
 syntax with `mechanize_script_validate`; do not add host-language code, shell
 commands, or guessed methods.
 
+For web locators, `read` accepts `text`, `value`, `name`, or `checked`.
+Use `.read("text")` for an element's text; DOM property names such as
+`textContent` are not DSL read attributes. Native locators additionally support
+`staticText`, `identifier`, `role`, `focused`, and `enabled`.
+
 ```text
 let caseApp = app("com.example.CaseDesk")
 let crm = web.tab(origin: "https://crm.example.test", title: "Cases")
