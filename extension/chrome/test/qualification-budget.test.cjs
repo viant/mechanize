@@ -79,6 +79,7 @@ test('one unsuccessful deadline recovery cannot turn into an infinite reconnect 
   f.state.nativePost=message=>{if(message.type==='hello')queueMicrotask(()=>f.nativeMessage(qualify('fresh-retry-channel')));};
   const connections=f.state.nativeConnections;
   t.mock.timers.tick(1000); await flush();
+  for(let i=0;i<200&&!f.state.commitEntered;i++) await new Promise(resolve=>setImmediate(resolve));
   assert.equal(f.state.nativeConnections,connections+1); assert.equal(f.state.commitEntered,true);
   t.mock.timers.tick(10001); await flush();
   secondRelease(); delete f.state.blockReconnectCommit; await flush();

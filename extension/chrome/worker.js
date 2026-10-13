@@ -1121,7 +1121,7 @@ function reconnectFrameState(frame,allowMissing=false,allowInactiveChild=false){
 }
 // A prerendered/cached page is an additional tree, not a subframe of the
 // primary page. Keep every identity, and never infer disappearance from state.
-function reconnectFrameForest(frames){
+function reconnectFrameForest(frames,allowMissingParents=false){
  const byFrame=new Map(),docs=new Set();
  for(const f of frames){
   if(!f||!Number.isSafeInteger(f.frameId)||f.frameId<0||byFrame.has(f.frameId))throw reconnectInventoryRefuse('frameIDInvalid');
@@ -1136,19 +1136,45 @@ function reconnectFrameForest(frames){
   while(cursor.parentFrameId!==-1){
    if(seen.has(cursor.frameId))throw reconnectInventoryRefuse('frameCycle');seen.add(cursor.frameId);
    if(cursor.frameId>0&&cursor.frameType==='outermost_frame')throw reconnectInventoryRefuse('inactiveRootParentDenied');
-   const parent=byFrame.get(cursor.parentFrameId);if(!parent)throw reconnectInventoryRefuse('frameParentMissing');
+   const parent=byFrame.get(cursor.parentFrameId);if(!parent){if(allowMissingParents){cursor=null;break;}throw reconnectInventoryRefuse('frameParentMissing');}
    if(cursor.parentDocumentId!==undefined&&cursor.parentDocumentId!==parent.documentId)throw reconnectInventoryRefuse('frameParentDocumentMismatch');cursor=parent;
   }
+  if(!cursor){result.set(f.frameId,null);continue;}
   if(cursor.frameId!==0&&!(cursor.frameType==='outermost_frame'&&channelShape(cursor.documentId)&&['prerender','cached'].includes(cursor.documentLifecycle)))throw reconnectInventoryRefuse('inactiveRootParentDenied');
   if(cursor.parentDocumentId!==undefined&&cursor.parentDocumentId!==null)throw reconnectInventoryRefuse('frameParentDocumentMismatch');
   result.set(f.frameId,cursor);
  }
  return result;
 }
+// getAllFrames can straddle a child/parent removal. Reread that tab once within
+// the original qualification deadline. Unresolved orphans remain observed,
+// non-executable identities; this incomplete tree cannot prove source absence.
+async function reconnectTabFrames(tabId,qualification){
+ const read=()=>qualification?qualificationRead(qualification,()=>chrome.webNavigation.getAllFrames({tabId})):chrome.webNavigation.getAllFrames({tabId});
+ const first=await read();
+ const observed=qualification?.orphanFrameEvidence||[];
+ if(observed.some(f=>f.tabId===tabId&&(!Array.isArray(first)||!first.some(n=>n.frameId===f.frameId&&n.documentId===f.documentId))))throw reconnectInventoryRefuse('childSourceIdentityUnavailable');
+ if(!Array.isArray(first)||!first.length||first.length>200)return first;
+ if(!first.every(f=>f&&Number.isSafeInteger(f.frameId)&&Number.isSafeInteger(f.parentFrameId))||!first.some(f=>f.parentFrameId>=0&&!first.some(p=>p.frameId===f.parentFrameId)))return first;
+ const forest=reconnectFrameForest(first,true);
+ if(![...forest.values()].includes(null))return first;
+ if(qualification){
+  for(const f of first)if(!forest.get(f.frameId)&&!observed.some(n=>n.tabId===tabId&&n.frameId===f.frameId&&n.documentId===f.documentId))observed.push({tabId,frameId:f.frameId,documentId:f.documentId});
+  if(observed.length>200)throw reconnectInventoryRefuse('frameLimitExceeded');
+  qualification.orphanFrameEvidence=observed;
+ }
+ const second=await read();
+ if(!Array.isArray(second)||!second.length||second.length>200)return second;
+ reconnectFrameForest(second,true);
+ // Do not lose a first-read identity merely because the reread omitted it.
+ // Retaining the first tree is conservative and later census checks still
+ // require the same evidence before any adoption can commit.
+ return first.every(f=>second.some(n=>n.frameId===f.frameId&&n.documentId===f.documentId&&n.parentFrameId===f.parentFrameId))?second:first;
+}
 async function reconnectInternalTabCensus(tab,qualification){
   if(!tab||tab.status!=="complete"||tab.pendingUrl||tab.incognito||tab.discarded)throw reconnectInventoryRefuse("tabURLUnavailable");
   let frames;
-  try{frames=qualification?await qualificationRead(qualification,()=>chrome.webNavigation.getAllFrames({tabId:tab.id})):await chrome.webNavigation.getAllFrames({tabId:tab.id});}catch(error){if(error?.code==='storedFenceMismatch')throw error;throw reconnectInventoryRefuse("frameQueryUnavailable");}
+  try{frames=await reconnectTabFrames(tab.id,qualification);}catch(error){if(error?.code==='storedFenceMismatch'||error?.code==='inventoryChanged')throw error;throw reconnectInventoryRefuse("frameQueryUnavailable");}
   if(!Array.isArray(frames)||!frames.length||frames.length>200)throw reconnectInventoryRefuse("frameListUnavailable");
   const byFrame=new Map(),documents=new Set();
   for(const f of frames){
@@ -1163,8 +1189,8 @@ async function reconnectInternalTabCensus(tab,qualification){
   if(root.errorOccurred)throw reconnectInventoryRefuse("rootFrameError");
   let rootURL;try{rootURL=new URL(root.url);}catch{throw reconnectInventoryRefuse("tabURLUnavailable");}
   if(rootURL.protocol!=="chrome:"||!rootURL.hostname||rootURL.username||rootURL.password||rootURL.port)throw reconnectInventoryRefuse("tabURLUnavailable");
-  reconnectFrameForest(frames);
-  return frames.map(f=>({tabId:tab.id,frameId:f.frameId,documentId:f.documentId,parentFrameId:f.parentFrameId,origin:null,executable:false,protected:false,...(inactiveExecutorFrame(f)?{documentLifecycle:f.documentLifecycle}:{}),...(f.frameType==='fenced_frame'||f.frameId>0&&f.frameType==='outermost_frame'?{frameType:f.frameType}:{})})).sort((a,b)=>a.frameId-b.frameId);
+  const forest=reconnectFrameForest(frames,true);
+  return frames.map(f=>({tabId:tab.id,frameId:f.frameId,documentId:f.documentId,parentFrameId:f.parentFrameId,origin:null,executable:false,protected:false,...(!forest.get(f.frameId)?{parentageIncomplete:true}:{}),...(inactiveExecutorFrame(f)?{documentLifecycle:f.documentLifecycle}:{}),...(f.frameType==='fenced_frame'||f.frameId>0&&f.frameType==='outermost_frame'?{frameType:f.frameType}:{})})).sort((a,b)=>a.frameId-b.frameId);
 }
 async function emptyReconnectInventory(knownTabs,qualification) {
   reconnectInventoryReason="none";
@@ -1187,7 +1213,7 @@ async function emptyReconnectInventory(knownTabs,qualification) {
       // browser-owned frame tree must independently exclude every injectable
       // website/extension renderer before treating this tab as setup-only.
       let frames;
-      try{frames=await chrome.webNavigation.getAllFrames({tabId:tab.id});}catch{throw reconnectInventoryRefuse("frameQueryUnavailable");}
+      try{frames=await reconnectTabFrames(tab.id,qualification);}catch(error){if(error?.code==='storedFenceMismatch'||error?.code==='inventoryChanged')throw error;throw reconnectInventoryRefuse("frameQueryUnavailable");}
       if(!Array.isArray(frames)||!frames.length)throw reconnectInventoryRefuse("frameListUnavailable");
       if(frames.length>32)throw reconnectInventoryRefuse("frameLimitExceeded");
       const byFrame=new Map();let requiresBindingCensus=false;
@@ -1203,11 +1229,11 @@ async function emptyReconnectInventory(knownTabs,qualification) {
         if(frame.frameId===0&&!['chrome://newtab/','chrome://new-tab-page/'].includes(frame.url))throw reconnectInventoryRefuse("builtInRootURLDenied");
         byFrame.set(frame.frameId,frame);
       }
-      const forest=reconnectFrameForest(frames);
+      const forest=reconnectFrameForest(frames,true);
       for(const frame of frames){
         // Independent inactive page trees are metadata only. Do not parse or
         // publish their potentially unrelated URLs as setup-page authority.
-        if(forest.get(frame.frameId).frameId!==0){requiresBindingCensus=true;continue;}
+        if(forest.get(frame.frameId)?.frameId!==0){requiresBindingCensus=true;continue;}
         const builtinChild=typeof frame.url==='string'&&frame.url.length<=4096&&(frame.url==='chrome-untrusted://new-tab-page/'||/^chrome-untrusted:\/\/new-tab-page\/one-google-bar(?:\?paramsencoded=[A-Za-z0-9%+/_=-]*)?$/.test(frame.url));
         const opaqueChild=frame.frameId!==0&&['about:blank','about:srcdoc'].includes(frame.url);
         const fencedChild=frame.frameId!==0&&frame.frameType==='fenced_frame';
@@ -1218,7 +1244,7 @@ async function emptyReconnectInventory(knownTabs,qualification) {
       // A failed or opaque built-in child must pass the complete binding/source census;
       // the setup-only shortcut cannot claim an original document absent.
       if(requiresBindingCensus&&knownTabs===undefined)throw reconnectInventoryRefuse("nonSetupTab");
-      result.push({tabId:tab.id,url:tab.url,frames:frames.map(frame=>({frameId:frame.frameId,parentFrameId:frame.parentFrameId,documentId:frame.documentId,url:frame.frameType==='fenced_frame'||forest.get(frame.frameId).frameId!==0?null:frame.url,...(inactiveExecutorFrame(frame)?{documentLifecycle:frame.documentLifecycle}:{}),...(frame.frameType==='fenced_frame'||frame.frameId>0&&frame.frameType==='outermost_frame'?{frameType:frame.frameType}:{})})).sort((a,b)=>a.frameId-b.frameId)});
+      result.push({tabId:tab.id,url:tab.url,frames:frames.map(frame=>({frameId:frame.frameId,parentFrameId:frame.parentFrameId,documentId:frame.documentId,url:frame.frameType==='fenced_frame'||forest.get(frame.frameId)?.frameId!==0?null:frame.url,...(!forest.get(frame.frameId)?{parentageIncomplete:true}:{}),...(inactiveExecutorFrame(frame)?{documentLifecycle:frame.documentLifecycle}:{}),...(frame.frameType==='fenced_frame'||frame.frameId>0&&frame.frameType==='outermost_frame'?{frameType:frame.frameType}:{})})).sort((a,b)=>a.frameId-b.frameId)});
       continue;
     }
     if(!(url.protocol==="chrome:" && url.hostname==="extensions" || url.protocol==="chrome-extension:" && url.hostname===chrome.runtime.id && url.pathname==="/options.html") || url.username || url.password)throw reconnectInventoryRefuse("nonSetupTab");
@@ -1352,13 +1378,13 @@ async function reconnectCurrentCensus(enrollment,qualification){
    const proof=await emptyReconnectInventory([tab],qualification);result.push({tabId:tab.id,setup:proof});
    // Preserve browser-owned child identities as well as the root: matching a
    // retained source anywhere in this tree is presence, never absence.
-   for(const frame of JSON.parse(proof)[0]?.frames||[])result.push({tabId:tab.id,frameId:frame.frameId,documentId:frame.documentId,parentFrameId:frame.parentFrameId,origin:null,executable:false,protected:false,...(frame.documentLifecycle?{documentLifecycle:frame.documentLifecycle}:{}),...(frame.frameType?{frameType:frame.frameType}:{})});
+   for(const frame of JSON.parse(proof)[0]?.frames||[])result.push({tabId:tab.id,frameId:frame.frameId,documentId:frame.documentId,parentFrameId:frame.parentFrameId,origin:null,executable:false,protected:false,...(frame.parentageIncomplete?{parentageIncomplete:true}:{}),...(frame.documentLifecycle?{documentLifecycle:frame.documentLifecycle}:{}),...(frame.frameType?{frameType:frame.frameType}:{})});
    continue;
   }
   if(!['http:','https:'].includes(url.protocol))throw reconnectInventoryRefuse('tabSchemeDenied');
-  const frames=await qualificationRead(qualification,()=>chrome.webNavigation.getAllFrames({tabId:tab.id}));
+  const frames=await reconnectTabFrames(tab.id,qualification);
   if(!Array.isArray(frames)||!frames.length||frames.length>200)throw reconnectInventoryRefuse('frameListUnavailable');
-  const forest=reconnectFrameForest(frames);
+  const forest=reconnectFrameForest(frames,true);
   const frameIDs=new Set();let roots=0;
   for(const f of frames){
    if(!f||!Number.isSafeInteger(f.frameId)||f.frameId<0||frameIDs.has(f.frameId))throw reconnectInventoryRefuse('frameDocumentUnavailable');frameIDs.add(f.frameId);
@@ -1368,6 +1394,9 @@ async function reconnectCurrentCensus(enrollment,qualification){
    if(f.errorOccurred&&f.frameId===0)throw reconnectInventoryRefuse('rootFrameError');
    const inactiveChild=reconnectFrameState(f,false,true);
    if(!Number.isSafeInteger(f.parentFrameId))throw reconnectInventoryRefuse('frameParentInvalid');
+   if(!forest.get(f.frameId)){
+    result.push({tabId:tab.id,frameId:f.frameId,documentId:knownDocument?f.documentId:null,parentFrameId:f.parentFrameId,origin:null,executable:false,protected:false,parentageIncomplete:true,identityUnknown:!knownDocument});continue;
+   }
    if(failedChild){
     // A failed child remains a census entry. It can never receive an executor.
     // Missing identity is explicit and later prevents any source-absence proof
@@ -1531,6 +1560,11 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
       // Discarded markers instead deny every retained owner on that exact tab.
       const unidentified=recoveryCensus.filter(i=>i.identityUnknown&&!i.discarded),knownIDs=new Set(recoveryCensus.filter(i=>i.documentId).map(i=>i.documentId));
       if(unidentified.length&&recoveryBinding.bindings.some(row=>!knownIDs.has(row.identity.documentId))){reconnectRecoveryDiagnostic.unavailableExecutors=unidentified.length;throw reconnectInventoryRefuse('childSourceIdentityUnavailable');}
+      const incompleteTabs=new Set(recoveryCensus.filter(i=>i.parentageIncomplete).map(i=>i.tabId));
+      const absentOnIncompleteTab=i=>incompleteTabs.has(i.tabId)&&!knownIDs.has(i.documentId);
+      if(recoveryBinding.bindings.some(row=>absentOnIncompleteTab(row.identity))||protectionScopes.records().some(record=>record.identity.profileChannel===enrollment.profileChannel&&record.identity.browserInstance===enrollment.browserInstance&&absentOnIncompleteTab(record.identity))){
+       reconnectRecoveryDiagnostic.unavailableExecutors=Math.min(200,Math.max(1,unavailable.size));throw reconnectInventoryRefuse('childSourceIdentityUnavailable');
+      }
       if(privateSources.size)throw reconnectRefuse('privateProtection');if(unknown.size)throw reconnectRefuse('unknownReceipts');if(unavailable.size)throw reconnectRefuse('executorRefused');
       reconnectInventoryReason="none";
     }

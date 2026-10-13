@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Mechanize",
-  "version": "0.1.79",
+  "version": "0.1.80",
   "description": "Explicitly enrolled semantic browser transport for Mechanize.",
   "permissions": [
     "nativeMessaging",
