@@ -131,11 +131,16 @@ ownership. Operations without a session have only a short completion tail.
 
 Chrome supplies only exact-tab window geometry over its authenticated local
 connection. The helper independently matches the signed browser process and a
-unique OS window. Missing or ambiguous geometry never labels a guessed window.
+owned OS window. An already verified window number is preserved; when overlapping
+same-app windows share bounds, presentation may use the matching frontmost OS
+window only while that app is foreground. Duplicate window numbers, a different
+foreground window, or mismatched bounds never label a guessed window.
 Native AX observations and reads start the same indicator after their target
 scope and identity are validated; actions use their verified input or
 accessibility target at dispatch. Exact window scopes retain that window, while
 broad application or menu observations use that application's foreground window.
+Header geometry is measured from its AX focused window, without comparing every
+same-sized application window.
 There is no model-facing badge command.
 
 The helper runs as an accessory application, with its framed input reader off

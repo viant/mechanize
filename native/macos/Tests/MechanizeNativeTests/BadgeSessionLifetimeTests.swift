@@ -66,6 +66,26 @@ final class BadgeSessionLifetimeTests:XCTestCase {
    XCTAssertGreaterThan(hidden,0)
   }
  }
+ func testSessionPresenterAdmitsOverlappingForegroundWindowsAndRetainsExactNumber()async throws {
+  try await MainActor.run {
+   let bounds=CGRect(x:10,y:46,width:1292,height:734)
+   var rows=(0..<29).map { index in SessionKeyWindow(id:UInt32(100+index),pid:1639,layer:0,visible:true,alpha:1,bounds:CGRect(x:10,y:46,width:1292,height:734+index%3)) }
+   var foreground:pid_t?=1639,birth="100:1",begins=0;var states:[Bool]=[]
+   let runtime=WindowSessionKeyRuntime(process:{_ in(getuid(),birth,"com.fixture.ide")},foreground:{foreground},windows:{rows},session:{true},secure:{false})
+   var view=BrowserBadgePresentation(begin:{_ in begins+=1;return UInt64(begins)},move:{_,_ in},hide:{_ in},renew:{_ in},complete:{_ in})
+   view.state={_,active in states.append(active)}
+   let badge=BrowserControlBadge(runtime:runtime,schedule:false,presentation:view)
+   let token=String(repeating:"a",count:64),session=String(repeating:"b",count:64)
+   let params:[String:Any]=["token":token,"sessionToken":session,"expectedApp":"com.fixture.ide","pid":Int32(1639),"processStartToken":"100:1","windowBounds":["x":Double(bounds.minX),"y":Double(bounds.minY),"width":Double(bounds.width),"height":Double(bounds.height)],"durationMs":300]
+   XCTAssertEqual(try badge.handle(method:"controlBadge.begin",params:params)["status"] as? String,"shown")
+   XCTAssertEqual(states.last,true)
+   _=try badge.handle(method:"controlBadge.end",params:["token":token]);XCTAssertEqual(states.last,false)
+   rows.swapAt(0,1);XCTAssertEqual(badge.refresh(),"hidden") // Same geometry, different OS identity.
+   rows.swapAt(0,1);XCTAssertEqual(badge.refresh(),"shown")
+   foreground=99;XCTAssertEqual(badge.refresh(),"hidden");foreground=1639
+   birth="101:1";XCTAssertEqual(badge.refresh(),"unavailable")
+  }
+ }
  func testTransportEndReleasesAllOwnersWithoutAHeartbeat()async throws {
   try await MainActor.run {
    var hidden=0

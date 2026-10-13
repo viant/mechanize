@@ -262,7 +262,7 @@ final class Helper {
                       let pid = badgeParams["pid"] as? Int, let birth = badgeParams["processStartToken"] as? String,
                       let bundle = badgeParams["expectedApp"] as? String, let windowID = badgeParams["windowId"] as? UInt32,
                       let bounds = AutomationPointer.ownedWindowBounds(pid: pid_t(pid), birth: birth, bundle: bundle, windowID: windowID) {
-                controlBadge = AutomationPointer.beginOwnedControl(pid:pid_t(pid),birth:birth,bundle:bundle,window:bounds,sessionToken:presentationSession,actionDeadline:badgeActionDeadline)
+                controlBadge = AutomationPointer.beginOwnedControl(pid:pid_t(pid),birth:birth,bundle:bundle,window:bounds,windowID:windowID,sessionToken:presentationSession,actionDeadline:badgeActionDeadline)
             } else if ["app.activate", "app.quit"].contains(method), let pid = badgeParams["pid"] as? Int,
                       let birth = badgeParams["startToken"] as? String, let bundle = badgeParams["expectedApp"] as? String,
                       applicationProcessStartToken(pid_t(pid)) == birth, applicationLoginUID(pid_t(pid)) == getuid(),
@@ -898,7 +898,7 @@ final class Helper {
                 try budget.check(); try reserveMutation()
                 var attempted = false
                 do {
-                    try postWindowFrameClick(inputs: inputs, point: point, preflight: { try self.validateWindowFrameClick(request, permit, point, budget) }, willPost: { attempted = true; controlBadge = AutomationPointer.beginOwnedControl(pid:permit.pid,birth:permit.processStartToken,bundle:permit.bundleId,window:permit.bounds,sessionToken:presentationSession,actionDeadline:badgeActionDeadline); AutomationPointer.show(at: point) })
+                    try postWindowFrameClick(inputs: inputs, point: point, preflight: { try self.validateWindowFrameClick(request, permit, point, budget) }, willPost: { attempted = true; controlBadge = AutomationPointer.beginOwnedControl(pid:permit.pid,birth:permit.processStartToken,bundle:permit.bundleId,window:permit.bounds,windowID:permit.windowId,sessionToken:presentationSession,actionDeadline:badgeActionDeadline); AutomationPointer.show(at: point) })
                     AutomationPointer.show(at:point)
                     reply["result"] = ["permitId": permit.id, "owner": permit.owner.metadata, "pid": permit.pid, "startToken": permit.processStartToken, "bundleID": permit.bundleId, "windowId": permit.windowId, "identity": "window:\(permit.windowId)", "point": ["x": params["x"]!, "y": params["y"]!], "requestId": id, "observedAt": preciseISO.string(from: Date()), "businessSuccess": false]
                     reply["receipt"] = ["dispatchState": "dispatched", "startedAt": started, "returnedAt": iso.string(from: Date()), "targetRef": "window:\(permit.windowId)", "businessSuccess": false]

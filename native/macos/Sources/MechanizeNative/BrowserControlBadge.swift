@@ -53,17 +53,19 @@ struct BrowserBadgePresentation {
   guard let token=params["token"] as? String,ControlBadgeScope.validToken(token) else{throw NativeFailure("badgeUnavailable","Presentation scope unavailable")}
   var expected:Set<String> = method=="controlBadge.begin" ? ["token","expectedApp","pid","processStartToken","windowBounds","durationMs"] : method=="controlBadge.renew" ? ["token","durationMs"] : ["token"]
   if method=="controlBadge.begin"&&params["sessionToken"] != nil {expected.insert("sessionToken")}
+  if method=="controlBadge.begin"&&params["windowId"] != nil {expected.insert("windowId")}
   guard Set(params.keys)==expected else{throw NativeFailure("badgeUnavailable","Presentation scope unavailable")}
   if method=="controlBadge.stop" {owners.removeValue(forKey:token);return ["status":refresh()]}
   if method=="controlBadge.end" {if var o=owners[token]{o.completed=true;if o.session==nil{o.activeUntil=now()+1.2};owners[token]=o};return ["status":refresh()]}
   guard let duration=params["durationMs"] as? Int,ControlBadgeScope.validDuration(duration) else{throw NativeFailure("badgeUnavailable","Presentation duration unavailable")}
   if method=="controlBadge.begin" {
    let session=params["sessionToken"] as? String
+   guard params["windowId"] == nil || params["windowId"] as? UInt32 != nil else {throw NativeFailure("badgeUnavailable","Presentation window identity unavailable")}
    guard !usedTokens.contains(token),usedTokens.count<4096,owners.count<256,params["sessionToken"]==nil||session.map({ControlBadgeScope.validToken($0) && !closedSessions.contains($0)})==true,
     let pid=params["pid"] as? Int32,let birth=params["processStartToken"] as? String,let bundle=params["expectedApp"] as? String,
     let a=runtime.process(pid),a.0==getuid(),a.1==birth,a.2==bundle,
     let raw=params["windowBounds"] as? [String:Any],Set(raw.keys)==["x","y","width","height"],let x=raw["x"] as? Double,let y=raw["y"] as? Double,let w=raw["width"] as? Double,let h=raw["height"] as? Double,
-    let rows=runtime.windows(),let id=ControlBadgeScope.match(pid:pid,bounds:CGRect(x:x,y:y,width:w,height:h),windows:rows.map{ControlBadgeWindow(id:$0.id,pid:$0.pid,layer:$0.layer,visible:$0.visible,alpha:$0.alpha,bounds:$0.bounds)},allowedLayers:[0,3,8]),
+    let rows=runtime.windows(),let id=ControlBadgeScope.match(pid:pid,bounds:CGRect(x:x,y:y,width:w,height:h),windows:rows.map{ControlBadgeWindow(id:$0.id,pid:$0.pid,layer:$0.layer,visible:$0.visible,alpha:$0.alpha,bounds:$0.bounds)},allowedLayers:[0,3,8],foregroundPID:runtime.foreground(),windowID:params["windowId"] as? UInt32),
     let after=runtime.process(pid),after.0==a.0,after.1==birth,after.2==bundle else{throw NativeFailure("badgeUnavailable","Presentation scope unavailable")}
    sequence &+= 1
    let o=Owner(token:token,session:session,pid:pid,birth:birth,bundle:bundle,windowID:id,sequence:sequence,activeUntil:now()+Double(duration)/1000)

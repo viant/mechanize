@@ -223,14 +223,14 @@ extension AutomationPointer {
 }
 
 extension AutomationPointer {
-    static func beginOwnedControl(pid: pid_t, birth: String, bundle: String, window: CGRect, sessionToken:String? = nil, actionDeadline: TimeInterval = ProcessInfo.processInfo.systemUptime + 5) -> UInt64? {
+    static func beginOwnedControl(pid: pid_t, birth: String, bundle: String, window: CGRect, windowID: UInt32? = nil, sessionToken:String? = nil, actionDeadline: TimeInterval = ProcessInfo.processInfo.systemUptime + 5) -> UInt64? {
         let runtime=WindowSessionKeyRuntime.system
         guard actionDeadline > ProcessInfo.processInfo.systemUptime,actionDeadline-ProcessInfo.processInfo.systemUptime <= 30 else {return nil}
         guard let before=runtime.process(pid),before.0 == getuid(),before.1 == birth,before.2 == bundle,
-              let windows=runtime.windows(),let id=ControlBadgeScope.match(pid:pid,bounds:window,windows:windows.map {ControlBadgeWindow(id:$0.id,pid:$0.pid,layer:$0.layer,visible:$0.visible,alpha:$0.alpha,bounds:$0.bounds)},allowedLayers:[0,3,8]),
+              let windows=runtime.windows(),let id=ControlBadgeScope.match(pid:pid,bounds:window,windows:windows.map {ControlBadgeWindow(id:$0.id,pid:$0.pid,layer:$0.layer,visible:$0.visible,alpha:$0.alpha,bounds:$0.bounds)},allowedLayers:[0,3,8],foregroundPID:runtime.foreground(),windowID:windowID),
               let after=runtime.process(pid),after.0 == before.0,after.1 == birth,after.2 == bundle else {return nil}
         if let sessionToken,ControlBadgeScope.validToken(sessionToken) {
-            return beginSessionOwnedControl(pid:pid,birth:birth,bundle:bundle,window:window,session:sessionToken,deadline:actionDeadline)
+            return beginSessionOwnedControl(pid:pid,birth:birth,bundle:bundle,window:window,windowID:id,session:sessionToken,deadline:actionDeadline)
         }
         guard let anchor=ControlBadgeAnchor.measure(pid:pid,bounds:window),let token=beginControl(window:window,lifetime:max(0.1,min(30,actionDeadline-ProcessInfo.processInfo.systemUptime)),anchor:anchor) else {return nil}
         trackOwnedControl(token,pid:pid,birth:birth,bundle:bundle,windowID:id,deadline:actionDeadline,anchor:anchor,windowSize:window.size)
@@ -239,7 +239,7 @@ extension AutomationPointer {
     static func beginApplicationControl(pid: pid_t, birth: String, bundle: String, sessionToken:String? = nil, actionDeadline: TimeInterval = ProcessInfo.processInfo.systemUptime + 5) -> UInt64? {
         let runtime=WindowSessionKeyRuntime.system
         guard runtime.foreground() == pid,let windows=runtime.windows(),let front=windows.first(where:{[0,3,8].contains($0.layer) && $0.visible && $0.alpha > 0}),front.pid == pid else {return nil}
-        return beginOwnedControl(pid:pid,birth:birth,bundle:bundle,window:front.bounds,sessionToken:sessionToken,actionDeadline:actionDeadline)
+        return beginOwnedControl(pid:pid,birth:birth,bundle:bundle,window:front.bounds,windowID:front.id,sessionToken:sessionToken,actionDeadline:actionDeadline)
     }
 }
 
@@ -282,12 +282,12 @@ extension AutomationPointer {
 extension AutomationPointer {
     private static var nativeBadgeSequence:UInt64=1<<63
     private static var nativeBadgeActions:[UInt64:String]=[:]
-    private static func beginSessionOwnedControl(pid:pid_t,birth:String,bundle:String,window:CGRect,session:String,deadline:TimeInterval)->UInt64? {
+    private static func beginSessionOwnedControl(pid:pid_t,birth:String,bundle:String,window:CGRect,windowID:UInt32,session:String,deadline:TimeInterval)->UInt64? {
         let action=(UUID().uuidString+UUID().uuidString).replacingOccurrences(of:"-",with:"").lowercased()
         badgeLock.lock();guard nativeBadgeActions.count<256 else{badgeLock.unlock();return nil};nativeBadgeSequence &+= 1;let token=nativeBadgeSequence;nativeBadgeActions[token]=action;badgeLock.unlock()
         DispatchQueue.main.async {
             let duration=max(100,min(5000,Int((deadline-ProcessInfo.processInfo.systemUptime)*1000)))
-            let params:[String:Any]=["token":action,"sessionToken":session,"expectedApp":bundle,"pid":pid,"processStartToken":birth,"windowBounds":["x":window.minX,"y":window.minY,"width":window.width,"height":window.height],"durationMs":duration]
+            let params:[String:Any]=["token":action,"sessionToken":session,"windowId":windowID,"expectedApp":bundle,"pid":pid,"processStartToken":birth,"windowBounds":["x":window.minX,"y":window.minY,"width":window.width,"height":window.height],"durationMs":duration]
             guard (try? BrowserControlBadge.shared.handle(method:"controlBadge.begin",params:params)) != nil else{return}
             let timer=Timer(timeInterval:1,repeats:true){timer in
                 badgeLock.lock();let running=nativeBadgeActions[token]==action;badgeLock.unlock()

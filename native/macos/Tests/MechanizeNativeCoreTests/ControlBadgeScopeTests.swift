@@ -12,6 +12,23 @@ final class ControlBadgeScopeTests: XCTestCase {
         XCTAssertEqual(ControlBadgeScope.match(pid:42,bounds:bounds.offsetBy(dx:2,dy:2),windows:[exact]),7)
         for candidate in [ControlBadgeWindow(id:7,pid:42,layer:1,visible:true,alpha:1,bounds:bounds),ControlBadgeWindow(id:7,pid:42,layer:0,visible:false,alpha:1,bounds:bounds),ControlBadgeWindow(id:7,pid:42,layer:0,visible:true,alpha:0,bounds:bounds)] {XCTAssertNil(ControlBadgeScope.match(pid:42,bounds:bounds,windows:[candidate]))}
     }
+    func testOverlappingIDEWindowsUseOnlyVerifiedForegroundIdentity() {
+        let bounds=CGRect(x:10,y:46,width:1292,height:734)
+        let rows=(0..<29).map { index in ControlBadgeWindow(id:UInt32(100+index),pid:1639,layer:0,visible:true,alpha:1,bounds:CGRect(x:10,y:46,width:1292,height:734+index%3)) }
+        XCTAssertNil(ControlBadgeScope.match(pid:1639,bounds:bounds,windows:rows))
+        XCTAssertEqual(ControlBadgeScope.match(pid:1639,bounds:bounds,windows:rows,foregroundPID:1639),100)
+        XCTAssertNil(ControlBadgeScope.match(pid:1639,bounds:bounds,windows:rows,foregroundPID:99))
+        let foreign=ControlBadgeWindow(id:99,pid:99,layer:0,visible:true,alpha:1,bounds:bounds)
+        XCTAssertNil(ControlBadgeScope.match(pid:1639,bounds:bounds,windows:[foreign]+rows,foregroundPID:1639))
+        let other=ControlBadgeWindow(id:99,pid:1639,layer:0,visible:true,alpha:1,bounds:bounds.offsetBy(dx:30,dy:0))
+        XCTAssertNil(ControlBadgeScope.match(pid:1639,bounds:bounds,windows:[other]+rows,foregroundPID:1639))
+        XCTAssertNil(ControlBadgeScope.match(pid:1639,bounds:bounds,windows:rows+[rows[0]],foregroundPID:1639))
+        // An already verified native window number takes precedence over geometry.
+        XCTAssertEqual(ControlBadgeScope.match(pid:1639,bounds:bounds,windows:rows,foregroundPID:1639,windowID:107),107)
+        XCTAssertNil(ControlBadgeScope.match(pid:1639,bounds:bounds,windows:rows,foregroundPID:1639,windowID:999))
+        XCTAssertNil(ControlBadgeScope.match(pid:1639,bounds:bounds,windows:rows+[rows[7]],foregroundPID:1639,windowID:107))
+        XCTAssertNil(ControlBadgeScope.match(pid:99,bounds:bounds,windows:rows,foregroundPID:99))
+    }
     func testBoundedOpaqueOwnerAndDuration() {
         XCTAssertTrue(ControlBadgeScope.validToken(String(repeating:"a",count:64)))
         for token in ["",String(repeating:"a",count:63),String(repeating:"A",count:64),String(repeating:"g",count:64)] {XCTAssertFalse(ControlBadgeScope.validToken(token))}

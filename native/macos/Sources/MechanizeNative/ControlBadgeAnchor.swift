@@ -27,15 +27,14 @@ struct ControlBadgeAnchor: Equatable {
             return CGRect(origin:point,size:size)
         }
         let app=AXUIElementCreateApplication(pid)
-        guard let windows=read(app,kAXWindowsAttribute) as? [AXUIElement],windows.count<=64 else{return nil}
-        var matches:[AXUIElement]=[]
-        for window in windows {
-            guard ProcessInfo.processInfo.systemUptime<deadline else{return nil}
-            guard let frame=ownedBounds(window) else{continue}
-            if abs(frame.minX-bounds.minX)<=2&&abs(frame.minY-bounds.minY)<=2&&abs(frame.width-bounds.width)<=2&&abs(frame.height-bounds.height)<=2{matches.append(window)}
-        }
-        guard matches.count==1 else{return nil}
-        let window=matches[0],header=CGRect(x:bounds.minX,y:bounds.minY,width:bounds.width,height:44)
+        // Header presentation belongs to the app's actual focused window.
+        // An AXWindows geometry census is ambiguous for overlapping IDE windows.
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+              let focused=read(app,kAXFocusedWindowAttribute),CFGetTypeID(focused)==AXUIElementGetTypeID(),
+              let frame=ownedBounds(focused as! AXUIElement),
+              abs(frame.minX-bounds.minX)<=2,abs(frame.minY-bounds.minY)<=2,
+              abs(frame.width-bounds.width)<=2,abs(frame.height-bounds.height)<=2 else{return nil}
+        let window=focused as! AXUIElement,header=CGRect(x:bounds.minX,y:bounds.minY,width:bounds.width,height:44)
         var lights:[CGRect]=[]
         for name in [kAXCloseButtonAttribute,kAXMinimizeButtonAttribute,kAXZoomButtonAttribute] {
             guard let value=read(window,name),CFGetTypeID(value)==AXUIElementGetTypeID(),let frame=ownedBounds(value as! AXUIElement),header.contains(frame) else{return nil}
