@@ -1,6 +1,9 @@
 import Foundation
 import CoreGraphics
 
+// Planning lifetime only; input retains its independent bounded action budget.
+public let windowFramePermitLifetimeNanoseconds: UInt64 = 120_000_000_000
+
 public struct WindowFrameOwner: Equatable {
     public let namespace: String
     public let clientId: String
@@ -46,12 +49,13 @@ public struct WindowFramePermit {
               abs(Double(bounds.width) * scale - Double(widthPixels)) <= 0.001,
               abs(Double(bounds.height) * scale - Double(heightPixels)) <= 0.001,
               contentHash.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
-              uptime <= UInt64.max - 30_000_000_000 else { throw NativeFailure("invalidPermit", "Exact bounded captured frame proof required") }
+              uptime <= UInt64.max - windowFramePermitLifetimeNanoseconds else { throw NativeFailure("invalidPermit", "Exact bounded captured frame proof required") }
         self.id = id; self.owner = owner; self.helperEpoch = helperEpoch; self.fenceGeneration = fenceGeneration
         self.bundleId = bundleId; self.pid = pid; self.processStartToken = processStartToken; self.windowId = windowId
         self.displayId = displayId; self.bounds = bounds; self.widthPixels = widthPixels; self.heightPixels = heightPixels
         self.scale = scale; self.contentHash = contentHash; self.capturedAt = capturedAt
-        expiresAt = capturedAt.addingTimeInterval(30); deadline = uptime + 30_000_000_000
+        expiresAt = capturedAt.addingTimeInterval(Double(windowFramePermitLifetimeNanoseconds) / 1_000_000_000)
+        deadline = uptime + windowFramePermitLifetimeNanoseconds
     }
     public func point(x: Any?, y: Any?) throws -> (Int, Int, CGPoint) {
         func pixel(_ raw: Any?, maximum: Int) throws -> Int {

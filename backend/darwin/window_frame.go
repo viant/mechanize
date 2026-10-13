@@ -20,7 +20,10 @@ import (
 )
 
 const MaximumWindowFrameBytes = MaximumCaptureBytes
-const WindowFramePermitLifetime = 30 * time.Second
+
+// WindowFramePermitLifetime includes the model's planning roundtrip. Each click
+// still uses its own action deadline and revalidates the captured window/pixels.
+const WindowFramePermitLifetime = 120 * time.Second
 
 type WindowFrameOwner RecordingOwner
 

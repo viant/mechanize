@@ -17,7 +17,7 @@ final class WindowFramePermitTests: XCTestCase {
         let p = try permit(); let (x,y,point) = try p.point(x: 199, y: 99)
         XCTAssertEqual(x,199); XCTAssertEqual(y,99); XCTAssertEqual(point.x, -0.25); XCTAssertEqual(point.y, 69.75)
         for raw: Any in [true, -1, 200, 1.2, "1", Double.infinity] { XCTAssertThrowsError(try p.point(x: raw, y: 0)) }
-        XCTAssertEqual(p.expiresAt.timeIntervalSince1970,130)
+        XCTAssertEqual(p.expiresAt.timeIntervalSince1970,220)
     }
     func testOneUseAndAllOwnerEpochGenerationExpiryBindings() throws {
         let store = WindowFramePermitStore(), p = try permit(); store.install(p)
@@ -49,5 +49,19 @@ final class WindowFramePermitTests: XCTestCase {
             if (try? store.consume(id:p.id,owner:p.owner,epoch:"e",generation:2,now:101)) != nil { lock.lock(); winners += 1; lock.unlock() }
         }
         XCTAssertEqual(winners,1)
+    }
+    func testDelayedPlanningStillOneUseAndRevocableWithMonotonicExpiry() throws {
+        let store = WindowFramePermitStore(), p = try permit()
+        let decision = UInt64(100) + 35_000_000_000
+        store.install(p)
+        XCTAssertEqual(try store.lookup(id:p.id,owner:p.owner,epoch:"e",generation:2,now:decision).id,p.id)
+        _ = try store.consume(id:p.id,owner:p.owner,epoch:"e",generation:2,now:decision)
+        XCTAssertThrowsError(try store.consume(id:p.id,owner:p.owner,epoch:"e",generation:2,now:decision))
+        store.install(p); store.clear()
+        XCTAssertThrowsError(try store.lookup(id:p.id,owner:p.owner,epoch:"e",generation:2,now:decision))
+        store.install(p)
+        for now in [p.deadline, UInt64(100) + 121_000_000_000] {
+            XCTAssertThrowsError(try store.lookup(id:p.id,owner:p.owner,epoch:"e",generation:2,now:now))
+        }
     }
 }

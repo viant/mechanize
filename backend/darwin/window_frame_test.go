@@ -81,7 +81,7 @@ func (f *frameFixture) Call(ctx context.Context, r Request) (Reply, error) {
 		case "badScale":
 			permit.Scale = 2
 		case "expired":
-			permit.CapturedAt = now.Add(-time.Minute)
+			permit.CapturedAt = now.Add(-WindowFramePermitLifetime - time.Second)
 			permit.ExpiresAt = permit.CapturedAt.Add(WindowFramePermitLifetime)
 		}
 		f.permit = permit
@@ -164,6 +164,38 @@ func TestWindowFrameCaptureClickRetainsFenceAndBurnsPermitWithoutOutcomePromotio
 	result, err = g.Execute(ctx, p, frameClickStep(t), nil)
 	if err == nil || result.DispatchState != "notDispatched" || f.clicks != 1 {
 		t.Fatal("permit replay dispatched")
+	}
+}
+
+func TestWindowFramePlanningLifetimePreservesExpiryAndOneUse(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		elapsed      time.Duration
+		wantDispatch bool
+	}{
+		{"delayedDecision", 35 * time.Second, true},
+		{"expiredDecision", 121 * time.Second, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, p, g, f, surface := frameGatewayFixture(t, "")
+			if _, err := g.CaptureWindowFrame(ctx, p, surface, 17); err != nil {
+				t.Fatal(err)
+			}
+			// Shift the already captured proof, simulating planning without sleeps.
+			g.framePermit.CapturedAt = time.Now().Add(-tc.elapsed)
+			g.framePermit.ExpiresAt = g.framePermit.CapturedAt.Add(WindowFramePermitLifetime)
+			result, err := g.Execute(ctx, p, frameClickStep(t), nil)
+			if tc.wantDispatch {
+				if err != nil || result.DispatchState != "dispatched" || f.clicks != 1 {
+					t.Fatalf("delayed decision rejected: %+v %v", result, err)
+				}
+				if _, err = g.Execute(ctx, p, frameClickStep(t), nil); err == nil || f.clicks != 1 {
+					t.Fatal("delayed permit replayed")
+				}
+			} else if err == nil || result.DispatchState != "notDispatched" || f.clicks != 0 {
+				t.Fatalf("stale proof dispatched: %+v %v", result, err)
+			}
+		})
 	}
 }
 func TestWindowFrameCaptureRejectsMalformedQualificationAndEvidence(t *testing.T) {

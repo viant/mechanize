@@ -25,6 +25,35 @@ final class WindowFrameClickTests: XCTestCase {
         try qualifyWindowFramePoint(p,point:point,uid:501,check:{},runtime:runtime([window(),window(1,pid:77,alpha:0)]))
         XCTAssertThrowsError(try qualifyWindowFramePoint(p,point:point,uid:501,check:{throw NativeFailure("cancelled","Cancelled")},runtime:runtime([window()])))
     }
+    func testDelayedDecisionStillRequiresCurrentExactWindowAndPixels() throws {
+        let store = WindowFramePermitStore(), p = try permit()
+        store.install(p)
+        let retained = try store.lookup(id:p.id,owner:p.owner,epoch:"e",generation:2,now:35_000_000_100)
+        let point = CGPoint(x:150,y:150)
+        try qualifyWindowFramePoint(retained,point:point,uid:501,check:{},runtime:runtime([window()]))
+        XCTAssertThrowsError(try qualifyWindowFramePoint(retained,point:point,uid:501,check:{},runtime:runtime([window(100)])))
+        XCTAssertThrowsError(try qualifyWindowFramePoint(retained,point:point,uid:501,check:{},runtime:runtime([window(bounds:CGRect(x:101,y:100,width:100,height:100))])))
+        let captured = image(CGColor(gray:0,alpha:1))
+        try requireWindowFrameCurrentImage(captured,current:captured,x:50,y:50)
+        XCTAssertThrowsError(try requireWindowFrameCurrentImage(captured,current:image(CGColor(gray:1,alpha:1)),x:50,y:50))
+        let inputs = InputSafety(); inputs.enable()
+        var downs = 0, ups = 0, attempts = 0
+        let checks: [() throws -> Void] = [
+            { try qualifyWindowFramePoint(retained,point:point,uid:501,check:{},runtime:self.runtime([self.window(100)])) },
+            { try requireWindowFrameCurrentImage(captured,current:self.image(CGColor(gray:1,alpha:1)),x:50,y:50) }
+        ]
+        for check in checks {
+            XCTAssertThrowsError(try postWindowFrameClick(inputs:inputs,point:point,preflight:check,willPost:{attempts += 1},down:{downs += 1;return true},up:{ups += 1;return true}))
+        }
+        XCTAssertEqual(downs,0); XCTAssertEqual(ups,0); XCTAssertEqual(attempts,0)
+        _ = try store.consume(id:p.id,owner:p.owner,epoch:"e",generation:2,now:35_000_000_100)
+        try postWindowFrameClick(inputs:inputs,point:point,preflight:{
+            try qualifyWindowFramePoint(retained,point:point,uid:501,check:{},runtime:self.runtime([self.window()]))
+            try requireWindowFrameCurrentImage(captured,current:captured,x:50,y:50)
+        },willPost:{attempts += 1},down:{downs += 1;return true},up:{ups += 1;return true})
+        XCTAssertEqual(downs,1); XCTAssertEqual(ups,1); XCTAssertEqual(attempts,1)
+        XCTAssertThrowsError(try store.consume(id:p.id,owner:p.owner,epoch:"e",generation:2,now:35_000_000_101))
+    }
     func testPublicMouseDownRecipientCanProveClickThroughOverlayWithoutWhitelisting() throws {
         let p = try permit(), point = CGPoint(x:150,y:150)
         var r = runtime([window(1,pid:77),window()])
