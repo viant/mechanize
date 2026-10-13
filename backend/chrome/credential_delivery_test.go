@@ -156,7 +156,7 @@ func TestCredentialDeliveryUsesLocalVaultAndRetainsUnknown(t *testing.T) {
 				t.Fatal(err)
 			}
 			a.Lease = Lease{ID: "lease", Generation: 1}
-			g.control = &a
+			g.setControlLocked(a)
 			store, err := vault.NewStore(filepath.Join(dir, "vault"), "fixture-v1", &vault.Cipher{Keys: credentialFixtureKeys{}})
 			if err != nil {
 				t.Fatal(err)

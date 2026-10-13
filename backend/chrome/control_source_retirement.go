@@ -6,7 +6,7 @@ package chrome
 // The caller holds the broker mutex. Logical arguments are deliberately absent
 // from retained v2 commands, so this compares their committed fingerprint.
 func knownPressSourceRetirementLocked(c *channel, identity Identity, lease *Lease, brokerEpoch string) bool {
-	if lease == nil || domUnknownBlockedLocked(c) {
+	if lease == nil || domUnknownForTargetLocked(c, identity) {
 		return false
 	}
 	for _, document := range c.documents {

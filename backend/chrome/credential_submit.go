@@ -307,7 +307,8 @@ func (g *Gateway) AdvanceVaultCredential(ctx context.Context, p auth.Principal, 
 		next.Lease = nextLease
 		g.controlMu.Lock()
 		defer g.controlMu.Unlock()
-		if g.control == nil || !sameControl(*g.control, a) || g.controlRetiring {
+		record := g.controlRecordLocked(a)
+		if record == nil || !sameControl(*record.authority, a) || record.retiring {
 			return result, errCredentialDelivery
 		}
 		b.mu.Lock()
@@ -325,7 +326,11 @@ func (g *Gateway) AdvanceVaultCredential(ctx context.Context, p auth.Principal, 
 		if !replaced {
 			return result, errCredentialDelivery
 		}
-		g.control = &next
+		if nextRecord := g.controlRecordLocked(next); nextRecord != nil && nextRecord != record {
+			return result, errCredentialDelivery
+		}
+		delete(g.controls, controlTargetOf(a))
+		g.setControlLocked(next)
 		c.privateAdvance = nil
 		c.privateFlow = nil
 		c.privateInspection = &credentialAdmissionPending{identity: next.Document.Identity, done: make(chan credentialAdmissionReply, 1)}

@@ -343,7 +343,7 @@ func (m *WebControlManager) Prepare(ctx context.Context, p auth.Principal, step 
 	stage = "qualify"
 	qualificationCtx, stopQualification := context.WithTimeout(ctx, 3*time.Second)
 	defer stopQualification()
-	if err = m.reconcileRetirements(qualificationCtx, actual); err != nil {
+	if err = m.reconcileRetirements(qualificationCtx, actual, step.Target.Surface); err != nil {
 		return ctx, 0, err
 	}
 	ready, err := m.qualify(qualificationCtx, actual, step.Target.Surface)
@@ -652,6 +652,10 @@ func (m *WebControlManager) beginWork() bool {
 	return true
 }
 
+func webSurfaceMatchesAuthority(surface model.Surface, a WebControlAuthority) bool {
+	return (surface.Origin == "" || surface.Origin == a.Document.Origin) && (surface.TabID == "" || surface.TabID == a.Document.QualifiedTabID() || surface.TabID == strconv.Itoa(a.Document.TabID))
+}
+
 func (m *WebControlManager) consumeRetirement(p auth.Principal, a WebControlAuthority) {
 	if m.options.RetireConsumed != nil {
 		m.options.RetireConsumed(p, a)
@@ -660,13 +664,13 @@ func (m *WebControlManager) consumeRetirement(p auth.Principal, a WebControlAuth
 
 // reconcileRetirements retries revocation only, using immutable owned metadata.
 // Fresh caller context supplies cancellation; no committed transaction context is retained.
-func (m *WebControlManager) reconcileRetirements(ctx context.Context, p auth.Principal) error {
+func (m *WebControlManager) reconcileRetirements(ctx context.Context, p auth.Principal, surfaces ...model.Surface) error {
 	bounded, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	m.mu.Lock()
 	var pending []*webControlIntent
 	for intent := range m.prepared {
-		if !intent.cleanupPending || intent.principal.Namespace != p.Namespace || intent.principal.ClientID != p.ClientID {
+		if !intent.cleanupPending || intent.principal.Namespace != p.Namespace || intent.principal.ClientID != p.ClientID || len(surfaces) != 0 && !webSurfaceMatchesAuthority(surfaces[0], intent.authority) {
 			continue
 		}
 		if intent.executing {

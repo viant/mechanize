@@ -31,6 +31,10 @@ type lifecycleFixture struct {
 
 func newLifecycleFixture(t *testing.T, total int, reconnect ...bool) *lifecycleFixture {
 	t.Helper()
+	return newLifecycleFixtureBuild(t, total, 32, reconnect...)
+}
+func newLifecycleFixtureBuild(t *testing.T, total, build int, reconnect ...bool) *lifecycleFixture {
+	t.Helper()
 	dir, e := os.MkdirTemp("/private/tmp", "life-test-")
 	if e != nil {
 		t.Fatal(e)
@@ -62,7 +66,7 @@ func newLifecycleFixture(t *testing.T, total int, reconnect ...bool) *lifecycleF
 	t.Cleanup(func() { conn.Close() })
 	hello := map[string]any{"type": "hello", "protocolVersion": 1, "profileChannel": "p1", "browserInstance": "b1", "extensionOrigin": grant.ExtensionOrigin, "credential": cred, "profileDirectory": dir, "profileLaunchQualified": true}
 	if len(reconnect) > 0 && reconnect[0] {
-		hello["workerBuild"] = 32
+		hello["workerBuild"] = build
 		hello["extensionVersion"] = "0.1.62"
 		hello["lastGrant"] = map[string]any{"brokerEpoch": "old-broker", "channelEpoch": "old-channel", "scopeHash": b.channels[channelKey("p1", "b1")].scopeHash, "trustScope": "profile", "scopeQualified": true, "profileQualified": true, "leaseRequired": true, "mutationFingerprintVersion": 2}
 	}

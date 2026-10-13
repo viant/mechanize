@@ -31,9 +31,7 @@ type Gateway struct {
 	privacyMu         sync.Mutex
 	admissionLane     chan struct{}
 	controlMu         sync.Mutex
-	control           *ControlAuthority
-	controlRetiring   bool
-	navigationRetired *ControlAuthority
+	controls          map[controlTarget]*controlRecord
 	controlGeneration uint64
 	broker            *Broker
 	options           GatewayOptions
@@ -807,7 +805,7 @@ func (b *Broker) mutationHistoryLocked(c *channel, command Command) (*Reply, err
 		return nil, browserError("unknownEffect", "Attempt already dispatched without a receipt; query/reconcile, never replay", "unknown")
 	}
 	for _, other := range b.channels {
-		if domUnknownBlockedLocked(other) {
+		if domUnknownForTargetLocked(other, command.Identity) {
 			return nil, browserError("unknownEffect", "Prior browser mutation has unknown outcome; reconcile it first", "unknown")
 		}
 	}

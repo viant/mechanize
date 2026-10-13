@@ -134,6 +134,9 @@ func controlFixtureVersion(t *testing.T, version int, privateStage ...func() str
 			r := Reply{RequestID: cmd.RequestID, Identity: cmd.Identity, ControlLease: cmd.ControlLease}
 			switch cmd.Action {
 			case "observe":
+				if len(privateStage) > 0 && privateStage[0]() == "dropTargetARead" && cmd.Identity.TabID == 7 {
+					continue
+				}
 				if len(privateStage) > 0 && privateStage[0]() == "noObservation" {
 					r.Error = browserError("secureDocumentRequired", "No DOM observation permitted", "notDispatched")
 				}
@@ -191,6 +194,9 @@ func controlFixtureVersion(t *testing.T, version int, privateStage ...func() str
 					r.RetiredAuthorityQuiesced = true
 				}
 				count.Add(1)
+				if len(privateStage) > 0 && privateStage[0]() == "dropTargetAReceipt" && cmd.Identity.TabID == 7 {
+					continue
+				}
 				r.FingerprintVersion = cmd.FingerprintVersion
 				r.FingerprintSHA256 = cmd.FingerprintSHA256
 				r.AttemptID = cmd.AttemptID
@@ -413,7 +419,7 @@ func TestControlConcurrentAdmissionDispatchRetirementAndCancellationNoLockInvers
 		t.Fatal("retired delayed input reached endpoint")
 	}
 	g.controlMu.Lock()
-	retained := g.control != nil && g.control.Lease == a.Lease && g.controlRetiring
+	retained := testFirstControl(g) != nil && testFirstControl(g).Lease == a.Lease && testAnyControlRetiring(g)
 	g.controlMu.Unlock()
 	if !retained {
 		t.Fatal("ambiguous canceled authority was silently replaced")

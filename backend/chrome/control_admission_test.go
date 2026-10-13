@@ -33,8 +33,8 @@ func TestControlAdmissionUnacknowledgedAcquireRetainsOwnershipWithoutConfirmatio
 		t.Fatalf("ambiguous acquire claimed confirmation or lost identity: %+v %v", result, err)
 	}
 	f.g.controlMu.Lock()
-	held := f.g.control
-	retiring := f.g.controlRetiring
+	held := testFirstControl(f.g)
+	retiring := testAnyControlRetiring(f.g)
 	f.g.controlMu.Unlock()
 	if held == nil || retiring || !sameControl(*held, result.Authority) {
 		t.Fatal("unconfirmed acquired authority was discarded")

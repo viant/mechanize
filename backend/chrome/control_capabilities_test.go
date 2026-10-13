@@ -24,7 +24,7 @@ func TestControlCapabilityDiscoveryHandlesMultipleTabsWithoutRendererAdmission(t
 		t.Fatal("capability discovery sent a command")
 	}
 	g.controlMu.Lock()
-	held := g.control != nil
+	held := testFirstControl(g) != nil
 	g.controlMu.Unlock()
 	if held {
 		t.Fatal("capability discovery acquired a renderer lease")

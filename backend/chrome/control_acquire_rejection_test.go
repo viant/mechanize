@@ -64,7 +64,7 @@ func TestControlAdmissionBoundedKnownRejectionLeavesNoAuthorityOrInhibition(t *t
 		t.Fatal("retry limit not closed")
 	}
 	f.g.controlMu.Lock()
-	clear := f.g.control == nil && !f.g.controlRetiring
+	clear := testFirstControl(f.g) == nil && !testAnyControlRetiring(f.g)
 	f.g.controlMu.Unlock()
 	if !clear {
 		t.Fatal("known rejection retained false lease")
@@ -85,7 +85,7 @@ func TestControlAdmissionLostAcquireReplyStillRetainsExactAuthority(t *testing.T
 		t.Fatal("lost acquisition retried or classified safe")
 	}
 	f.g.controlMu.Lock()
-	held := f.g.control != nil && sameControl(*f.g.control, a.Authority)
+	held := testFirstControl(f.g) != nil && sameControl(*testFirstControl(f.g), a.Authority)
 	f.g.controlMu.Unlock()
 	if !held {
 		t.Fatal("lost acquired lease discarded")
@@ -116,17 +116,17 @@ func TestRejectedAcquisitionCannotClearConcurrentAuthorityOrReceipt(t *testing.T
 			if mode == "otherLease" {
 				copy := a
 				copy.Lease.ID = "other"
-				f.g.control = &copy
+				f.g.setControlLocked(copy)
 			}
 			if mode == "retiring" {
-				f.g.controlRetiring = true
+				testMarkControlRetiring(f.g)
 			}
 			f.g.controlMu.Unlock()
 			if f.g.releaseRejectedAcquisition(f.ctx, f.p, a, c, conn, Reply{acquireNotInstalled: true, Identity: a.Document.Identity}) {
 				t.Fatal("concurrent authority cleared")
 			}
 			f.g.controlMu.Lock()
-			retained := f.g.control != nil
+			retained := testFirstControl(f.g) != nil
 			f.g.controlMu.Unlock()
 			if !retained {
 				t.Fatal("authority removed")

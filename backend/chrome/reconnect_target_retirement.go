@@ -22,7 +22,7 @@ func reconnectTargetRetirementLocked(c *channel, command Command) bool {
 // targetRetirementProvenLocked accepts only retained, exact original audit tuples.
 // The caller verifies the current authenticated channel process before using it.
 func targetRetirementProvenLocked(c *channel, a ControlAuthority) bool {
-	if c == nil || c.grant.Principal.Namespace != a.Owner || c.conn == nil || !c.executorQualified || len(c.pending) != 0 || domUnknownBlockedLocked(c) {
+	if c == nil || c.grant.Principal.Namespace != a.Owner || c.conn == nil || !c.executorQualified || pendingForTargetLocked(c, a.Document.Identity) || domUnknownForTargetLocked(c, a.Document.Identity) {
 		return false
 	}
 	for id, retired := range c.retiredTargets {
@@ -41,29 +41,27 @@ func targetRetirementProvenLocked(c *channel, a ControlAuthority) bool {
 // below must still authorize and qualify the new document independently.
 func (g *Gateway) consumeTargetRetirement(p auth.Principal) {
 	g.controlMu.Lock()
-	if g.control == nil || g.control.Owner != p.Namespace || g.control.ClientID != p.ClientID {
-		g.controlMu.Unlock()
-		return
-	}
-	original := *g.control
-	g.controlMu.Unlock()
-	c := g.controlChannel(original)
-	if c == nil {
-		return
-	}
-	g.broker.mu.Lock()
-	retired := targetRetirementProvenLocked(c, original)
-	g.broker.mu.Unlock()
-	if !retired {
-		return
-	}
-	g.controlMu.Lock()
-	if g.control != nil && sameControl(*g.control, original) {
-		g.control = nil
-		g.controlRetiring = false
-		g.navigationRetired = nil
+	var originals []ControlAuthority
+	for _, record := range g.controls {
+		if record.authority.Owner == p.Namespace && record.authority.ClientID == p.ClientID {
+			originals = append(originals, *record.authority)
+		}
 	}
 	g.controlMu.Unlock()
+	for _, original := range originals {
+		c := g.controlChannel(original)
+		if c == nil {
+			continue
+		}
+		g.broker.mu.Lock()
+		retired := targetRetirementProvenLocked(c, original)
+		g.broker.mu.Unlock()
+		if retired {
+			g.controlMu.Lock()
+			g.clearControlLocked(original)
+			g.controlMu.Unlock()
+		}
+	}
 }
 
 func reconnectRetirementPendingOnlyLocked(c *channel) bool {

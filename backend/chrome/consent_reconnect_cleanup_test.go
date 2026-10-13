@@ -11,9 +11,13 @@ import (
 )
 
 func TestConsentReconnectProofRequiresActualPreparedHandshakeAndUnchangedInventory(t *testing.T) {
-	for _, mode := range []string{"complete", "retiredUnknown", "retiredMissingProof", "retiredWrongLease", "absent", "notPrepared", "newChallenge", "documentChanged", "activeWork", "unknown", "private", "newWorkCompleted", "peerChanged", "foreign", "incomplete"} {
+	for _, mode := range []string{"complete", "build33", "retiredUnknown", "retiredMissingProof", "retiredWrongLease", "absent", "notPrepared", "newChallenge", "documentChanged", "activeWork", "unknown", "private", "newWorkCompleted", "peerChanged", "foreign", "incomplete"} {
 		t.Run(mode, func(t *testing.T) {
-			f := newLifecycleFixture(t, 0, mode != "absent")
+			build := 32
+			if mode == "build33" {
+				build = 33
+			}
+			f := newLifecycleFixtureBuild(t, 0, build, mode != "absent")
 			b, c := f.gateway.broker, f.channel
 			p, ctx := f.principal, f.ctx
 			b.mu.Lock()
@@ -62,7 +66,7 @@ func TestConsentReconnectProofRequiresActualPreparedHandshakeAndUnchangedInvento
 			b.mu.Unlock()
 			calls := 0
 			err := f.gateway.WithConsentReconnectProof(ctx, p, func() error { calls++; return nil })
-			expected := mode == "complete" || mode == "retiredUnknown"
+			expected := mode == "complete" || mode == "build33" || mode == "retiredUnknown"
 			if (err == nil) != expected || calls != map[bool]int{true: 1, false: 0}[expected] {
 				t.Fatalf("mode%s calls%d err%v", mode, calls, err)
 			}

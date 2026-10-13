@@ -973,3 +973,43 @@ func TestWebRetirementRecoveryHasOneOverallDeadline(t *testing.T) {
 		}
 	}
 }
+
+func TestWebRetainedTargetDoesNotBlockAnotherTargetAndCloseOwnsBoth(t *testing.T) {
+	f := newWebControlFixture(t)
+	f.dispatchedResult = automation.StepResult{DispatchState: "unknown"}
+	f.cleanup = WebControlCleanup{UnknownExecutors: true}
+	withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
+		first := prepareWeb(t, f, ctx, p, step)
+		original, err := f.manager.Execute(first, p, step, nil)
+		if !errors.Is(err, ErrWebControlCleanupUnknown) || original.DispatchState != "unknown" {
+			t.Fatal(original, err)
+		}
+		a := first.Value(webControlIntentKey{}).(*webControlIntent)
+		f.ready.Authority.ID = "second-authority"
+		f.ready.Authority.Document.TabID = 12
+		f.ready.Authority.Document.DocumentID = "second-document"
+		secondStep := step
+		secondStep.Target.Surface.TabID = f.ready.Authority.Document.QualifiedTabID()
+		second := prepareWeb(t, f, ctx, p, secondStep)
+		f.dispatchedResult = automation.StepResult{DispatchState: "dispatched"}
+		// Both exact leases lose cleanup ACKs, independently retaining their intents.
+		if result, err := f.manager.Execute(second, p, secondStep, nil); !errors.Is(err, ErrWebControlCleanupUnknown) || result.DispatchState != "dispatched" {
+			t.Fatal(result, err)
+		}
+		b := second.Value(webControlIntentKey{}).(*webControlIntent)
+		if f.dispatches != 2 || f.releases != 0 || a.lease == nil || b.lease == nil {
+			t.Fatal("B blocked or A released without proof")
+		}
+		var retired []WebControlAuthority
+		f.manager.options.Retire = func(_ context.Context, _ auth.Principal, authority WebControlAuthority) (WebControlCleanup, error) {
+			retired = append(retired, authority)
+			return WebControlCleanup{AuthorityRetired: true, RetiredAuthorityQuiesced: true}, nil
+		}
+		if err := f.manager.Close(auth.WithPrincipal(context.Background(), p)); err != nil {
+			t.Fatal(err)
+		}
+		if len(retired) != 2 || f.releases != 2 || !a.consumed || !b.consumed || original.DispatchState != "unknown" {
+			t.Fatal("Close did not own both targets independently")
+		}
+	})
+}

@@ -257,11 +257,14 @@ func (g *Gateway) RetireAbsentCredentialScope(ctx context.Context, p auth.Princi
 		}
 		c.documents = retained
 	}
-	if g.control != nil && same(g.control.Document.Identity) {
-		if g.controlRetiring {
+	for key, record := range g.controls {
+		if !same(record.authority.Document.Identity) {
+			continue
+		}
+		if record.retiring {
 			return scopeFailure("scopeChanged")
 		}
-		g.control = nil
+		delete(g.controls, key)
 	}
 	return nil
 }

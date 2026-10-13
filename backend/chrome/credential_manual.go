@@ -107,8 +107,12 @@ func (g *Gateway) BeginManualCredentialPrivacy(ctx context.Context, p auth.Princ
 	}
 	b := g.broker
 	g.controlMu.Lock()
-	oldControl := g.control
-	retiring := g.controlRetiring
+	record := g.controlRecordLocked(ControlAuthority{Owner: p.Namespace, ClientID: p.ClientID, Document: Document{Identity: source.Identity}})
+	var oldControl *ControlAuthority
+	retiring := record != nil && record.retiring
+	if record != nil {
+		oldControl = record.authority
+	}
 	g.controlMu.Unlock()
 	b.mu.Lock()
 	c := b.channels[channelKey(source.Identity.ProfileChannel, source.Identity.BrowserInstance)]
@@ -361,7 +365,8 @@ func (t *ManualCredentialTransition) Qualify(ctx context.Context, p auth.Princip
 	g, b, c := t.gateway, t.gateway.broker, t.channel
 	g.controlMu.Lock()
 	defer g.controlMu.Unlock()
-	if g.control != t.oldControl || g.controlRetiring {
+	record := g.controlRecordLocked(ControlAuthority{Owner: p.Namespace, ClientID: p.ClientID, Document: Document{Identity: t.source.Identity}})
+	if record != nil && (record.authority != t.oldControl || record.retiring) || record == nil && t.oldControl != nil {
 		return CredentialPrivacyProof{}, ErrManualCredentialPrivacy
 	}
 	b.mu.Lock()
@@ -373,9 +378,7 @@ func (t *ManualCredentialTransition) Qualify(ctx context.Context, p auth.Princip
 	d.TabHandle = d.QualifiedTabID()
 	a := ControlAuthority{AllWebsites: c.grant.AllWebsites, Owner: p.Namespace, ClientID: p.ClientID, Document: d, ExtensionOrigin: c.grant.ExtensionOrigin, BrokerEpoch: b.epoch, ChannelEpoch: c.epoch, ScopeHash: c.scopeHash, TrustScope: c.grant.TrustScope, ScopeQualified: channelScopeQualified(c), ProfileQualified: c.profileQualified, MutationFingerprintVersion: 2, SelectOptionVersion: c.selectOptionVersion, Evidence: *c.processEvidence}
 	s := &credentialPrivacyState{gateway: g, channel: c, conn: t.conn, source: a, authority: a, binding: t.binding, permitID: t.proofID, identity: identity, admit: t.admit, active: true, published: true}
-	g.control = nil
-	g.controlRetiring = false
-	g.navigationRetired = nil
+	delete(g.controls, controlTargetOf(ControlAuthority{Owner: p.Namespace, ClientID: p.ClientID, Document: Document{Identity: t.source.Identity}}))
 	c.privacy = s
 	c.privateFlow = nil
 	c.privateInspection = nil

@@ -28,7 +28,7 @@ func TestControllerPreflightSocketKeepsKnownRepliesAndUnrelatedFramesSeparate(t 
 			b.controllerDispatcher = dispatcher
 			b.mu.Lock()
 			c.grant.Principal.Scopes = append(c.grant.Principal.Scopes, "desktop:observe")
-			c.workerBuild = 32
+			c.workerBuild = 33
 			c.privateInspectionDiagnosticVersion = 1
 			c.controllerPolicy = ControllerPolicy{Enabled: true, Origins: []string{"https://shell.fixture.test"}}
 			s := &ControllerSession{ID: "owned-port", Origin: "https://shell.fixture.test", DocumentID: "controller-document", Approved: true, ExpiresAt: time.Now().Add(time.Minute)}

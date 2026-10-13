@@ -69,7 +69,7 @@ func TestPlaywrightControllerPrivacyStartupUsesScopedPeerIdentity(t *testing.T) 
 		t.Fatal(e)
 	}
 	a.Lease = Lease{ID: "fixture-lease", Generation: 1}
-	g.control = &a
+	g.setControlLocked(a)
 	binding, _ := auth.ConsentBindingFromContext(ctx)
 	admission := func(current context.Context) error {
 		allowed, e := g.AuthorizeControllerPolicy(current, p)

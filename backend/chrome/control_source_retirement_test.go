@@ -223,7 +223,7 @@ func knownPressProductionWorker(t *testing.T, private bool) {
 	c.documents = []Document{next}
 	b.mu.Unlock()
 	g.controlMu.Lock()
-	g.control = &a
+	g.setControlLocked(a)
 	g.controlMu.Unlock()
 	retired, err := g.RetireControl(ctx, p, a)
 	if err != nil || !retired {

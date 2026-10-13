@@ -1,6 +1,18 @@
 // Browser API mutation calls execute once. Navigation timers/promises only observe.
 globalThis.MechanizeBrowser = (() => {
   const originAllowed = MechanizeProtocol.websiteAllowed;
+  function unresolvedForTarget(session,command){
+    return Object.entries(session).some(([key,intent])=>{
+      if(!key.startsWith('browserIntent:'))return false;
+      const receipt=session[key.replace('browserIntent:','browserReceipt:')];
+      if(receipt&&receipt.dispatchState!=='unknown'&&receipt.error?.dispatchState!=='unknown')return false;
+      const i=intent?.identity,l=intent?.controlLease;
+      // Old/unbound browser intents remain global hazards. Only exact v2
+      // target metadata from the original admitted command can separate tabs.
+      const bound=intent?.fingerprintVersion===2&&/^[a-f0-9]{64}$/.test(intent?.fingerprint||'')&&i&&['profileChannel','browserInstance','documentId'].every(k=>typeof i[k]==='string'&&i[k])&&Number.isSafeInteger(i.tabId)&&i.tabId>0&&i.frameId===0&&Number.isSafeInteger(i.documentGeneration)&&i.documentGeneration>0&&l&&typeof l.id==='string'&&l.id&&Number.isSafeInteger(l.generation)&&l.generation>0&&['brokerEpoch','channelEpoch','scopeHash'].every(k=>intent[k]===command[k]);
+      return !command.identity||!bound||['profileChannel','browserInstance','tabId','frameId'].every(k=>i[k]===command.identity[k]);
+    });
+  }
   async function query(command, protectedOrigins = new Set()) {
     const saved = await chrome.storage.session.get(["browserReceipt:" + command.attemptId, "browserIntent:" + command.attemptId]);
     const receipt = saved["browserReceipt:" + command.attemptId], intent = saved["browserIntent:" + command.attemptId];
@@ -48,7 +60,7 @@ globalThis.MechanizeBrowser = (() => {
     const validated = await chrome.tabs.sendMessage(command.identity.tabId, {...command, action: "executor.validate", attemptId: undefined, args: undefined, fingerprintVersion:undefined, fingerprintSHA256:undefined}, {documentId: command.identity.documentId});
     if (validated.error || !validated.validated) return {...validated, requestId: command.requestId, attemptId: command.attemptId};
     const session = await chrome.storage.session.get(null);
-    if (Object.keys(session).some(key => key.startsWith("browserIntent:") && (!session[key.replace("browserIntent:", "browserReceipt:")] || session[key.replace("browserIntent:", "browserReceipt:")].dispatchState === "unknown" || session[key.replace("browserIntent:", "browserReceipt:")].error?.dispatchState === "unknown"))) throw MechanizeProtocol.error("unknownEffect", "A prior browser intent has no confirmed receipt; reconcile before another mutation", "unknown");
+    if (unresolvedForTarget(session,command)) throw MechanizeProtocol.error("unknownEffect", "A prior browser intent has no confirmed receipt; reconcile before another mutation", "unknown");
     if (Object.keys(session).filter(key => key.startsWith("browserIntent:")).length >= 512) throw MechanizeProtocol.error("receiptCapacity", "Browser receipt capacity exhausted; explicit reconciliation required");
     const requireAuthority = () => {if(!authority() || command.deadlineUnixMs<=Date.now()) throw MechanizeProtocol.error("staleAuthority","Original native authority or deadline is no longer current");};
     let retiredProof=false;
@@ -59,7 +71,7 @@ globalThis.MechanizeBrowser = (() => {
       retiredProof=true;retired();requireAuthority();
     }
     // No URL/value/credential is persisted. Missing receipt after this marker is unknown.
-    await chrome.storage.session.set({["browserIntent:" + command.attemptId]: {identity: command.identity, brokerEpoch: command.brokerEpoch, channelEpoch: command.channelEpoch, scopeHash: command.scopeHash, fingerprint, fingerprintVersion}});
+    await chrome.storage.session.set({["browserIntent:" + command.attemptId]: {identity: command.identity, brokerEpoch: command.brokerEpoch, channelEpoch: command.channelEpoch, scopeHash: command.scopeHash, fingerprint, fingerprintVersion,...(fingerprintVersion===2?{controlLease:{...command.controlLease}}:{})}});
     const frames = await chrome.webNavigation.getAllFrames({tabId: command.identity.tabId});
     const current = frames.find(frame => frame.frameId === 0 && frame.documentId === command.identity.documentId);
     if (!current || !originAllowed(current.url, enrollment)) throw MechanizeProtocol.error("staleIdentity", "Document changed before browser API dispatch");
@@ -130,7 +142,7 @@ globalThis.MechanizeBrowser = (() => {
         if(Object.keys(prior).sort().join()!==Object.keys(shape).sort().join()||['type','attemptId','brokerEpoch','channelEpoch','scopeHash'].some(k=>prior[k]!==shape[k])||!hex(prior.requestId)||!['dispatched','notDispatched','unknown'].includes(prior.dispatchState)||!Number.isSafeInteger(prior.tabId)||prior.dispatchState==='dispatched'&&(prior.tabId<=0||prior.errorCode!=='none')||prior.dispatchState!=='dispatched'&&(prior.tabId!==0||!['authorityChanged','permissionUnavailable','windowUnavailable','receiptCapacity','unknownEffect','lifecycleInhibited','creationUnavailable','receiptUnavailable','attemptConflict'].includes(prior.errorCode)))return reply('unknown',0,'receiptUnavailable');
         return shape;
       }
-      if(Object.keys(store).some(k=>k.startsWith('browserIntent:')&&(!store[k.replace('browserIntent:','browserReceipt:')]||store[k.replace('browserIntent:','browserReceipt:')].dispatchState==='unknown'||store[k.replace('browserIntent:','browserReceipt:')].error?.dispatchState==='unknown')))throw 'unknownEffect';
+      if(unresolvedForTarget(store,command))throw 'unknownEffect';
       if(Object.keys(store).filter(k=>k.startsWith('browserIntent:')).length>=512)throw 'receiptCapacity';
       if(store.mechanizeLifecycleInhibited)throw 'lifecycleInhibited';
       if(!await api.permissions.contains({origins:[origin+'/*']}))throw 'permissionUnavailable';check();

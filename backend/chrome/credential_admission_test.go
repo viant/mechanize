@@ -91,7 +91,7 @@ func TestCredentialAdmissionMetadataOnlyAndRetainedLease(t *testing.T) {
 					t.Fatal(e)
 				}
 				old.Lease = Lease{ID: "old-lease", Generation: 1}
-				g.control = &old
+				g.setControlLocked(old)
 			}
 			requests := make(chan string, 4)
 			go func() {
@@ -181,7 +181,7 @@ func TestCredentialAdmissionMetadataOnlyAndRetainedLease(t *testing.T) {
 			}
 			if mode == "existing" {
 				g.controlMu.Lock()
-				old := g.control
+				old := testFirstControl(g)
 				g.controlMu.Unlock()
 				if old == nil || old.Lease.ID != "old-lease" || old.Document.Generation != 1 {
 					t.Fatal("existing authority replaced")
@@ -189,7 +189,7 @@ func TestCredentialAdmissionMetadataOnlyAndRetainedLease(t *testing.T) {
 			}
 			if mode == "acquireEcho" {
 				g.controlMu.Lock()
-				retained := g.control != nil
+				retained := testFirstControl(g) != nil
 				g.controlMu.Unlock()
 				if !admission.Created || !retained {
 					t.Fatal("uncertain acquisition erased lease")

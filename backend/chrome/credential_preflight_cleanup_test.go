@@ -38,7 +38,7 @@ func TestPreflightIdleNeverRetiresActiveOrUnknownAuthority(t *testing.T) {
 			}
 			g.broker.mu.Unlock()
 			if mode == "control" {
-				g.control = &ControlAuthority{}
+				g.setControlLocked(ControlAuthority{})
 			}
 			if mode == "foreign" {
 				p.ClientID = "other"
@@ -50,7 +50,7 @@ func TestPreflightIdleNeverRetiresActiveOrUnknownAuthority(t *testing.T) {
 			if mode == "unknown" && !c.unknown["original"] {
 				t.Fatal("unknown history cleared")
 			}
-			if mode == "control" && g.control == nil {
+			if mode == "control" && testFirstControl(g) == nil {
 				t.Fatal("control retired")
 			}
 		})

@@ -221,10 +221,11 @@ func (g *Gateway) AdmitCredentialControl(ctx context.Context, p auth.Principal, 
 	}
 	g.controlMu.Lock()
 	result.FailureStage = "authority"
-	busy := g.controlRetiring
-	if g.control != nil {
-		a.Lease = g.control.Lease
-		busy = busy || !sameControl(a, *g.control)
+	record := g.controlRecordLocked(a)
+	busy := record != nil && record.retiring
+	if record != nil {
+		a.Lease = record.authority.Lease
+		busy = busy || !sameControl(a, *record.authority)
 	}
 	g.controlMu.Unlock()
 	if busy {
@@ -303,7 +304,7 @@ func (g *Gateway) AdmitCredentialControl(ctx context.Context, p auth.Principal, 
 	requestID := newPrivateID()
 	b.mu.Lock()
 	diagnostics := c.privateInspectionDiagnosticVersion == 1
-	if c.workerBuild == 22 || c.workerBuild == 23 || c.workerBuild == 24 || c.workerBuild == 25 || c.workerBuild == 26 || c.workerBuild == 27 || c.workerBuild == 28 || c.workerBuild == 29 || c.workerBuild == 30 || c.workerBuild == 31 || c.workerBuild == 32 {
+	if c.workerBuild >= 22 && c.workerBuild <= 33 {
 		a.PrivateRecipientID = newPrivateID()
 	}
 	b.mu.Unlock()
@@ -356,21 +357,21 @@ func (g *Gateway) AdmitCredentialControl(ctx context.Context, p auth.Principal, 
 	}
 	a.Document.Generation = inspected.identity.Generation
 	g.controlMu.Lock()
-	if g.controlRetiring {
+	record = g.controlRecordLocked(a)
+	if record != nil && record.retiring {
 		g.controlMu.Unlock()
 		return result, errCredentialDelivery
 	}
-	if g.control != nil {
-		a.Lease = g.control.Lease
-		if !sameControl(a, *g.control) {
+	if record != nil {
+		a.Lease = record.authority.Lease
+		if !sameControl(a, *record.authority) {
 			g.controlMu.Unlock()
 			return result, errCredentialDelivery
 		}
 	} else {
 		g.controlGeneration++
 		a.Lease = Lease{ID: newID(), Generation: g.controlGeneration}
-		copy := a
-		g.control = &copy
+		g.setControlLocked(a)
 		result.Created = true
 	}
 	g.controlMu.Unlock()
@@ -404,7 +405,8 @@ func (g *Gateway) AdmitCredentialControl(ctx context.Context, p auth.Principal, 
 		}
 		g.controlMu.Lock()
 		b.mu.Lock()
-		valid := g.control != nil && !g.controlRetiring && sameControl(*g.control, a) && c.conn == conn && len(c.pending) == 0 && len(c.unknown) == 0 && !c.lifecycleInhibited
+		record := g.controlRecordLocked(a)
+		valid := record != nil && !record.retiring && sameControl(*record.authority, a) && c.conn == conn && len(c.pending) == 0 && len(c.unknown) == 0 && !c.lifecycleInhibited
 		updated := false
 		if valid {
 			for i, d := range c.documents {
@@ -416,8 +418,7 @@ func (g *Gateway) AdmitCredentialControl(ctx context.Context, p auth.Principal, 
 		}
 		if updated {
 			a.Document.Generation = refreshed.identity.Generation
-			copy := a
-			g.control = &copy
+			g.setControlLocked(a)
 		}
 		b.mu.Unlock()
 		g.controlMu.Unlock()

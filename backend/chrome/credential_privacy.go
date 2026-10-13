@@ -331,14 +331,24 @@ func (g *Gateway) QualifyCredentialPrivacy(ctx context.Context, p auth.Principal
 		return CredentialPrivacyProof{}, credentialPrivacyFailure("commit")
 	}
 	g.controlMu.Lock()
-	if g.control != nil && !sameControl(*g.control, source) && (!repeated || !sameControl(*g.control, old.authority)) {
+	record := g.controlRecordLocked(source)
+	if record != nil && !sameControl(*record.authority, source) && (!repeated || !sameControl(*record.authority, old.authority)) {
 		g.controlMu.Unlock()
 		g.privacyMu.Unlock()
 		return CredentialPrivacyProof{}, credentialPrivacyFailure("promotion")
 	}
-	g.control = nil
-	g.controlRetiring = false
-	g.navigationRetired = nil
+	if repeated {
+		oldRecord := g.controlRecordLocked(old.authority)
+		if oldRecord != nil && !sameControl(*oldRecord.authority, old.authority) {
+			g.controlMu.Unlock()
+			g.privacyMu.Unlock()
+			return CredentialPrivacyProof{}, credentialPrivacyFailure("promotion")
+		}
+	}
+	g.clearControlLocked(source)
+	if repeated {
+		g.clearControlLocked(old.authority)
+	}
 	g.controlMu.Unlock()
 	b.mu.Lock()
 	if c.conn != s.conn || len(c.unknown) != 0 {

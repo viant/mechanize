@@ -70,7 +70,8 @@ func (g *Gateway) releaseRejectedAcquisition(ctx context.Context, p auth.Princip
 	defer g.controlMu.Unlock()
 	g.broker.mu.Lock()
 	defer g.broker.mu.Unlock()
-	if g.control == nil || g.controlRetiring || !sameControl(*g.control, a) || c.conn != conn || c.processEvidence == nil || c.processEvidence.NativeHost != a.Evidence.NativeHost || c.processEvidence.ChromeParent != a.Evidence.ChromeParent || g.broker.epoch != a.BrokerEpoch || c.epoch != a.ChannelEpoch || c.scopeHash != a.ScopeHash || !channelScopeQualified(c) || !c.executorQualified || !c.inventoryComplete || g.broker.closed || c.lifecycleInhibited || len(c.pending) != 0 || domUnknownBlockedLocked(c) || g.navigationRetired != nil || ctx.Err() != nil {
+	record := g.controlRecordLocked(a)
+	if record == nil || record.retiring || !sameControl(*record.authority, a) || c.conn != conn || c.processEvidence == nil || c.processEvidence.NativeHost != a.Evidence.NativeHost || c.processEvidence.ChromeParent != a.Evidence.ChromeParent || g.broker.epoch != a.BrokerEpoch || c.epoch != a.ChannelEpoch || c.scopeHash != a.ScopeHash || !channelScopeQualified(c) || !c.executorQualified || !c.inventoryComplete || g.broker.closed || c.lifecycleInhibited || pendingForTargetLocked(c, a.Document.Identity) || domUnknownForTargetLocked(c, a.Document.Identity) || record.navigationRetired != nil || ctx.Err() != nil {
 		return false
 	}
 	found := false
@@ -87,6 +88,6 @@ func (g *Gateway) releaseRejectedAcquisition(ctx context.Context, p auth.Princip
 			return false
 		}
 	}
-	g.control = nil
+	g.clearControlLocked(a)
 	return true
 }

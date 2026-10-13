@@ -141,3 +141,28 @@ test('pending navigation never grants a document and still refuses a foreign pen
   assert.equal(r.error?.code,foreign?'redirectOriginDenied':undefined);assert.equal(f.state.updates,1);
  }
 });
+
+test('target-bound v2 lost browser ACK permits another tab but keeps legacy and same-tab successor blocked',async()=>{
+ const f=fixture();f.state.keepOldDocument=true;
+ const make=async(tab,attempt,doc='doc1')=>{
+  const c=command('browser.activate',{scopeHash:'a'.repeat(64),identity:{...identity,tabId:tab,documentId:doc},attemptId:attempt,args:undefined,fingerprintVersion:2,controlLease:{id:'lease-'+tab,generation:1}});
+  c.fingerprintSHA256=(await f.context.MechanizeFingerprint.mutationV2(c)).sha256;return c;
+ };
+ const a=await make(7,'a'.repeat(64)),originalUpdate=f.context.chrome.tabs.update;
+ f.context.chrome.tabs.update=async(...args)=>{await originalUpdate(...args);throw Error('fixture lost original browser ACK');};
+ await assert.rejects(()=>f.api.execute(a,f.enrollment));
+ f.context.chrome.tabs.update=originalUpdate;
+ const before=JSON.stringify(f.state.stored['browserIntent:'+a.attemptId]);
+ const b=await make(8,'b'.repeat(64));
+ assert.equal((await f.api.execute(b,f.enrollment)).dispatchState,'dispatched');
+ assert.equal(f.state.updates,2);
+ assert.equal(JSON.stringify(f.state.stored['browserIntent:'+a.attemptId]),before);
+ assert.equal((await f.api.execute({...a,requestId:'query-original'},f.enrollment)).dispatchState,'unknown');
+ assert.equal(f.state.updates,2,'original input must not replay');
+ const successor=await make(7,'c'.repeat(64),'successor');
+ await assert.rejects(()=>f.api.execute(successor,f.enrollment),e=>e.code==='unknownEffect');
+ delete f.state.stored['browserIntent:'+a.attemptId].controlLease;
+ const other=await make(9,'e'.repeat(64));
+ await assert.rejects(()=>f.api.execute(other,f.enrollment),e=>e.code==='unknownEffect');
+ assert.equal(f.state.updates,2,'legacy unbound uncertainty must remain conservative');
+});

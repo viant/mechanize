@@ -19,7 +19,7 @@ func (g *Gateway) VerifyCredentialPreflightIdle(ctx context.Context, p auth.Prin
 	}
 	g.controlMu.Lock()
 	defer g.controlMu.Unlock()
-	if g.control != nil || g.controlRetiring {
+	if len(g.controls) != 0 {
 		return scopeFailure("scopePreflightBusy")
 	}
 	b := g.broker
@@ -51,7 +51,7 @@ func (g *Gateway) RetireCredentialPreflight(ctx context.Context, p auth.Principa
 	b := g.broker
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.closed || g.control != nil || g.controlRetiring || ctx.Err() != nil {
+	if b.closed || len(g.controls) != 0 || ctx.Err() != nil {
 		return scopeFailure("scopePreflightBusy")
 	}
 	for _, c := range b.channels {

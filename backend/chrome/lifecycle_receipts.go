@@ -334,33 +334,35 @@ func (g *LifecycleReceiptGuard) RetireControl(ctx context.Context, p auth.Princi
 	}
 	gateway := g.gateway
 	gateway.controlMu.Lock()
-	var authority *ControlAuthority
-	if gateway.control != nil {
-		copy := *gateway.control
-		authority = &copy
+	var authorities []ControlAuthority
+	for _, record := range gateway.controls {
+		authority := *record.authority
+		if authority.Document.ProfileChannel != g.inventory.ProfileChannel || authority.Document.BrowserInstance != g.inventory.BrowserInstance {
+			continue
+		}
+		if authority.Owner != p.Namespace || authority.ClientID != p.ClientID {
+			gateway.controlMu.Unlock()
+			return ErrLifecycleReceiptAuthority
+		}
+		authorities = append(authorities, authority)
 	}
 	gateway.controlMu.Unlock()
-	if authority == nil {
-		return nil
+	for _, authority := range authorities {
+		raw, err := g.call(ctx, p, Command{Action: "executor.retire", Identity: authority.Document.Identity, ControlLease: &authority.Lease})
+		if err != nil {
+			return err
+		}
+		var reply Reply
+		if json.Unmarshal(raw, &reply) != nil || !reply.RetiredAuthorityQuiesced || reply.ControlLease == nil || *reply.ControlLease != authority.Lease {
+			return ErrLifecycleReceiptAuthority
+		}
+		gateway.controlMu.Lock()
+		cleared := gateway.clearControlLocked(authority)
+		gateway.controlMu.Unlock()
+		if !cleared {
+			return ErrLifecycleReceiptAuthority
+		}
 	}
-	if authority.Owner != p.Namespace || authority.ClientID != p.ClientID || authority.Document.ProfileChannel != g.inventory.ProfileChannel || authority.Document.BrowserInstance != g.inventory.BrowserInstance {
-		return ErrLifecycleReceiptAuthority
-	}
-	raw, err := g.call(ctx, p, Command{Action: "executor.retire", Identity: authority.Document.Identity, ControlLease: &authority.Lease})
-	if err != nil {
-		return err
-	}
-	var reply Reply
-	if json.Unmarshal(raw, &reply) != nil || !reply.RetiredAuthorityQuiesced || reply.ControlLease == nil || *reply.ControlLease != authority.Lease {
-		return ErrLifecycleReceiptAuthority
-	}
-	gateway.controlMu.Lock()
-	defer gateway.controlMu.Unlock()
-	if gateway.control == nil || !sameControl(*gateway.control, *authority) {
-		return ErrLifecycleReceiptAuthority
-	}
-	gateway.control = nil
-	gateway.controlRetiring = false
 	return nil
 }
 

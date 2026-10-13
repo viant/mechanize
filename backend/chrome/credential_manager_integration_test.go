@@ -199,7 +199,7 @@ func TestCredentialManagerFreshToPrivateDeliveryIntegration(t *testing.T) {
 				t.Fatal("fresh refusal created a delivery attempt")
 			}
 			g.controlMu.Lock()
-			retained := g.control
+			retained := testFirstControl(g)
 			g.controlMu.Unlock()
 			if retained == nil || !sameControl(*retained, authority) {
 				t.Fatal("seam adopted changed renderer authority")

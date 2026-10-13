@@ -150,7 +150,7 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 			mu.Lock()
 			var retained []chrome.ControlAuthority
 			for _, entry := range entries {
-				if entry.owned && entry.uncertain && entry.authority.Owner == p.Namespace && entry.authority.ClientID == p.ClientID {
+				if entry.owned && entry.uncertain && entry.authority.Owner == p.Namespace && entry.authority.ClientID == p.ClientID && webSurfaceMatchesAuthority(surface, convert(entry.authority)) {
 					retained = append(retained, entry.authority)
 				}
 			}

@@ -79,17 +79,36 @@ function ordinaryDisjoint(i){
 }
 const ordinaryPrivateBlocked=i=>privatePending||((privateAdmission||privateFlow||port===privateSilencedPort)&&!ordinaryDisjoint(i));
 const documentFingerprintVersions = new Map();
-const unknownAttempts = new Set();
+const unknownAttempts = new Map();
+const sameInputTarget=(a,b)=>a&&b&&['profileChannel','browserInstance','tabId','frameId'].every(k=>a[k]===b[k]);
+function unknownTargetRecord(attempt,source){
+ const i=source?.identity,l=source?.controlLease,fingerprint=source?.fingerprintSHA256||source?.fingerprint,version=source?.fingerprintVersion??source?.receipt?.fingerprintVersion;
+ if(source?.attemptId!==undefined&&source.attemptId!==attempt||version!==2||!i||!l||!['profileChannel','browserInstance','documentId'].every(k=>typeof i[k]==='string'&&i[k].length>0&&i[k].length<=512)||!Number.isSafeInteger(i.tabId)||i.tabId<1||i.frameId!==0||!Number.isSafeInteger(i.documentGeneration)||i.documentGeneration<1||typeof l.id!=='string'||!l.id||l.id.length>512||!Number.isSafeInteger(l.generation)||l.generation<1||!['brokerEpoch','channelEpoch','scopeHash'].every(k=>typeof source[k]==='string'&&source[k].length>0&&source[k].length<=512)||typeof fingerprint!=='string'||!/^([a-f0-9]{64})$/.test(fingerprint))return null;
+ return Object.freeze({attemptId:attempt,identity:Object.freeze(Object.fromEntries(['profileChannel','browserInstance','tabId','frameId','documentId','documentGeneration'].map(k=>[k,i[k]]))),controlLease:Object.freeze({id:l.id,generation:l.generation}),brokerEpoch:source.brokerEpoch,channelEpoch:source.channelEpoch,scopeHash:source.scopeHash,fingerprintSHA256:fingerprint});
+}
+function retainUnknown(attempt,source){
+ const record=unknownTargetRecord(attempt,source);
+ if(!unknownAttempts.has(attempt)){unknownAttempts.set(attempt,record);return;}
+ const previous=unknownAttempts.get(attempt);
+ // A later error without metadata cannot overwrite an existing exact tuple.
+ // Conflicting metadata remains unbound and conservative.
+ if(source&&(!record||previous&&JSON.stringify(previous)!==JSON.stringify(record)))unknownAttempts.set(attempt,null);
+}
 // UNKNOWN journal records remain immutable. These connection-local proofs only
 // distinguish dead executor hazards from unresolved business outcomes.
 const retiredUnknownTargets = new Map();
-function rearmRetiredUnknownTargets(){for(const attempt of retiredUnknownTargets.keys())unknownAttempts.add(attempt);retiredUnknownTargets.clear();}
+function rearmRetiredUnknownTargets(){for(const [attempt,proof] of retiredUnknownTargets)retainUnknown(attempt,proof.record);retiredUnknownTargets.clear();}
 function currentRetiredUnknown(attempt){const proof=retiredUnknownTargets.get(attempt);return proof&&proof.port===port&&setupFence&&['brokerEpoch','channelEpoch','scopeHash'].every(k=>proof.fence[k]===setupFence[k])?proof:null;}
 
 // Classification is volatile and bound to this exact signed native connection.
 // The original attempt and terminal journal are never deleted or rewritten.
 const visibilityUnknown = new Map();
-const domUnknownBlocked = (own='') => [...unknownAttempts].some(id=>{if(id===own)return false;const v=visibilityUnknown.get(id);return !v||v.action!=='browser.activateTab'||v.attemptId!==id||v.port!==port||!setupFence||['brokerEpoch','channelEpoch','scopeHash'].some(k=>v[k]!==setupFence[k]);});
+const domUnknownBlocked = (own='',target=null) => [...unknownAttempts].some(([id,record])=>{
+ if(id===own)return false;
+ const v=visibilityUnknown.get(id);
+ if(v&&v.action==='browser.activateTab'&&v.attemptId===id&&v.port===port&&setupFence&&['brokerEpoch','channelEpoch','scopeHash'].every(k=>v[k]===setupFence[k]))return false;
+ return !target||!record||!setupFence||['brokerEpoch','channelEpoch','scopeHash'].some(k=>record[k]!==setupFence[k])||sameInputTarget(record.identity,target);
+});
 let setupFence = null, setupActiveCommands = 0;
 // Native-only Playwright hooks share the existing browser mutation authority.
 const playwrightWorker = MechanizePlaywrightWorker.create(chrome, {
@@ -97,7 +116,7 @@ const playwrightWorker = MechanizePlaywrightWorker.create(chrome, {
   retiredUnknown(record){const proof=currentRetiredUnknown(record.attemptId);return Boolean(proof&&reconnectCanonical(proof.record)===reconnectCanonical(record));},
   acquire(held) {
     if(visibilityUnknown.has(held.command.attemptId))throw Error();
-    if (maintenanceBusy || !port || port !== held.originalPort || !grant || !qualifiedNativePorts.has(port) || mutationBusy || setupActiveCommands || domUnknownBlocked() || lifecycleGuardId || ordinaryPrivateBlocked(held.identity) || port === startupFailurePort) throw Error();
+    if (maintenanceBusy || !port || port !== held.originalPort || !grant || !qualifiedNativePorts.has(port) || mutationBusy || setupActiveCommands || domUnknownBlocked('',held.identity) || lifecycleGuardId || ordinaryPrivateBlocked(held.identity) || port === startupFailurePort) throw Error();
     const initial=documents.get(`${held.identity.tabId}:${held.identity.documentId}`);
     if(!initial||!['profileChannel','browserInstance','tabId','frameId','documentId'].every(k=>initial[k]===held.identity[k])||!Number.isSafeInteger(initial.documentGeneration)||initial.documentGeneration<held.identity.documentGeneration)throw Error();
     if(requests.has(held.command.requestId)||requests.size>=4096)throw Error();
@@ -131,7 +150,7 @@ const playwrightWorker = MechanizePlaywrightWorker.create(chrome, {
     const exact=(a,b)=>a&&b&&['profileChannel','browserInstance','tabId','frameId','documentId'].every(k=>a[k]===b[k])&&Number.isSafeInteger(a.documentGeneration)&&a.documentGeneration>=b.documentGeneration;
     const permitted=()=>!held.closed && port===held.originalPort && grant===held.originalGrant && grant.leaseRequired===true && qualifiedNativePorts.has(port) &&
       !ordinaryPrivateBlocked(i) && port!==startupFailurePort && !lifecycleGuardId &&
-      !domUnknownBlocked(c.attemptId) && c.deadlineUnixMs>Date.now() &&
+      !domUnknownBlocked(c.attemptId,c.identity) && c.deadlineUnixMs>Date.now() &&
       ['brokerEpoch','channelEpoch','scopeHash'].every(k=>c[k]===grant[k]) && exact(documents.get(key),i) && documentOrigins.get(key)===held.origin &&
       documentControlLeases.get(key)===held.lease && (!held.mutation || grant.leaseRequired===true && grant.mutationFingerprintVersion===2 && documentFingerprintVersions.get(key)===2 && held.lease?.id===c.controlLease?.id && held.lease?.generation===c.controlLease?.generation) &&
       (!privatePrivacy || ordinaryDisjoint(i) || privatePrivacy.committed && privacyDocument(i)) && (!isProtectedURL(held.origin,i) || privatePrivacy?.committed && privacyDocument(i));
@@ -156,7 +175,7 @@ const playwrightWorker = MechanizePlaywrightWorker.create(chrome, {
     }
     return true;
   },
-  unknown(attempt,unknown) { if(unknown)unknownAttempts.add(attempt);else unknownAttempts.delete(attempt); },
+  unknown(attempt,unknown,record) { if(unknown)retainUnknown(attempt,record?{...record,fingerprintVersion:2}:undefined);else unknownAttempts.delete(attempt); },
   redact: privacySanitize
 });
 const setupState = () => {
@@ -1698,7 +1717,7 @@ async function receive(command) {
    }
    mutationBusy=true;
    try{const result=await MechanizeTabMetadata.activationStatus(chrome,command,heldFence,await config(),()=>Boolean(mutationBusy&&idle()));
-    if(result?.quiescent){unknownAttempts.add(command.attemptId);visibilityUnknown.set(command.attemptId,{action:'browser.activateTab',attemptId:command.attemptId,port:heldPort,...heldFence});}
+    if(result?.quiescent){retainUnknown(command.attemptId,command);visibilityUnknown.set(command.attemptId,{action:'browser.activateTab',attemptId:command.attemptId,port:heldPort,...heldFence});}
     if(result&&port===heldPort)heldPort.postMessage(result);
    }finally{mutationBusy=false;}
    return;
@@ -1716,7 +1735,7 @@ async function receive(command) {
     const allowed=()=>Boolean(heldPort&&heldFence&&(activation||heldGrant)&&port===heldPort&&grant===heldGrant&&setupFence===heldFence&&!setupActiveCommands&&!reconnectBusy&&!privatePending&&(!activation||!privateAdmission)&&!lifecycleGuardId&&!unknownAttempts.size&&!activeBrowserInputs.size&&port!==startupFailurePort);
     if(!allowed())return;
     mutationBusy=true;
-    try{const result=await (command.type==='browser.openOrigin'?MechanizeBrowser.openOrigin(chrome,command,await config(),heldFence,allowed):MechanizeTabMetadata.activate(chrome,command,heldFence,await config(),allowed));if(result?.dispatchState==='unknown')unknownAttempts.add(command.attemptId);if(result&&port===heldPort)heldPort.postMessage(result);}finally{mutationBusy=false;}
+    try{const result=await (command.type==='browser.openOrigin'?MechanizeBrowser.openOrigin(chrome,command,await config(),heldFence,allowed):MechanizeTabMetadata.activate(chrome,command,heldFence,await config(),allowed));if(result?.dispatchState==='unknown')retainUnknown(command.attemptId,command);if(result&&port===heldPort)heldPort.postMessage(result);}finally{mutationBusy=false;}
     return;
   }
 
@@ -1823,7 +1842,7 @@ async function retireReconnectUnknownTargets(journal,previous,candidate,enrollme
  }
  if(!pendingReconnectValid(pending,previous))throw reconnectJournalRefuse('lineageInvalid');
  await verifyReconnectArchives(pending,qualification);
- const attempts=[...unknownAttempts].sort();
+ const attempts=[...unknownAttempts.keys()].sort();
  if(attempts.length>512||attempts.some(id=>!/^[a-f0-9]{64}$/.test(id)))throw reconnectRefuse('unknownReceipts');
  const snapshot=await reconnectBindingSnapshot(pending,command,ownPort,qualification,attempts);
  reconnectRows(snapshot.bindings,enrollment,previous.scopeHash);
@@ -1837,7 +1856,7 @@ async function retireReconnectUnknownTargets(journal,previous,candidate,enrollme
 async function revalidateRetiredUnknownTargets(current){
  for(const [attempt,proof]of retiredUnknownTargets){
   if(!currentRetiredUnknown(attempt))throw reconnectRefuse('unknownReceipts');
-  try{await proveTabTargetAbsent(proof.record.identity,current);}catch{unknownAttempts.add(attempt);retiredUnknownTargets.delete(attempt);throw reconnectRefuse('unknownReceipts');}
+  try{await proveTabTargetAbsent(proof.record.identity,current);}catch{retainUnknown(attempt,proof.record);retiredUnknownTargets.delete(attempt);throw reconnectRefuse('unknownReceipts');}
  }
 }
 // Existing retirement protocol, using immutable known receipt evidence when
@@ -1847,7 +1866,7 @@ async function retireAbsentPlaywrightSource(command) {
  try{
   MechanizeProtocol.validate(command);
   if(command.type!==undefined&&command.type!=='command'||command.action!=='executor.retire'||!command.controlLease||command.locator!==undefined||command.args!==undefined||command.attemptId!==undefined||!manualIdentity(i))return false;
-  const current=()=>{if(!ownPort||port!==ownPort||!ownGrant||grant!==ownGrant||!qualifiedNativePorts.has(ownPort)||!ownGrant.leaseRequired||ownPort===startupFailurePort||mutationBusy||privatePending||activeBrowserInputs.size||unknownAttempts.size||lifecycleGuardId||Date.now()>=command.deadlineUnixMs||['brokerEpoch','channelEpoch','scopeHash'].some(k=>command[k]!==ownGrant[k])||documents.has(key)||documentControlLeases.has(key)||!inactiveLeaseDocuments.has(key))throw Error();};
+  const current=()=>{if(!ownPort||port!==ownPort||!ownGrant||grant!==ownGrant||!qualifiedNativePorts.has(ownPort)||!ownGrant.leaseRequired||ownPort===startupFailurePort||mutationBusy||privatePending||activeBrowserInputs.size||domUnknownBlocked('',command.identity)||lifecycleGuardId||Date.now()>=command.deadlineUnixMs||['brokerEpoch','channelEpoch','scopeHash'].some(k=>command[k]!==ownGrant[k])||documents.has(key)||documentControlLeases.has(key)||!inactiveLeaseDocuments.has(key))throw Error();};
   current();const enrollment=await config();current();if(i.profileChannel!==enrollment.profileChannel||i.browserInstance!==enrollment.browserInstance)return false;
   const proved=await playwrightWorker.retireKnownSource(command,()=>protectionScopes.proveSourceAbsent(i,current));current();if(!proved)return false;
   // Keep the suspended-document tombstone: cached/reactivated content cannot
@@ -2089,8 +2108,8 @@ async function receiveCommand(command, qualification) {
         replyTo(retained);return;
       }
     }
-    if (["executor.acquire", "executor.retire"].includes(command.action) && domUnknownBlocked()) throw MechanizeProtocol.error("unknownEffect", "Unresolved mutation prevents renderer lease transitions", "unknown");
-    if (mutation && domUnknownBlocked()) throw MechanizeProtocol.error("unknownEffect", "A previous receipt was lost; query and reconcile its attempt before another mutation", "unknown");
+    if (["executor.acquire", "executor.retire"].includes(command.action) && domUnknownBlocked('',command.identity)) throw MechanizeProtocol.error("unknownEffect", "Unresolved mutation prevents renderer lease transitions", "unknown");
+    if (mutation && domUnknownBlocked('',command.identity)) throw MechanizeProtocol.error("unknownEffect", "A previous receipt was lost; query and reconcile its attempt before another mutation", "unknown");
     if (mutationBusy) throw MechanizeProtocol.error("mutationBusy", "One browser mutation at a time; wait for its receipt");
     if (mutation) mutationBusy = true;
     try {
@@ -2134,12 +2153,12 @@ async function receiveCommand(command, qualification) {
       if(result.newDocument && result.newDocument.documentId!==command.identity.documentId) {if(privatePrivacy&&privacyDocument(command.identity))privatePrivacy.active=false;const key=`${command.identity.tabId}:${command.identity.documentId}`;documents.delete(key);documentControlLeases.delete(key);documentFingerprintVersions.delete(key);documentOrigins.delete(key);}
       if (result.identity && !result.newDocument) documents.set(`${command.identity.tabId}:${command.identity.documentId}`, result.identity);
       if (command.action === "receipt.query" && result.receiptAvailable !== false && result.dispatchState !== "unknown" && result.error?.dispatchState !== "unknown") unknownAttempts.delete(command.attemptId);
-      if (mutation && result.error?.dispatchState === "unknown") unknownAttempts.add(command.attemptId);
+      if (mutation && (result.dispatchState === "unknown" || result.error?.dispatchState === "unknown")) retainUnknown(command.attemptId,command);
       replyTo(result);
     } catch (error) {
       if (error.code) throw error;
       if (mutation) {
-        unknownAttempts.add(command.attemptId);
+        retainUnknown(command.attemptId,command);
         if(activeBrowserInputs.has(command.requestId))await chrome.storage.session.set({['browserProtocolInput:'+command.attemptId]:{state:'unknown',tabId:command.identity.tabId,documentId:command.identity.documentId}}).catch(()=>{});
       }
       replyTo({requestId: command.requestId, attemptId: command.attemptId, error: MechanizeProtocol.error("receiptLost", "Renderer receipt unavailable; query original document receipt, then reconcile; never replay", "unknown")});
@@ -2270,8 +2289,8 @@ async function connectNativeOnce(token,valid=()=>true) {
       lifecycleGuardId = "restart-reconciliation-required";
 
     }
-    for(const [key,value] of Object.entries(session))if(key.startsWith('browserProtocolInput:')&&value?.state!=='released')unknownAttempts.add(key.slice('browserProtocolInput:'.length));
-    for (const key of Object.keys(session)) if (key.startsWith("browserIntent:") && (!session[key.replace("browserIntent:", "browserReceipt:")] || session[key.replace("browserIntent:", "browserReceipt:")].dispatchState === "unknown" || session[key.replace("browserIntent:", "browserReceipt:")].error?.dispatchState === "unknown")) unknownAttempts.add(key.slice("browserIntent:".length));
+    for(const [key,value] of Object.entries(session))if(key.startsWith('browserProtocolInput:')&&value?.state!=='released')retainUnknown(key.slice('browserProtocolInput:'.length));
+    for (const key of Object.keys(session)) if (key.startsWith("browserIntent:") && (!session[key.replace("browserIntent:", "browserReceipt:")] || session[key.replace("browserIntent:", "browserReceipt:")].dispatchState === "unknown" || session[key.replace("browserIntent:", "browserReceipt:")].error?.dispatchState === "unknown")) retainUnknown(key.slice("browserIntent:".length),session[key]);
     await playwrightWorker.recover();
     }catch(error){
       metadataStartupBarrier=connectionAttention==='storedFenceMismatch'?'storedFenceMismatch':'inventoryUnavailable';
@@ -2324,7 +2343,7 @@ async function connectNativeOnce(token,valid=()=>true) {
     }catch{metadataStartupBarrier='inventoryUnavailable';}
     // This fixed metadata hello is independent of secret/document visibility.
     // No retained document or input payload is replayed on a replacement port.
-    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,playwrightTargetRetirementVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:32,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
+    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,playwrightTargetRetirementVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:33,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
 
   } catch {
     if (lifecycleGuardId) connectionAttention = "lifecycleInhibited";
@@ -2339,7 +2358,7 @@ chrome.runtime.onMessage.addListener((message,sender,reply)=>{
  if(message?.type!=='browserInputLocal')return;
  const held=activeBrowserInputs.get(message.requestId),c=held?.command;
  const allowed=()=> Boolean(held&&!held.used&&c&&c.action==='element.press'&&c.fingerprintVersion===2&&
-  port===held.admittedPort&&grant===held.admittedGrant&&!ordinaryPrivateBlocked(c.identity)&&(!privatePrivacy||ordinaryDisjoint(c.identity)||privatePrivacy.committed&&privacyDocument(c.identity))&&!lifecycleGuardId&&!domUnknownBlocked(c.attemptId)&&
+  port===held.admittedPort&&grant===held.admittedGrant&&!ordinaryPrivateBlocked(c.identity)&&(!privatePrivacy||ordinaryDisjoint(c.identity)||privatePrivacy.committed&&privacyDocument(c.identity))&&!lifecycleGuardId&&!domUnknownBlocked(c.attemptId,c.identity)&&
   documentControlLeases.get(`${c.identity.tabId}:${c.identity.documentId}`)?.id===c.controlLease?.id&&
   documentControlLeases.get(`${c.identity.tabId}:${c.identity.documentId}`)?.generation===c.controlLease?.generation&&
   (!isProtectedURL(documentOrigins.get(`${c.identity.tabId}:${c.identity.documentId}`),c.identity)||privatePrivacy?.committed&&privacyDocument(c.identity)));
@@ -2358,10 +2377,10 @@ chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   await chrome.storage.session.set({[key]:{state:'pending',tabId:c.identity.tabId,documentId:c.identity.documentId}});
   const result=current()?await browserInput.click(c.identity,message.point,Math.min(c.deadlineUnixMs,Date.now()+3000),current):
     {dispatchState:'notDispatched',effectState:'none',errorCode:'browserInputAuthorityChanged'};
-  if(result.dispatchState==='unknown')unknownAttempts.add(c.attemptId);
+  if(result.dispatchState==='unknown')retainUnknown(c.attemptId,c);
   await chrome.storage.session.set({[key]:{state:result.dispatchState==='unknown'?'unknown':'released',tabId:c.identity.tabId,documentId:c.identity.documentId}});
   return result;
- })().then(reply,()=>{unknownAttempts.add(c.attemptId);reply({dispatchState:'unknown',effectState:'unknown',errorCode:'browserInputUnavailable'});});
+ })().then(reply,()=>{retainUnknown(c.attemptId,c);reply({dispatchState:'unknown',effectState:'unknown',errorCode:'browserInputUnavailable'});});
  return true;
 });
 chrome.runtime.onMessage.addListener((message, sender, reply) => {

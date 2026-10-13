@@ -85,7 +85,7 @@ globalThis.MechanizePlaywrightWorker = (() => {
           const state=held.possible?'unknown':'notDispatched';
           held.record.receipt=receipt(held.record,state,closedCode||(held.possible?'playwrightReceiptUncertain':'playwrightInterrupted'));
           held.record.phase='done';
-          if(held.possible)hooks.unknown(held.command.attemptId,true);
+          if(held.possible)hooks.unknown(held.command.attemptId,true,held.record||held.command);
           await write(held.record);
         }
       } finally {if(active===held){active=null;hooks.release(held);}}
@@ -94,7 +94,7 @@ globalThis.MechanizePlaywrightWorker = (() => {
       const saved=await journalSnapshot();
       for(const [key,record] of Object.entries(saved)){
         if(!record.receipt){record.receipt=receipt(record,record.phase==='input'?'unknown':'notDispatched',record.phase==='input'?'playwrightReceiptUncertain':'playwrightInterrupted');record.phase='done';await write(record);}
-        if(record.receipt.dispatchState==='unknown')hooks.unknown(record.attemptId,true);
+        if(record.receipt.dispatchState==='unknown')hooks.unknown(record.attemptId,true,record);
       }
     }
     async function query(command) {
@@ -225,7 +225,7 @@ globalThis.MechanizePlaywrightWorker = (() => {
           // Acknowledgement follows durable journal completion, never precedes it.
           await write({...held.record,phase:'done',receipt:result});
           held.record={...held.record,phase:'done',receipt:result};
-          hooks.unknown(held.command.attemptId,message.dispatchState==='unknown');
+          hooks.unknown(held.command.attemptId,message.dispatchState==='unknown',held.record);
           if(held.receiptOnly)await finish(held);
           post({...response,result:{persisted:true}});return;
         }
@@ -247,7 +247,7 @@ globalThis.MechanizePlaywrightWorker = (() => {
         }
         let result;
         try {result=await held.session.send(message.method,message.params,message.deadlineUnixMs,actual?()=>{held.inputCrossed=true;}:undefined);}
-        catch(error){if(actual){if(!priorPossible&&error?.dispatchState==='notDispatched')held.possible=false;else{held.uncertain=true;hooks.unknown(held.command.attemptId,true);}}throw error;}
+        catch(error){if(actual){if(!priorPossible&&error?.dispatchState==='notDispatched')held.possible=false;else{held.uncertain=true;hooks.unknown(held.command.attemptId,true,held.record||held.command);}}throw error;}
         if(actual)held.inputAcknowledged=true;
         if(release)held.releaseAcknowledged=true;
         if(!await current(held)){
@@ -262,7 +262,7 @@ globalThis.MechanizePlaywrightWorker = (() => {
         const code=id(error?.code)&&error.code.startsWith('playwright')?error.code:'playwrightUnavailable';
         let terminal;
         if(held&&active===held&&!held.receiptOnly){
-          await finish(held,code).catch(()=>{if(held.possible)hooks.unknown(held.command.attemptId,true);});
+          await finish(held,code).catch(()=>{if(held.possible)hooks.unknown(held.command.attemptId,true,held.record||held.command);});
           // Only a read-back of the exact original journal proves completion.
           // Cleanup failures must never replace its authoritative dispatch state.
           if(held.record?.receipt){try{

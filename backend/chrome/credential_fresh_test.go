@@ -99,7 +99,7 @@ func credentialFreshFixture(t *testing.T, mode string) (*Gateway, auth.Principal
 						g.broker.mu.Unlock()
 					case "retired":
 						g.controlMu.Lock()
-						g.controlRetiring = true
+						testMarkControlRetiring(g)
 						g.controlMu.Unlock()
 					}
 				}
@@ -158,7 +158,7 @@ func TestFreshCredentialBindingRejectsChangedOrUntrustedRepliesWithoutAdoption(t
 				t.Fatal("private error escaped")
 			}
 			g.controlMu.Lock()
-			retained := g.control
+			retained := testFirstControl(g)
 			g.controlMu.Unlock()
 			if retained == nil || !sameControl(*retained, a) {
 				t.Fatal("freshness adopted a replacement authority")

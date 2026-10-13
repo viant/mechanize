@@ -73,7 +73,7 @@ func (g *Gateway) controlMetadataSnapshot(ctx context.Context, p auth.Principal,
 	}
 	g.broker.mu.Lock()
 	defer g.broker.mu.Unlock()
-	if c.fixtureOnly || c.processEvidence == nil || !c.processEvidence.KernelPeerQualified || !channelScopeQualified(c) || !c.executorQualified || !c.inventoryComplete || !c.grant.Principal.HasScope("desktop:control") || len(c.pending) > 0 || c.openOriginPending != nil || domUnknownBlockedLocked(c) || g.broker.closed || c.conn == nil {
+	if c.fixtureOnly || c.processEvidence == nil || !c.processEvidence.KernelPeerQualified || !channelScopeQualified(c) || !c.executorQualified || !c.inventoryComplete || !c.grant.Principal.HasScope("desktop:control") || pendingForTargetLocked(c, d.Identity) || c.openOriginPending != nil || domUnknownForTargetLocked(c, d.Identity) || g.broker.closed || c.conn == nil {
 		return ControlAuthority{}, nil, browserError("controlUnqualified", "Independent live production channel and idle executor required", "notDispatched")
 	}
 	e := *c.processEvidence
@@ -176,19 +176,20 @@ func (g *Gateway) AdmitControlWithStatus(ctx context.Context, p auth.Principal, 
 }
 func (g *Gateway) admitControlOnce(ctx context.Context, p auth.Principal, surface model.Surface, original *ControlAuthority) (ControlAdmission, error) {
 	g.consumeTargetRetirement(p)
+	candidate, channel, err := g.controlSnapshot(ctx, p, surface)
+	if err != nil {
+		return ControlAdmission{}, err
+	}
 	g.controlMu.Lock()
-	retiring, needsObservation := g.controlRetiring, g.control == nil
+	record := g.controlRecordLocked(candidate)
+	retiring, needsObservation := record != nil && record.retiring, record == nil
 	g.controlMu.Unlock()
 	if retiring {
-		return ControlAdmission{}, browserError("authorityRetiring", "Prior authority retirement is not confirmed", "notDispatched")
+		return ControlAdmission{}, browserError("authorityRetiring", "Prior target authority retirement is not confirmed", "notDispatched")
 	}
 	if needsObservation {
 		// Binding is a metadata operation. Serializing the source DOM would
 		// unnecessarily block navigation away from credential/embedded forms.
-		candidate, channel, err := g.controlSnapshot(ctx, p, surface)
-		if err != nil {
-			return ControlAdmission{}, err
-		}
 		if original != nil && !sameAdmissionTarget(*original, candidate) {
 			return ControlAdmission{}, browserError("staleAuthority", "Original acquisition target changed", "notDispatched")
 		}
@@ -197,22 +198,26 @@ func (g *Gateway) admitControlOnce(ctx context.Context, p auth.Principal, surfac
 			return ControlAdmission{}, errors.Join(err, browserError("authorityUnconfirmed", "Metadata-only renderer binding unconfirmed", "notDispatched"))
 		}
 	}
-	a, c, err := g.controlSnapshot(ctx, p, surface)
-	if err != nil {
-		return ControlAdmission{}, err
+	a, c := candidate, channel
+	if needsObservation {
+		a, c, err = g.controlSnapshot(ctx, p, surface)
+		if err != nil {
+			return ControlAdmission{}, err
+		}
 	}
 	if original != nil && !sameAdmissionTarget(*original, a) {
 		return ControlAdmission{}, browserError("staleAuthority", "Original acquisition target changed", "notDispatched")
 	}
 	g.controlMu.Lock()
-	if g.controlRetiring {
+	record = g.controlRecordLocked(a)
+	if record != nil && record.retiring {
 		g.controlMu.Unlock()
 		return ControlAdmission{}, browserError("authorityRetiring", "Prior authority retirement is not confirmed", "notDispatched")
 	}
 	created := false
-	if g.control != nil {
-		a.Lease = g.control.Lease
-		if !sameControl(a, *g.control) {
+	if record != nil {
+		a.Lease = record.authority.Lease
+		if !sameControl(a, *record.authority) {
 			g.controlMu.Unlock()
 			return ControlAdmission{}, browserError("authorityBusy", "A different pinned authority remains active", "notDispatched")
 		}
@@ -220,8 +225,7 @@ func (g *Gateway) admitControlOnce(ctx context.Context, p auth.Principal, surfac
 		created = true
 		g.controlGeneration++
 		a.Lease = Lease{ID: newID(), Generation: g.controlGeneration}
-		copy := a
-		g.control = &copy // Retain ambiguity if acquire loses its reply.
+		g.setControlLocked(a) // Retain ambiguity if acquire loses its reply.
 	}
 	g.controlMu.Unlock()
 
@@ -247,7 +251,8 @@ func (g *Gateway) admitControlOnce(ctx context.Context, p auth.Principal, surfac
 }
 func (g *Gateway) VerifyControl(ctx context.Context, p auth.Principal, a ControlAuthority) error {
 	g.controlMu.Lock()
-	valid := g.control != nil && !g.controlRetiring && sameControl(*g.control, a)
+	record := g.controlRecordLocked(a)
+	valid := record != nil && !record.retiring && sameControl(*record.authority, a)
 	g.controlMu.Unlock()
 	if !valid {
 		return browserError("staleAuthority", "Renderer lease retired or substituted", "notDispatched")
@@ -356,10 +361,10 @@ func (g *Gateway) executeControl(ctx context.Context, p auth.Principal, step mod
 	}
 	if step.Action == "browser.navigate" && err == nil && reply.RetiredAuthorityQuiesced && reply.ControlLease != nil && *reply.ControlLease == a.Lease {
 		g.controlMu.Lock()
-		if g.control != nil && sameControl(*g.control, a) {
+		if record := g.controlRecordLocked(a); record != nil && sameControl(*record.authority, a) {
 			copy := a
-			g.navigationRetired = &copy
-			g.controlRetiring = true
+			record.navigationRetired = &copy
+			record.retiring = true
 		}
 		g.controlMu.Unlock()
 	}
@@ -396,21 +401,18 @@ func (g *Gateway) RetireControl(ctx context.Context, p auth.Principal, a Control
 	g.broker.mu.Unlock()
 	if proven {
 		g.controlMu.Lock()
-		if g.control != nil && sameControl(*g.control, a) {
-			g.control = nil
-			g.controlRetiring = false
-			g.navigationRetired = nil
-		}
+		g.clearControlLocked(a)
 		g.controlMu.Unlock()
 		return true, nil
 	}
 	g.controlMu.Lock()
-	if g.control == nil || !sameControl(*g.control, a) {
+	record := g.controlRecordLocked(a)
+	if record == nil || !sameControl(*record.authority, a) {
 		g.controlMu.Unlock()
 		return false, browserError("staleAuthority", "Exact live authority required for retirement", "notDispatched")
 	}
-	g.controlRetiring = true
-	navigationRetired := g.navigationRetired != nil && sameControl(*g.navigationRetired, a)
+	record.retiring = true
+	navigationRetired := record.navigationRetired != nil && sameControl(*record.navigationRetired, a)
 	g.controlMu.Unlock()
 	g.broker.mu.Lock()
 	knownSourceRetirement := knownPressSourceRetirementLocked(c, a.Document.Identity, &a.Lease, g.broker.epoch)
@@ -433,7 +435,7 @@ func (g *Gateway) RetireControl(ctx context.Context, p auth.Principal, a Control
 		return false, err
 	}
 	g.broker.mu.Lock()
-	idle := len(c.pending) == 0 && !domUnknownBlockedLocked(c)
+	idle := !pendingForTargetLocked(c, a.Document.Identity) && !domUnknownForTargetLocked(c, a.Document.Identity)
 	g.broker.mu.Unlock()
 	if !idle {
 		return false, browserError("executorUnknown", "In-flight or unknown actions prevent retirement proof", "unknown")
@@ -448,18 +450,15 @@ func (g *Gateway) RetireControl(ctx context.Context, p auth.Principal, a Control
 		}
 	}
 	g.broker.mu.Lock()
-	idle = len(c.pending) == 0 && !domUnknownBlockedLocked(c)
+	idle = !pendingForTargetLocked(c, a.Document.Identity) && !domUnknownForTargetLocked(c, a.Document.Identity)
 	g.broker.mu.Unlock()
 	if !idle {
 		return false, browserError("executorUnknown", "Pending or unknown actions remain after retirement", "unknown")
 	}
 	g.controlMu.Lock()
 	defer g.controlMu.Unlock()
-	if g.control == nil || !sameControl(*g.control, a) {
+	if !g.clearControlLocked(a) {
 		return false, browserError("staleAuthority", "Authority changed during retirement", "unknown")
 	}
-	g.control = nil
-	g.navigationRetired = nil
-	g.controlRetiring = false
 	return true, nil
 }

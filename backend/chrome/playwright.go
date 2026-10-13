@@ -680,10 +680,10 @@ func privacyOperationIdleLocked(ctx context.Context, c *channel) bool {
 	if revoked {
 		return false
 	}
-	if !domUnknownBlockedLocked(c) {
+	if !domUnknownForTargetLocked(c, e.command.Identity) {
 		return true
 	}
-	if domUnknownOtherThanLocked(c, e.command.AttemptID) || !c.unknown[e.command.AttemptID] {
+	if domUnknownForTargetOtherThanLocked(c, e.command.Identity, e.command.AttemptID) || !c.unknown[e.command.AttemptID] {
 		return false
 	}
 	return possible

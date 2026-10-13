@@ -393,7 +393,7 @@ func TestPrivacyPromotionPublishesCommittedDOMWithoutSpeculativeControl(t *testi
 		t.Fatal("privacy publication must carry no dispatch lease")
 	}
 	g.controlMu.Lock()
-	held := g.control != nil || g.controlRetiring
+	held := testFirstControl(g) != nil || testAnyControlRetiring(g)
 	g.controlMu.Unlock()
 	if held {
 		t.Fatal("ordinary lease remained live after privacy-only publication")
