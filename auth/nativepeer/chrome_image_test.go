@@ -121,8 +121,8 @@ func TestChromeAncestryHardlinkRetainsKernelImageAndRejectsLateReplacement(t *te
 					os.WriteFile(canonical, []byte("replacement"), 0700)
 				}
 				return nodes[pid], nil
-			}, func(int, string) error { return nil }, func(path string) (func() error, error) {
-				return verifyChromeImage(canonical, path, o, func(string, Options) error { return nil })
+			}, func(int, string) error { return nil }, func(ancestor processParent) (func() error, error) {
+				return verifyChromeImage(canonical, ancestor.identity.Executable, o, func(string, Options) error { return nil })
 			})
 			if replaceLate {
 				if err == nil {

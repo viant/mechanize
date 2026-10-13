@@ -84,9 +84,9 @@ func verifyHostProcess(ctx context.Context, config *Config) (nativepeer.ChromePr
 	// been loaded. Normal independent process verification still follows.
 	diagnostic := nativepeer.InspectChromeLaunchDiagnostic(ctx, os.Getpid(), *config.ProcessTrust)
 	_ = recordProcessDiagnostic(config.SocketPath, config.ProcessTrust.ExpectedUID, os.Getpid(), diagnostic)
-	if err = nativepeer.VerifyChromeExecutable(config.ProcessTrust.ChromeExecutable, nativepeer.Options{ExpectedUID: config.ProcessTrust.ExpectedUID, DesignatedRequirement: config.ProcessTrust.ChromeRequirement}); err != nil {
-		return nativepeer.ChromeProcessEvidence{}, nativepeer.ProcessFailure(nativepeer.ErrChromeSignatureUnavailable, err)
-	}
+	// Verify the kernel-selected running Chrome image under the ORIGINAL pin.
+	// The canonical path may already contain an auto-update. This full process
+	// proof still precedes socket enrollment and every credential load.
 	evidence, err := nativepeer.VerifyChromeProcess(ctx, os.Getpid(), *config.ProcessTrust)
 	if err != nil {
 		return nativepeer.ChromeProcessEvidence{}, diagnoseChromePathFailure(err, diagnostic)

@@ -56,9 +56,9 @@ func NewChromePeerVerifier(policy ChromeProcessPolicy) (*ChromePeerVerifier, err
 	if err = VerifyExecutable(policy.NativeHostExecutable, Options{ExpectedUID: policy.ExpectedUID, DesignatedRequirement: policy.NativeHostRequirement}); err != nil {
 		return nil, err
 	}
-	if err = VerifyChromeExecutable(policy.ChromeExecutable, Options{ExpectedUID: policy.ExpectedUID, DesignatedRequirement: policy.ChromeRequirement}); err != nil {
-		return nil, err
-	}
+	// Construction grants no Chrome authority. An auto-update can replace the
+	// canonical image while the original pinned process is still running. Verify
+	// the kernel-selected running image in Verify, before accepting any peer.
 	return &ChromePeerVerifier{policy: policy, peer: peer}, nil
 }
 
@@ -97,11 +97,11 @@ func VerifyChromeProcess(ctx context.Context, pid int, policy ChromeProcessPolic
 	if err := validateChromePolicy(policy); err != nil {
 		return ChromeProcessEvidence{}, err
 	}
-	return verifyChromeProcess(ctx, pid, policy, inspectProcessParent, verifyDynamicProcess, func(actual string) (func() error, error) {
-		return verifyChromeImage(policy.ChromeExecutable, actual, Options{ExpectedUID: policy.ExpectedUID, DesignatedRequirement: policy.ChromeRequirement}, verifyExecutable)
+	return verifyChromeProcess(ctx, pid, policy, inspectProcessParent, verifyDynamicProcess, func(ancestor processParent) (func() error, error) {
+		return verifyChromeAncestorImage(policy, ancestor, verifyExecutable, verifyDynamicProcess)
 	})
 }
-func verifyChromeProcess(ctx context.Context, pid int, policy ChromeProcessPolicy, inspect func(int) (processParent, error), verify func(int, string) error, imageCheck ...func(string) (func() error, error)) (ChromeProcessEvidence, error) {
+func verifyChromeProcess(ctx context.Context, pid int, policy ChromeProcessPolicy, inspect func(int) (processParent, error), verify func(int, string) error, imageCheck ...func(processParent) (func() error, error)) (ChromeProcessEvidence, error) {
 	var evidence ChromeProcessEvidence
 	if err := ctx.Err(); err != nil {
 		return evidence, ProcessFailure(ErrNativeHostProcessUnavailable, err)
@@ -151,7 +151,7 @@ func verifyChromeProcess(ctx context.Context, pid int, policy ChromeProcessPolic
 		evidence.Ancestors = append(evidence.Ancestors, ancestor.identity)
 		matches := ancestor.identity.Executable == policy.ChromeExecutable
 		if len(imageCheck) == 1 {
-			check, imageErr := imageCheck[0](ancestor.identity.Executable)
+			check, imageErr := imageCheck[0](ancestor)
 			matches = imageErr == nil && check != nil
 			if matches {
 				recheckImage = check

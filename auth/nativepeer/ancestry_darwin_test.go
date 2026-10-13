@@ -102,6 +102,22 @@ int main(int argc,char **argv){if(argc!=2)return 1;int fd=socket(AF_UNIX,SOCK_ST
 	if err != nil || evidence.NativeHost.PID != child.Process.Pid || evidence.ChromeParent.PID != os.Getpid() || !evidence.KernelPeerQualified || evidence.ProfileQualified || evidence.ExecutorQualified {
 		t.Fatalf("kernel/ancestry fixture: %+v %v", evidence, err)
 	}
+	// Constructor setup is not Chrome authority, even if its on-disk canonical
+	// path was replaced. The actual parent must still pass independent vendor
+	// and original pin checks in the running-image fallback. This ad-hoc signed
+	// fixture intentionally lacks Google's vendor signature and must fail.
+	replaced := policy
+	replaced.ChromeExecutable = filepath.Join(dir, "replacement-chrome")
+	if err = os.WriteFile(replaced.ChromeExecutable, []byte("untrusted replacement"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	verifier, constructErr := NewChromePeerVerifier(replaced)
+	if constructErr != nil {
+		t.Fatal("constructor coupled authority to replacement canonical image")
+	}
+	if _, verifyErr := verifier.Verify(ctx, conn); verifyErr == nil {
+		t.Fatal("constructor minted trust for an unqualified running image")
+	}
 	wrong := policy
 	wrong.ChromeRequirement = `identifier "not.the.fixture.parent"`
 	if _, err = VerifyChromeProcess(ctx, child.Process.Pid, wrong); err == nil {

@@ -49,13 +49,21 @@ and [audit-token guest attribute](https://developer.apple.com/documentation/secu
 Chromium's [CodeSignCloneManager](https://chromium.googlesource.com/chromium/src/+/refs/tags/135.0.7049.7/chrome/browser/mac/code_sign_clone_manager.mm)
 hardlinks that executable into its launch clone. Chrome verification permits that
 link count while retaining the exact canonical static code requirement, ownership,
-mode and no-symlink checks. A different running path qualifies only when canonical
+mode and no-symlink checks. A different running path normally qualifies when canonical
 and actual main executable have identical device/inode and stable file metadata.
 Both paths are rechecked across canonical static verification, exact dynamic PID
 signature verification, and PID/birth/UID/ancestry reinspection. Clone resource
 metadata does not replace canonical bundle validation. Process evidence preserves
 the kernel-reported path; neither a clone-name substring nor copied file bytes
-qualifies. Native-host and broker executable verification still requires one link.
+qualifies. If a Chrome update replaces the canonical executable while the old
+process remains running, the kernel-selected running image can instead qualify
+under the original enrolled requirement and the independent Google signer.
+Both static image signatures and dynamic process signatures are checked, with
+stable file metadata and PID/birth/UID/parent ancestry across the checks. The
+new on-disk image does not supply a replacement pin. Verifier construction
+alone grants no authority; full peer and running-process verification precede
+credential loading and request admission. Native-host and broker executable
+verification still requires one link.
 
 ## Native helper rendezvous
 

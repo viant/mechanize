@@ -122,3 +122,58 @@ func verifyChromeImage(canonical, actual string, options Options, signature func
 	}
 	return recheck, nil
 }
+
+// The argument is an ancestor already obtained from the kernel and checked for
+// PID, UID and birth by verifyChromeProcess. An update may replace the canonical
+// file while Chrome keeps its old signed launch image. In that case only the
+// ORIGINAL enrolled code requirement plus independent Google identity can
+// qualify that running image. Neither a path nor matching bytes grants trust.
+func verifyChromeAncestorImage(policy ChromeProcessPolicy, ancestor processParent, signature func(string, Options) error, dynamic func(int, string) error) (func() error, error) {
+	options := Options{ExpectedUID: policy.ExpectedUID, DesignatedRequirement: policy.ChromeRequirement}
+	if proof, err := verifyChromeImage(policy.ChromeExecutable, ancestor.identity.Executable, options, signature); err == nil {
+		return proof, nil
+	}
+	proof, err := verifyPinnedRunningChromeImage(ancestor.identity.Executable, options, signature)
+	if err != nil {
+		return nil, err
+	}
+	if dynamic == nil {
+		return nil, errors.New("running Chrome vendor proof unavailable")
+	}
+	if err = dynamic(ancestor.identity.PID, GoogleChromeSignerRequirement); err != nil {
+		return nil, err
+	}
+	if err = proof(); err != nil {
+		return nil, err
+	}
+	// The caller next verifies this same PID against ChromeRequirement and
+	// brackets both dynamic checks with unchanged kernel ancestry and this proof.
+	return proof, nil
+}
+func verifyPinnedRunningChromeImage(actual string, options Options, signature func(string, Options) error) (func() error, error) {
+	before, err := chromeImageStat(actual, options)
+	if err != nil {
+		return nil, err
+	}
+	recheck := func() error {
+		after, e := chromeImageStat(actual, options)
+		if e != nil || after != before {
+			return errors.New("running Chrome image changed during verification")
+		}
+		return nil
+	}
+	if signature == nil {
+		return nil, errors.New("running Chrome signature unavailable")
+	}
+	vendor := options
+	vendor.DesignatedRequirement = GoogleChromeSignerRequirement
+	for _, required := range []Options{vendor, options} {
+		if err = signature(actual, required); err != nil {
+			return nil, err
+		}
+		if err = recheck(); err != nil {
+			return nil, err
+		}
+	}
+	return recheck, nil
+}
