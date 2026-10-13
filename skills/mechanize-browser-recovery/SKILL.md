@@ -15,6 +15,14 @@ or `unknown` does not prove absence: inspect the original receipt first. Keep th
 original request ID for retrieving a lost result; use a new request ID for a
 corrected plan after confirmed non-dispatch.
 
+An uncertain navigation does not prevent read-only recovery. After checking its
+receipt, promptly inspect the existing tab's location and fresh page or window
+image before escalating; preserve the original operation and do not repeat its
+input. Record whether the intended destination is visible. A destination view
+can guide further inspection, but cannot rewrite an UNKNOWN receipt or prove a
+submission succeeded. Stop conflicting mutations until their outcome is known;
+do not abandon available read-only diagnosis merely because input is uncertain.
+
 Use only advertised locator capabilities for mutations. A name visible in an
 observation is not proof that every locator method can act on it. In particular,
 do not replace a failed role locator with `getByText` when `web:textLocator` is
