@@ -14,7 +14,11 @@ func compileSource(source, format string) (*model.Plan, error) {
 	}
 	switch format {
 	case "", "dsl":
-		return script.Compile(source)
+		plan, err := script.Compile(source)
+		if diagnostic := closedScriptDiagnostic(err); diagnostic != nil {
+			return nil, diagnostic
+		}
+		return plan, err
 	case "json":
 		return script.DecodeJSON(strings.NewReader(source))
 	case "yaml":

@@ -200,6 +200,10 @@ func controllerArgs(name string, raw json.RawMessage) (map[string]any, string, e
 		}
 		plan, err := compileSource(v.Source, v.Format)
 		if err != nil {
+			var validation *scriptValidationDiagnostic
+			if errors.As(err, &validation) {
+				return nil, "", validation
+			}
 			var invalid *model.MechanizeError
 			if errors.As(err, &invalid) && invalid.Code == "invalidPredicate" && invalid.DispatchState == "notDispatched" && invalid.EffectState == "none" {
 				return nil, "", controllerArgumentError("invalidPredicate")
@@ -222,6 +226,10 @@ func controllerArgs(name string, raw json.RawMessage) (map[string]any, string, e
 		}
 		plan, err := compileSource(v.Source, v.Format)
 		if err != nil {
+			var validation *scriptValidationDiagnostic
+			if errors.As(err, &validation) {
+				return nil, "", validation
+			}
 			var invalid *model.MechanizeError
 			if errors.As(err, &invalid) && invalid.Code == "invalidPredicate" && invalid.DispatchState == "notDispatched" && invalid.EffectState == "none" {
 				return nil, "", controllerArgumentError("invalidPredicate")
@@ -312,6 +320,11 @@ func (d *ControllerDispatcher) CallTool(ctx context.Context, id chrome.Controlle
 	}
 	args, session, err := controllerArgs(call.Name, call.Arguments)
 	if err != nil {
+		var validation *scriptValidationDiagnostic
+		if errors.As(err, &validation) {
+			out, _ := failure(validation)
+			return out, nil
+		}
 		var closed controllerArgumentError
 		if errors.As(err, &closed) {
 			return controllerRejected("notDispatched", string(closed)), nil

@@ -241,6 +241,12 @@ func result(value any) (*schema.CallToolResult, *jsonrpc.Error) {
 }
 func failure(err error) (*schema.CallToolResult, *jsonrpc.Error) {
 	yes := true
+	var validation *scriptValidationDiagnostic
+	if errors.As(err, &validation) && validation != nil {
+		out, rpcErr := result(validation)
+		out.IsError = &yes
+		return out, rpcErr
+	}
 	body := map[string]any{"code": "operationRejected", "message": err.Error(), "dispatchState": "notDispatched"}
 	var typed *model.MechanizeError
 	if errors.As(err, &typed) {
