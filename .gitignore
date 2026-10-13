@@ -48,6 +48,7 @@ __pycache__/
 # Local site-specific skills, workflows and private test material
 /skills/*/
 !/skills/mechanize-app-discovery/
+!/skills/mechanize-browser-recovery/
 !/skills/mechanize-desktop/
 !/skills/mechanize-finder/
 !/skills/mechanize-intellij/

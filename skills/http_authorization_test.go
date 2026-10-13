@@ -99,7 +99,7 @@ func TestDatlyEmbeddedSkillsHTTPAuthorization(t *testing.T) {
 			}
 			allowed := client.WithAuthToken(tokenValue)
 			list, err := c.ListSkills(ctx, nil, allowed)
-			if err != nil || len(list.Skills) != 8 {
+			if err != nil || len(list.Skills) != 9 {
 				t.Fatalf("authorized catalog: %v", err)
 			}
 			for _, entry := range list.Skills {
