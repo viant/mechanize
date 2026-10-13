@@ -38,6 +38,11 @@ func (h *Host) configureWebControl(ctx context.Context, c Config, options HostOp
 	enrolled.Authorize = func(ctx context.Context, p auth.Principal, surface model.Surface) (*consent.Lease, error) {
 		return h.AuthorizeOperation(ctx, p, surface, true, consent.Control)
 	}
+	enrolled.authorizeDestination = func(ctx context.Context, p auth.Principal, surface model.Surface) (*consent.Lease, error) {
+		// The source lease already reserves exposure. This independent check
+		// enforces destination consent/site policy without granting future DOM access.
+		return h.authorizeConsentOperation(ctx, p, surface, true, consent.Control)
+	}
 	enrolled.Enrolled = func(ctx context.Context, p auth.Principal) (WebControlScope, error) {
 		user, err := h.authorize(ctx, p)
 		if err != nil {

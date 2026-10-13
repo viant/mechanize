@@ -614,7 +614,7 @@ func TestWebControlConcurrentIntentClaimCannotRetireInFlightExecution(t *testing
 
 func TestWebControlAcquisitionValidationRetiresOnlyNewlyOwnedPins(t *testing.T) {
 	for _, fresh := range []bool{true, false} {
-		for _, mode := range []string{"readiness", "action", "postcondition"} {
+		for _, mode := range []string{"readiness", "action", "postcondition", "invalidPostcondition"} {
 			t.Run(fmt.Sprint(fresh)+mode, func(t *testing.T) {
 				f := newWebControlFixture(t)
 				f.ready.NewlyAcquired = fresh
@@ -631,16 +631,27 @@ func TestWebControlAcquisitionValidationRetiresOnlyNewlyOwnedPins(t *testing.T) 
 					return WebControlCleanup{AuthorityRetired: true, RetiredAuthorityQuiesced: true}, nil
 				}
 				withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
-					if mode == "postcondition" {
+					if mode == "postcondition" || mode == "invalidPostcondition" {
 						step.Postcondition = &model.Predicate{Kind: "adapter", Adapter: "web", Name: "valueEquals", Scope: model.PredicateScope{Target: &step.Target}, Inputs: map[string]model.Value{}, TimeoutMs: 1000, FreshnessMs: 1000, RequiredAuthority: "observational"}
+						if mode == "postcondition" {
+							for key, value := range map[string]string{"origin": "https://fixture.test", "strategy": "id", "selector": "save", "attribute": "text", "expected": "saved"} {
+								step.Postcondition.Inputs[key] = model.Value{Kind: model.StringValue, String: value}
+							}
+							if e := step.Postcondition.Validate(); e != nil {
+								t.Fatal(e)
+							}
+						}
 					}
 					if _, _, e := f.manager.Prepare(ctx, p, step); e == nil {
 						t.Error("invalid preparation admitted")
 					}
 				})
 				expected := 0
-				if fresh {
+				if fresh && mode != "invalidPostcondition" {
 					expected = 1
+				}
+				if mode == "invalidPostcondition" && f.qualifications != 0 {
+					t.Fatal("invalid static predicate acquired a renderer")
 				}
 				if retired != expected || f.dispatches != 0 {
 					t.Fatal("acquisition provenance ignored", retired, expected)

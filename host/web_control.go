@@ -84,8 +84,10 @@ type WebControlOptions struct {
 	// Production discovery uses signed metadata without acquiring renderer input authority.
 	CapabilityProbe func(context.Context, auth.Principal) (map[string]bool, error)
 	authorizeRead   func(context.Context, auth.Principal, model.Surface) (*consent.Lease, error)
-	Owner           context.Context
-	Enrolled        func(context.Context, auth.Principal) (WebControlScope, error)
+	// Destination consent grants navigation eligibility, never access to a future DOM.
+	authorizeDestination func(context.Context, auth.Principal, model.Surface) (*consent.Lease, error)
+	Owner                context.Context
+	Enrolled             func(context.Context, auth.Principal) (WebControlScope, error)
 	// Qualify admits exactly one root document. Only NewlyAcquired transfers a
 	// fresh lease to this manager; reused pins remain owned by their preparer.
 	// On error, the provider retains or retires its unpublished acquisition.
@@ -424,7 +426,10 @@ func (m *WebControlManager) Execute(ctx context.Context, p auth.Principal, step 
 	if err = m.options.VerifyChannel(ctx, actual, intent.authority); err != nil {
 		return result, err
 	}
-	lease, err := m.options.Authorize(ctx, actual, step.Target.Surface)
+	// Prepare already resolved the authored selector; use that independently
+	// revalidated document for source exposure without changing the durable step.
+	source := model.Surface{Kind: "web", Origin: intent.authority.Document.Origin, TabID: intent.authority.Document.QualifiedTabID()}
+	lease, err := m.options.Authorize(ctx, actual, source)
 	if err != nil {
 		if lease != nil && lease.Release != nil {
 			lease.Release()
@@ -460,7 +465,11 @@ func (m *WebControlManager) Execute(ctx context.Context, p auth.Principal, step 
 			return result, e
 		}
 		if origin != step.Target.Surface.Origin {
-			destinationLease, e = m.options.Authorize(lease.Context, actual, model.Surface{Kind: "web", Origin: origin})
+			authorizeDestination := m.options.authorizeDestination
+			if authorizeDestination == nil {
+				authorizeDestination = m.options.Authorize
+			}
+			destinationLease, e = authorizeDestination(lease.Context, actual, model.Surface{Kind: "web", Origin: origin})
 			if destinationLease != nil && destinationLease.Release != nil {
 				defer destinationLease.Release()
 			}

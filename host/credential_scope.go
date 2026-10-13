@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/viant/mechanize/auth"
@@ -99,6 +100,7 @@ func (h *Host) authorizeDisjointWeb(ctx context.Context, p auth.Principal, surfa
 	if e != nil {
 		return nil, e
 	}
+	var verificationError error
 	verify := func(c context.Context, binding vault.Binding) error {
 		matchedBinding := binding.DocumentID == ""
 		for _, snapshot := range scopes {
@@ -114,8 +116,9 @@ func (h *Host) authorizeDisjointWeb(ctx context.Context, p auth.Principal, surfa
 					}
 				}
 			}
-			if backend.VerifyProtectionDisjoint(c, p, source, surface) != nil {
-				return vault.ErrDeliveryProtected
+			if e := backend.VerifyProtectionDisjoint(c, p, source, surface); e != nil {
+				verificationError = e
+				return e
 			}
 		}
 		if !matchedBinding {
@@ -131,6 +134,14 @@ func (h *Host) authorizeDisjointWeb(ctx context.Context, p auth.Principal, surfa
 	}
 	if e != nil {
 		lease.Release()
+		// The exposure gate retains exclusion, but its generic refusal must not
+		// turn a closed stale/transport proof failure into a private-page claim.
+		if verificationError != nil && !errors.Is(verificationError, vault.ErrDeliveryProtected) && !errors.Is(verificationError, vault.ErrEntryProtected) {
+			e = credentialPublicReadFailure(chrome.CredentialProtectionFailureReason(verificationError))
+		}
+		if errors.Is(e, vault.ErrDeliveryProtected) || errors.Is(e, vault.ErrEntryProtected) {
+			return nil, errors.Join(e, &model.MechanizeError{Code: "privateDOMUnavailable", Message: "Credential protection excludes this document exposure.", Stage: "admission", DispatchState: "notDispatched", EffectState: "none"})
+		}
 		return nil, e
 	}
 	if release != nil {
