@@ -228,6 +228,19 @@ class PrepareReviewTests(unittest.TestCase):
             disabled['users']=[];private(root/'config.json',p.wire(disabled))
             with self.assertRaises(ValueError):helper.prepare(input,top/'bad-recovery',lambda pid:dict(processes[pid]),lambda *a:None,pinning)
 
+    def test_recovery_preserves_existing_follow_updates_policy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            top,root,inputs,config,manifest,processes=self.fixture(directory)
+            config['chrome']['processTrust']['chromeRequirement']=helper.GOOGLE_SIGNER
+            retained=top/'retained-config.json';private(retained,p.wire(config))
+            disabled=copy.deepcopy(config);disabled.pop('chrome');private(root/'config.json',p.wire(disabled))
+            inputs['chromeRecovery']={'path':str(retained),'sha256':p.sha(retained.read_bytes())}
+            current_pin='identifier "com.google.Chrome" and cdhash H"'+'f'*40+'"'
+            helper.prepare(inputs,top/'recovery',lambda pid:dict(processes[pid]),lambda *a:None,lambda path,role,work:current_pin if role=='google-chrome' else pin(role))
+            candidate=p.decode((top/'recovery/candidate-config.json').read_bytes())
+            self.assertEqual(candidate['chrome']['processTrust']['chromeRequirement'],helper.GOOGLE_SIGNER)
+            self.assertEqual(candidate['chrome']['grants'],config['chrome']['grants'])
+
     def test_key_fingerprint_refuses_symlink_and_permissions_without_decoding(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory).resolve();root.chmod(0o700);key=root/'key';private(key,b'opaque key bytes')

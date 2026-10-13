@@ -22,7 +22,7 @@ import sys
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('runtime_package',ROOT/'scripts/package-runtime-upgrade.py')
 package=importlib.util.module_from_spec(spec);spec.loader.exec_module(package)
-GOOGLE_SIGNER='identifier "com.google.Chrome" and anchor apple generic and certificate leaf[subject.OU] = "EQHXZ8M8AV"'
+GOOGLE_SIGNER=package.GOOGLE_CHROME_REQUIREMENT
 INPUT_KEYS=('version','title','installationRoot','stagedManifest','approvalConsole','processes','extension','observerCredential','consentBinding','keychain','identity','launchdPath')
 CONFIG_KEYS={'sourceRoot','storageRoot','nativeHelper','keys','identityPolicy','stdioCredential','users','chrome','maxUsers','nativeConsole','nativeLaunch','nativeVault','keychain','artifacts','chromeRetirement','nativeEffectReconciliation'}
 RESOURCE_KEYS={'name','url','key','maxretry','timeoutms','fallback','data'}
@@ -241,7 +241,9 @@ def prepare(inputs,output,inspect=inspect_process,verify=package.verify_artifact
     if recovery:
         verify(trust['chromeExecutable'],GOOGLE_SIGNER,output)
         # Exact CDHash is read only after independent vendor validation.
-        chrome_requirement=pin(trust['chromeExecutable'],'google-chrome',output)
+        current_pin=pin(trust['chromeExecutable'],'google-chrome',output)
+        package.chrome_requirement(current_pin)
+        chrome_requirement=GOOGLE_SIGNER if chrome_requirement==GOOGLE_SIGNER else current_pin
         package.chrome_requirement(chrome_requirement)
     observed={}
     for role,executable,requirement in [('broker',broker,old_broker),('console',console_main,approval['requirement']),('chrome',trust['chromeExecutable'],chrome_requirement)]:observed[role]=check_process(processes[role],executable,requirement,output,inspect,verify,role=='chrome',bool(recovery) and role=='chrome')

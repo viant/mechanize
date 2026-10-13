@@ -126,7 +126,10 @@ def ordered_inventory(value):
     if total>512*1024*1024: raise ValueError('Inventory byte bound')
     return result
 
+GOOGLE_CHROME_REQUIREMENT = 'identifier "com.google.Chrome" and anchor apple generic and certificate leaf[subject.OU] = "EQHXZ8M8AV"'
+
 def chrome_requirement(value):
+    if value == GOOGLE_CHROME_REQUIREMENT: return value
     atom=r'cdhash H"[a-f0-9]{40}"'
     if not isinstance(value,str) or not re.fullmatch(r'identifier "com\.google\.Chrome" and (?:'+atom+r'|\('+atom+r'(?: or '+atom+r'){1,3}\))',value):raise ValueError('Exact bounded Chrome architecture pins required')
     hashes=re.findall(r'H"([a-f0-9]{40})"',value)

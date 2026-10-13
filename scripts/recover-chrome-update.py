@@ -47,7 +47,7 @@ def no_runtime(executables):
 
 
 def prepare(config_path, host_path, chrome, work, inspect=review.inspect_process,
-            verifier=verify, pin=review.pin_from_signature):
+            verifier=verify, pin=review.pin_from_signature, follow_updates=False):
     config_path, host_path = package.physical(config_path), package.physical(host_path)
     if config_path == host_path:
         raise ValueError('Distinct existing configurations required')
@@ -75,6 +75,10 @@ def prepare(config_path, host_path, chrome, work, inspect=review.inspect_process
     fresh = pin(trust['chromeExecutable'], 'google-chrome', work)
     package.chrome_requirement(fresh)
     observed = review.check_process(chrome, trust['chromeExecutable'], fresh, work, inspect, verifier, chrome=True, google=True)
+    if type(follow_updates) is not bool:
+        raise ValueError('Explicit update policy choice required')
+    if follow_updates or trust['chromeRequirement'] == review.GOOGLE_SIGNER:
+        fresh = review.GOOGLE_SIGNER
     updated = [copy.deepcopy(config), copy.deepcopy(host)]
     updated[0]['chrome']['processTrust']['chromeRequirement'] = fresh
     updated[1]['processTrust']['chromeRequirement'] = fresh
@@ -125,6 +129,7 @@ def main():
     parser.add_argument('--native-host-config', default=str(Path.home() / 'Library/Application Support/Mechanize/native-host.json'))
     parser.add_argument('--chrome-pid', type=int, required=True)
     parser.add_argument('--chrome-start', required=True)
+    parser.add_argument('--follow-google-updates', action='store_true', help='trust exact Google Chrome publisher identity across releases; preserve all process/path checks')
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--backup-dir')
     args = parser.parse_args()
@@ -140,13 +145,13 @@ def main():
         chrome = {'pid': args.chrome_pid, 'start': args.chrome_start}
         if args.apply:
             with locks.runtime_lock(Path(args.config).parent):
-                plan = prepare(args.config, args.native_host_config, chrome, work)
+                plan = prepare(args.config, args.native_host_config, chrome, work, follow_updates=args.follow_google_updates)
                 changed = apply(plan, args.backup_dir, work)
         else:
-            plan = prepare(args.config, args.native_host_config, chrome, work)
+            plan = prepare(args.config, args.native_host_config, chrome, work, follow_updates=args.follow_google_updates)
             changed = plan['originals'] != plan['candidates']
         print(json.dumps({'verifiedGoogleChrome': True, 'currentProcessVerified': True,
-                          'pinChangeRequired': changed, 'applied': bool(args.apply and changed),
+                          'pinChangeRequired': changed, 'followsGoogleUpdates': plan['requirement'] == review.GOOGLE_SIGNER, 'applied': bool(args.apply and changed),
                           'grantsChanged': False, 'credentialsChanged': False,
                           'binariesChanged': False, 'processesRestarted': False}))
 

@@ -66,6 +66,25 @@ class ChromePinRecoveryTest(unittest.TestCase):
         current = self.prepare()
         self.assertEqual(current['originals'], current['candidates'])
 
+    def test_follow_updates_is_explicit_and_preserved_without_repinning(self):
+        plan = repair.prepare(*self.paths, self.reference, self.root,
+                              inspect=lambda pid: self.process.copy(), verifier=self.verify,
+                              pin=lambda *args: self.new, follow_updates=True)
+        self.assertEqual(plan['requirement'], repair.review.GOOGLE_SIGNER)
+        self.assertTrue(self.apply(plan))
+        self.assertEqual(json.loads(self.paths[0].read_bytes())['chrome']['processTrust']['chromeRequirement'], repair.review.GOOGLE_SIGNER)
+        current = self.prepare()
+        self.assertEqual(current['requirement'], repair.review.GOOGLE_SIGNER)
+        self.assertEqual(current['originals'], current['candidates'])
+
+    def test_requirement_validator_rejects_vendor_lookalikes(self):
+        vendor = repair.review.GOOGLE_SIGNER
+        self.assertEqual(repair.package.chrome_requirement(vendor), vendor)
+        for invalid in (vendor + ' or true', vendor.replace('EQHXZ8M8AV', 'OTHERTEAM'),
+                        vendor.replace('com.google.Chrome', 'org.chromium.Chromium'),
+                        vendor.replace('anchor apple generic and ', '')):
+            with self.assertRaises(ValueError): repair.package.chrome_requirement(invalid)
+
     def test_vendor_failure_and_changed_birth_refuse_before_writes(self):
         def refuse(*args): raise ValueError('synthetic signer refusal')
         with self.assertRaises(ValueError):

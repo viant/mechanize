@@ -11,8 +11,10 @@ import (
 	"syscall"
 )
 
-// GoogleChromeSignerRequirement is an independent vendor identity, never a
-// replacement for the operator-enrolled exact Chrome image pin.
+// GoogleChromeSignerRequirement is the closed Google Chrome publisher identity.
+// Enrollment may choose this exact policy to follow signed Chrome updates, or
+// retain a build-specific requirement. Other publisher expressions are not an
+// implicit update policy.
 const GoogleChromeSignerRequirement = `identifier "com.google.Chrome" and anchor apple generic and certificate leaf[subject.OU] = "EQHXZ8M8AV"`
 
 // VerifyChromeExecutable is exclusively for the enrolled canonical Chrome main
@@ -126,12 +128,24 @@ func verifyChromeImage(canonical, actual string, options Options, signature func
 // The argument is an ancestor already obtained from the kernel and checked for
 // PID, UID and birth by verifyChromeProcess. An update may replace the canonical
 // file while Chrome keeps its old signed launch image. In that case only the
-// ORIGINAL enrolled code requirement plus independent Google identity can
-// qualify that running image. Neither a path nor matching bytes grants trust.
+// enrolled code requirement plus independent Google identity can qualify that
+// running image. The explicit follow-updates policy additionally anchors the
+// current canonical installation; an exact hash policy remains exact. Neither a path nor matching bytes grants trust.
 func verifyChromeAncestorImage(policy ChromeProcessPolicy, ancestor processParent, signature func(string, Options) error, dynamic func(int, string) error) (func() error, error) {
 	options := Options{ExpectedUID: policy.ExpectedUID, DesignatedRequirement: policy.ChromeRequirement}
 	if proof, err := verifyChromeImage(policy.ChromeExecutable, ancestor.identity.Executable, options, signature); err == nil {
 		return proof, nil
+	}
+	var canonicalProof func() error
+	if policy.ChromeRequirement == GoogleChromeSignerRequirement {
+		// Following releases does not remove the enrolled installation anchor.
+		// The current canonical image and the older running image must each
+		// independently satisfy Google identity and remain stable throughout.
+		var err error
+		canonicalProof, err = verifyChromeImage(policy.ChromeExecutable, policy.ChromeExecutable, options, signature)
+		if err != nil {
+			return nil, err
+		}
 	}
 	proof, err := verifyPinnedRunningChromeImage(ancestor.identity.Executable, options, signature)
 	if err != nil {
@@ -148,6 +162,17 @@ func verifyChromeAncestorImage(policy ChromeProcessPolicy, ancestor processParen
 	}
 	// The caller next verifies this same PID against ChromeRequirement and
 	// brackets both dynamic checks with unchanged kernel ancestry and this proof.
+	if canonicalProof != nil {
+		if err := canonicalProof(); err != nil {
+			return nil, err
+		}
+		return func() error {
+			if err := canonicalProof(); err != nil {
+				return err
+			}
+			return proof()
+		}, nil
+	}
 	return proof, nil
 }
 func verifyPinnedRunningChromeImage(actual string, options Options, signature func(string, Options) error) (func() error, error) {

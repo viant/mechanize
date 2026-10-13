@@ -5,6 +5,7 @@ package keychain
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/viant/mechanize/auth/nativepeer"
 	"path/filepath"
 	"regexp"
 )
@@ -18,6 +19,9 @@ var recoveryChromeRequirement = regexp.MustCompile(`^identifier "com\.google\.Ch
 var chromeCDHashes = regexp.MustCompile(`H"[a-f0-9]{40}"`)
 
 func exactRecoveryChromeRequirement(value string) bool {
+	if value == nativepeer.GoogleChromeSignerRequirement {
+		return true
+	}
 	if !recoveryChromeRequirement.MatchString(value) {
 		return false
 	}

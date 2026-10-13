@@ -135,7 +135,7 @@ def verify_image(path, requirement, digest=None):
     image_pin = r'(?:identifier "[A-Za-z0-9._-]+" and )?cdhash H"[a-f0-9]{40}"'
     chrome_pin = (re.escape(CHROME_VENDOR_REQUIREMENT) +
                   r' and (?:cdhash H"[a-f0-9]{40}"|\(cdhash H"[a-f0-9]{40}" or cdhash H"[a-f0-9]{40}"\))')
-    if not isinstance(requirement, str) or not re.fullmatch('(?:' + image_pin + '|' + chrome_pin + ')', requirement):
+    if not isinstance(requirement, str) or requirement != CHROME_VENDOR_REQUIREMENT and not re.fullmatch('(?:' + image_pin + '|' + chrome_pin + ')', requirement):
         raise ValueError('exact signed image requirement required')
     if requirement.startswith(CHROME_VENDOR_REQUIREMENT):
         hashes = re.findall(r'cdhash H"([a-f0-9]{40})"', requirement)
@@ -422,13 +422,13 @@ def self_test():
                 self.assertFalse(any('--display' in call and 'x86_64' in call for call in calls))
                 self.assertEqual(sum('--all-architectures' in call for call in calls), 1)
 
-        def test_image_requirement_whitelist_keeps_exact_hash_and_digest_bounds(self):
+        def test_image_requirement_whitelist_keeps_closed_publisher_hash_and_digest_bounds(self):
             with tempfile.TemporaryDirectory() as tmp:
                 image = Path(tmp).resolve() / 'image'
                 image.write_bytes(b'fixture')
                 image.chmod(0o755)
                 first, second = 'cdhash H"' + 'a' * 40 + '"', 'cdhash H"' + 'b' * 40 + '"'
-                valid = [first, 'identifier "fixture.helper" and ' + first,
+                valid = [CHROME_VENDOR_REQUIREMENT, first, 'identifier "fixture.helper" and ' + first,
                          CHROME_VENDOR_REQUIREMENT + ' and ' + first,
                          CHROME_VENDOR_REQUIREMENT + ' and (' + first + ' or ' + second + ')']
                 runner = mock.Mock(return_value=subprocess.CompletedProcess([], 0, b'', b''))
@@ -437,7 +437,7 @@ def self_test():
                         verify_image(image, requirement, hashlib.sha256(b'fixture').hexdigest())
                 self.assertEqual(runner.call_count, len(valid))
                 runner.reset_mock()
-                invalid = [CHROME_VENDOR_REQUIREMENT, CHROME_VENDOR_REQUIREMENT + ' or ' + first,
+                invalid = [CHROME_VENDOR_REQUIREMENT + ' or true', CHROME_VENDOR_REQUIREMENT + ' or ' + first,
                            '(' + first + ' or ' + second + ')',
                            CHROME_VENDOR_REQUIREMENT + ' and (' + first + ' or ' + first + ')',
                            CHROME_VENDOR_REQUIREMENT + ' and (' + second + ' or ' + first + ')',

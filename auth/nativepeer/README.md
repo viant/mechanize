@@ -65,6 +65,24 @@ alone grants no authority; full peer and running-process verification precede
 credential loading and request admission. Native-host and broker executable
 verification still requires one link.
 
+An enrollment can instead select the exact `GoogleChromeSignerRequirement`
+(Chrome identifier, Apple certificate anchor, Google team `EQHXZ8M8AV`) in the
+existing `chromeRequirement` field to follow authentic Google Chrome releases.
+This is publisher trust, not a claim that all releases have one hash. The
+current canonical installation must still be safely owned and Google-valid;
+an older running image additionally retains static/dynamic signature and
+kernel PID/birth/UID/ancestry checks. Both image identities are rechecked.
+No requirement is learned from a browser message, and no pin or journal is
+rewritten during verification. Other exact-hash enrollments remain exact.
+
+After installing a verifier with this policy, the existing config-only
+`recover-chrome-update.py --follow-google-updates` helper can select it for an
+already enrolled installation. It defaults to dry-run, changes only both
+Chrome requirement fields, and requires a stopped broker/native host plus
+private backups for application; Chrome need not stop. Runtime upgrade review
+preserves an already selected publisher policy. Helpers and the broker keep
+their own exact signed-image requirements.
+
 ## Native helper rendezvous
 
 `backend/darwin.Options` accepts `Requirement` and `ExpectedUID` as trusted

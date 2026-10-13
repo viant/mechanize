@@ -99,3 +99,15 @@ func TestRecordRootTransitionCannotReplaceExistingStoreOrIdentity(t *testing.T) 
 		}
 	}
 }
+
+func TestChromeRecoveryAcceptsOnlyClosedFollowUpdatesPublisher(t *testing.T) {
+	vendor := `identifier "com.google.Chrome" and anchor apple generic and certificate leaf[subject.OU] = "EQHXZ8M8AV"`
+	if !exactRecoveryChromeRequirement(vendor) {
+		t.Fatal("closed publisher policy refused")
+	}
+	for _, bad := range []string{vendor + " or true", strings.ReplaceAll(vendor, "EQHXZ8M8AV", "OTHERTEAM"), strings.ReplaceAll(vendor, "com.google.Chrome", "org.chromium.Chromium"), `identifier "com.google.Chrome"`, strings.ReplaceAll(vendor, "anchor apple generic and ", "")} {
+		if exactRecoveryChromeRequirement(bad) {
+			t.Fatal("broader publisher expression accepted")
+		}
+	}
+}
