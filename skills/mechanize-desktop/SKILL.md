@@ -14,7 +14,8 @@ until the server reports the relevant authorization and the result is verified.
 
 1. **Discover.** Call `mechanize_capabilities` once. Read `mechanize_describe`
    when additional syntax or workflow schema is needed; avoid duplicate full
-   discovery on each action. Treat
+   discovery on each action. Reuse loaded skill guides and the catalog during an
+   unchanged session; refresh after an upgrade or a reported capability change. Treat
    their live capability map, method descriptions and policy as authoritative;
    do not infer support from a method name or an example. Observed node
    `actions` and `valueSettable` metadata guide target choice but are not
@@ -51,15 +52,25 @@ until the server reports the relevant authorization and the result is verified.
    parallel when their scopes do not interfere.
    Use `mechanize_step_run` for exactly one
    execution step or `mechanize_script_run` for a validated script. Supply a
-   unique `clientRequestId` for each intended run. Native runtime paths may
+   unique `clientRequestId` for each intended run. For short operations, set
+   `waitMs: 5000` to receive completion in this call when ready (default `0`
+   returns immediately). For a declared read binding such as `let answer = ...read(...)`,
+   add `outputBindings: ["answer"]`; successful completion includes bounded safe
+   values in `outputs.outputs` and explicit withheld reasons in `outputs.unavailable`.
+   Only named `element.read` and `browser.openOrigin` bindings are exportable.
+   A wait timeout returns the same operation’s current status; it does not cancel
+   or repeat input. Preserve the original request ID if recovering a lost reply.
+   Native runtime paths may
    support advertised mutations when live policy, consent, system permissions,
    operator ceilings and backend qualification allow them; this does not
    establish broad native coverage. Check `mechanize_browser_status` for Chrome:
    a connected native port alone does not prove process, scope, executor or
    inventory qualification. Use the live flags and attention code, not a skill's
    historical enrollment description, to decide whether Web actions are ready.
-6. **Verify.** Poll `mechanize_operation_status` with the returned
-   `sessionId` and `operationId`. Execution completion is separate from
+6. **Verify.** Inspect the run response first. If it is still queued/running,
+   query `mechanize_operation_status` with its `sessionId` and `operationId`;
+   fetch `mechanize_operation_outputs` only when requested outputs were not
+   already returned after successful completion. Execution completion is separate from
    business verification. Check `businessStatus`, `verificationState`, objective
    evidence and `verificationReason`. Only a qualified authoritative outcome
    receipt can establish business success. A native focus or navigation proof

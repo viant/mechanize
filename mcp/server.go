@@ -91,6 +91,8 @@ type SourceInput struct {
 	Format string `json:"format,omitempty"`
 }
 type RunInput struct {
+	WaitMs          int                    `json:"waitMs,omitempty" description:"Observe completion for 0..5000 milliseconds; timeout does not cancel or repeat execution. Default 0 returns immediately."`
+	OutputBindings  []string               `json:"outputBindings,omitempty" description:"Up to 16 explicit element.read or browser.openOrigin binding names to include after successful completion."`
 	GrantID         string                 `json:"grantId,omitempty"`
 	Purpose         string                 `json:"purpose,omitempty"`
 	SessionID       string                 `json:"sessionId"`
@@ -170,6 +172,7 @@ type Discovery struct {
 	WorkflowSchema      map[string]any      `json:"workflowSchema,omitempty"`
 }
 type Operation struct {
+	Outputs            *automation.OperationOutputs `json:"outputs,omitempty"`
 	ExecutionFailure   *automation.ExecutionFailure `json:"executionFailure,omitempty"`
 	RunID              string                       `json:"runId,omitempty"`
 	ID                 string                       `json:"operationId"`
@@ -405,6 +408,9 @@ func register(base *protocol.DefaultHandler, d Dependencies) error {
 			if single && len(plan.Steps) != 1 {
 				return failure(errors.New("step_run requires exactly one execution step"))
 			}
+			if err := validateRunCompletion(input, plan); err != nil {
+				return failure(err)
+			}
 			p, err := auth.FromContext(ctx)
 			if err != nil {
 				return failure(err)
@@ -423,8 +429,7 @@ func register(base *protocol.DefaultHandler, d Dependencies) error {
 			if err != nil {
 				return failure(err)
 			}
-			runID, _ := d.Runtime.RunReference(ctx, operation.SessionID, operation.ID)
-			return operationResult(ctx, d.Runtime, Operation{RunID: runID, ID: operation.ID, SessionID: operation.SessionID, ExecutionStatus: operation.Status})
+			return runCompletionResult(ctx, d.Runtime, input, operation.SessionID, operation.ID)
 		}); err != nil {
 			return err
 		}

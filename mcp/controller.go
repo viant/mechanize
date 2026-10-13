@@ -213,6 +213,9 @@ func controllerArgs(name string, raw json.RawMessage) (map[string]any, string, e
 		if !controllerPlanAllowed(plan) {
 			return nil, "", errors.New("invalid or authority-protected script")
 		}
+		if err := validateRunCompletion(v, plan); err != nil {
+			return nil, "", controllerArgumentError("invalidArguments")
+		}
 		// Credentials use the private native Vault delivery channel. Ordinary
 		// script inputs must not turn declared sensitive values into page bytes.
 		for _, def := range plan.Inputs {
@@ -433,6 +436,16 @@ func (d *ControllerDispatcher) CallTool(ctx context.Context, id chrome.Controlle
 		var operation Operation
 		if json.Unmarshal(raw, &operation) != nil {
 			return controllerRejected("unknown"), nil
+		}
+		if operation.Outputs != nil {
+			if operation.Outputs.SessionID != operation.SessionID || operation.Outputs.OperationID != operation.ID || operation.Outputs.RunID != operation.RunID || operation.ExecutionStatus != "succeeded" {
+				return controllerRejected("unknown"), nil
+			}
+			for _, value := range operation.Outputs.Outputs {
+				if value.Kind == model.ReferenceValue {
+					return controllerRejected("unknown"), nil
+				}
+			}
 		}
 		operation.Error = ""
 		if operation.ExecutionFailure != nil && !operation.ExecutionFailure.Valid() {
