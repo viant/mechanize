@@ -251,8 +251,12 @@ func TestReceiptMismatchBlocksMutationAndReconnectCanQuery(t *testing.T) {
 		queryDone <- e
 	}()
 	query := nextCommand(t, reconnected)
-	if query.Action != "receipt.query" || query.AttemptID != "attempt1" || query.ChannelEpoch != sent.ChannelEpoch || query.BrokerEpoch != sent.BrokerEpoch {
-		t.Fatal("reconnect replayed or replaced fences")
+	b.mu.Lock()
+	original := c.attempts["attempt1"]
+	currentEpoch := c.epoch
+	b.mu.Unlock()
+	if query.Action != "receipt.query" || query.AttemptID != "attempt1" || query.ChannelEpoch == sent.ChannelEpoch || query.ChannelEpoch != currentEpoch || query.BrokerEpoch != sent.BrokerEpoch || original.ChannelEpoch != sent.ChannelEpoch || original.BrokerEpoch != sent.BrokerEpoch {
+		t.Fatal("reconnect lost original tuple or failed to fence the replacement transport")
 	}
 	if e := WriteFrame(reconnected, Reply{RequestID: query.RequestID, AttemptID: query.AttemptID, Identity: query.Identity, DispatchState: "dispatched"}); e != nil {
 		t.Fatal(e)

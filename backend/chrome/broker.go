@@ -490,6 +490,12 @@ func (b *Broker) serve(conn net.Conn) {
 		rejectNativeStartup(conn, "brokerScopeUnqualified")
 		return
 	}
+	// The challenge records a previously accepted transport. A replacement
+	// native connection must re-establish renderer retirement and binding under
+	// a fresh fence; retained operation tuples keep their original epochs.
+	if c.executorChallenge != "" {
+		c.epoch = newID()
+	}
 	c.conn = conn
 	c.reconnectPhase, c.reconnectReason = "", ""
 	c.reconnectInventoryReason = ""

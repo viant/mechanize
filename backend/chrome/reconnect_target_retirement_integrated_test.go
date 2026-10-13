@@ -29,6 +29,12 @@ import (
 // socket, shipped worker reload/census/adoption and a separately leased fresh
 // action. Signed OS peer and Chrome APIs/renderer are inert fixture boundaries.
 func TestHistoricalUnknownReloadDatlyBrokerWorkerAndFreshAction(t *testing.T) {
+	testHistoricalUnknownReload(t, false)
+}
+func TestHistoricalUnknownSameBrokerReplacementDatlyWorkerAndFreshAction(t *testing.T) {
+	testHistoricalUnknownReload(t, true)
+}
+func testHistoricalUnknownReload(t *testing.T, sameBroker bool) {
 	f := newReconnectDatlyFixture(t, false)
 	before := f.read()
 	ctx, cancel := context.WithTimeout(f.ctx, 20*time.Second)
@@ -93,6 +99,41 @@ func TestHistoricalUnknownReloadDatlyBrokerWorkerAndFreshAction(t *testing.T) {
 		t.Fatal(e)
 	}
 	recoverConsent := historicalConsentRecoveryFixture(t, f, g)
+	if sameBroker {
+		// The original fixture's immutable durable/worker tuples use these fences.
+		// First publish READY on this same broker, then replace only its transport.
+		b.mu.Lock()
+		b.epoch, c.epoch = f.descriptor.BrokerEpoch, f.descriptor.ChannelEpoch
+		b.mu.Unlock()
+		initial, err := net.Dial("unix", b.listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = WriteFrame(initial, map[string]any{"type": "hello", "protocolVersion": 1, "workerBuild": 33, "profileChannel": grant.ProfileChannel, "browserInstance": grant.BrowserInstance, "extensionOrigin": grant.ExtensionOrigin, "trustScope": TrustScopeDesktop, "credential": strings.Repeat("synthetic", 8)}); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := ReadFrame(initial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ack struct{ BrokerEpoch, ChannelEpoch, ExecutorChallenge string }
+		if json.Unmarshal(raw, &ack) != nil || ack.BrokerEpoch != f.descriptor.BrokerEpoch || ack.ChannelEpoch != f.descriptor.ChannelEpoch {
+			t.Fatal("initial accepted transport changed its fence")
+		}
+		if err = WriteFrame(initial, map[string]any{"type": "executorPrepared", "executorChallenge": ack.ExecutorChallenge, "mutationFingerprintVersion": 2}); err != nil {
+			t.Fatal(err)
+		}
+		if err = WriteFrame(initial, map[string]any{"type": "documents", "documents": []Document{{Identity: Identity{ProfileChannel: "p1", BrowserInstance: "b1", TabID: 8, DocumentID: "fresh-document", Generation: 1}, Origin: "https://fixture.example.test", MutationFingerprintVersion: 2}}}); err != nil {
+			t.Fatal(err)
+		}
+		waitControl(t, func() bool {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			return c.executorQualified && c.inventoryComplete && len(c.unknown) == 0
+		})
+		initial.Close()
+		waitControl(t, func() bool { b.mu.Lock(); defer b.mu.Unlock(); return c.conn == nil })
+	}
 	conn, e := net.Dial("unix", b.listener.Addr().String())
 	if e != nil {
 		t.Fatal(e)
@@ -178,7 +219,7 @@ func TestHistoricalUnknownReloadDatlyBrokerWorkerAndFreshAction(t *testing.T) {
 			}
 		}
 	}()
-	if e = write(map[string]any{"type": "fixture.start", "attemptId": f.descriptor.BrowserAttemptID}); e != nil {
+	if e = write(map[string]any{"type": "fixture.start", "attemptId": f.descriptor.BrowserAttemptID, "retireBeforeReload": sameBroker}); e != nil {
 		t.Fatal(e)
 	}
 	select {
@@ -211,6 +252,14 @@ func TestHistoricalUnknownReloadDatlyBrokerWorkerAndFreshAction(t *testing.T) {
 		t.Fatal("joined protocol timed out", ctx.Err())
 	}
 	waitControl(t, func() bool { b.mu.Lock(); defer b.mu.Unlock(); return c.executorQualified && c.inventoryComplete })
+	if sameBroker {
+		b.mu.Lock()
+		rotated := b.epoch == f.descriptor.BrokerEpoch && c.epoch != f.descriptor.ChannelEpoch
+		b.mu.Unlock()
+		if !rotated {
+			t.Fatal("replacement did not receive a fresh channel fence")
+		}
+	}
 	b.mu.Lock()
 	audit := c.receipts[f.descriptor.BrowserAttemptID]
 	active := c.unknown[f.descriptor.BrowserAttemptID]

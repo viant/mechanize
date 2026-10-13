@@ -8,7 +8,7 @@ readline.createInterface({input:process.stdin}).on('line',async line=>{
  try {
   const m=JSON.parse(line);
   if(m.type==='fixture.start'){
-   const restarted=await restartUnknown({attemptId:m.attemptId});f=restarted.f;before=restarted.before;
+   const restarted=await restartUnknown({attemptId:m.attemptId,retireBeforeReload:m.retireBeforeReload===true});f=restarted.f;before=restarted.before;
    let hello;f.disconnect();f.state.nativePost=m=>{if(m.type==='hello')hello=m;else write(m)};await f.connect();
    for(let n=0;n<100&&!hello;n++)await new Promise(r=>setTimeout(r,5));assert.ok(hello);f.state.nativePost=write;
    // Supply no fake reconnect replies: Go owns the entire native exchange.
@@ -27,7 +27,7 @@ readline.createInterface({input:process.stdin}).on('line',async line=>{
     throw Error('unsupported inert renderer boundary');
    };
    ready=true;
-   write({type:'fixture.ready',original:restarted.c,hello});return;
+   write({type:'fixture.ready',original:restarted.c,hello,retiredBeforeReload:m.retireBeforeReload===true});return;
   }
   if(!ready)throw Error('fixture not ready');
   if(m.type==='fixture.finish'){

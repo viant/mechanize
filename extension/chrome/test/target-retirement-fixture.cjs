@@ -9,8 +9,14 @@ async function unknownFixture(extra={}){
  return {f,c};
 }
 const retire=(c,fence=grant)=>command('retire-original','executor.retire',{attemptId:c.attemptId,locator:undefined,controlLease:c.controlLease,fingerprintVersion:2,fingerprintSHA256:c.fingerprintSHA256,...fence});
-async function restartUnknown(extra={}){
+async function restartUnknown({retireBeforeReload=false,...extra}={}){
  const original=await unknownFixture(extra),before=JSON.stringify(original.f.storage.mechanizePlaywrightJournalV1);
+ if(retireBeforeReload){
+  original.f.state.inventoryTabs=[];
+  await original.f.receive(retire(original.c));
+  assert.equal(original.f.messages.at(-1).retiredAuthorityQuiesced,true);
+  assert.equal(original.f.unknownCount(),0);
+ }
  original.f.disconnect();
  const f=await fixture({}, {enroll:false,localState:structuredClone(original.f.storage)});
  f.state.inventoryTabs=[{id:8,url:'https://fixture.example.test/fresh'}];
