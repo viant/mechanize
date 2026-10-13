@@ -41,4 +41,28 @@ final class WindowTextTests: XCTestCase {
         XCTAssertEqual(sent,3); XCTAssertEqual(checks,3)
         XCTAssertEqual(result.dispatchState,"dispatched"); XCTAssertNil(result.failure)
     }
+    func testCheapChunkBudgetRetainsLockedFocusAndRevocationChecksBeforeEveryDown() {
+        for mode in ["complete","focusChanged","revoked"] {
+            let inputs = InputSafety(); inputs.enable()
+            var checks = 1, budgets = 0, downs = 0, ups = 0
+            var focusCurrent = true
+            let result = WindowTextSequence.perform([[97],[98]], preflight: {
+                budgets += 1
+                if downs == 1 {
+                    if mode == "focusChanged" { focusCurrent = false }
+                    if mode == "revoked" { _ = inputs.inhibitAndRelease() }
+                }
+            }, send: { _, willPost in
+                try KeyboardPosting.press(inputs:inputs,token:"key:0",delivery:.session,preflight:{
+                    checks += 1
+                    guard focusCurrent else { throw NativeFailure("textFocusChanged","Original focus changed") }
+                },down:{_ in willPost(); downs += 1; return true},up:{_ in ups += 1; return true})
+            })
+            XCTAssertEqual(budgets,2)
+            XCTAssertEqual(downs,mode == "complete" ? 2:1)
+            XCTAssertEqual(ups,downs)
+            XCTAssertEqual(checks,mode == "revoked" ? 2:3)
+            XCTAssertEqual(result.dispatchState,mode == "complete" ? "dispatched":"unknown")
+        }
+    }
 }

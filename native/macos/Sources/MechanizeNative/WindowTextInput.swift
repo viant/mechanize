@@ -97,8 +97,10 @@ extension Helper {
             "focusRole": role, "focusIdentifier": identifier, "focusName": name, "businessSuccess": false]
         try reserve()
         let outcome = WindowTextSequence.perform(plan.chunks, preflight: {
-            try authority()
-            _ = try qualifiedTextFocus(pid: pid, birth: birth, bundle: bundle, plan: plan, budget: budget, original: focus)
+            // Event construction needs only the remaining action budget. Exact
+            // authority and original focus are checked under the input lock
+            // immediately before each down below.
+            try budget.check()
         }, send: { chunk, willPost in
                 guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
                       let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else {
