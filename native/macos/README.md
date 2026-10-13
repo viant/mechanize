@@ -122,15 +122,21 @@ fingerprint. Optional Cocoa date metadata cannot invalidate an unchanged process
 Mechanize uses one top-left computer/VM badge for native and Chrome automation.
 The V is red and the smaller M is blue. The indicator is presentation only: it
 cannot receive clicks, activate an application, authorize input, or read page
-content. It follows the verified native window and hides when another window
-covers that window, its process changes, the operation ends, or its short lease
-expires. A connected but idle broker is not an active-control indication.
+content. It follows the verified foreground native window and temporarily hides
+when another window covers it or foreground focus changes. During owned work the
+badge is active; afterward it remains idle while that presentation session is
+attached, and resumes idle when its window returns to the foreground. Session
+release, Stop, connection close, or a changed process/window identity removes
+ownership. Operations without a session have only a short completion tail.
 
 Chrome supplies only exact-tab window geometry over its authenticated local
 connection. The helper independently matches the signed browser process and a
 unique OS window. Missing or ambiguous geometry never labels a guessed window.
-Native actions derive the same indicator from their already-verified input or
-accessibility target. There is no model-facing badge command.
+Native AX observations and reads start the same indicator after their target
+scope and identity are validated; actions use their verified input or
+accessibility target at dispatch. Exact window scopes retain that window, while
+broad application or menu observations use that application's foreground window.
+There is no model-facing badge command.
 
 The helper runs as an accessory application, with its framed input reader off
 the main actor so AppKit can render and expire the indicator between requests.

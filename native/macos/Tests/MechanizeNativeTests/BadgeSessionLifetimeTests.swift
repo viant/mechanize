@@ -40,6 +40,32 @@ final class BadgeSessionLifetimeTests:XCTestCase {
    birth="101:1";XCTAssertEqual(badge.refresh(),"unavailable");XCTAssertEqual(hidden,1)
   }
  }
+ func testNativeObservationThenAXActionTracksExactWindowAndStopReleasesOwner()async throws {
+  try await MainActor.run {
+   var rows=[SessionKeyWindow(id:7,pid:42,layer:0,visible:true,alpha:1,bounds:CGRect(x:0,y:26,width:900,height:700)),SessionKeyWindow(id:8,pid:42,layer:0,visible:true,alpha:1,bounds:CGRect(x:950,y:26,width:600,height:500))]
+   var frames:[CGRect]=[],states:[Bool]=[];var hidden=0
+   let runtime=WindowSessionKeyRuntime(process:{_ in(getuid(),"100:1","com.fixture.app")},foreground:{42},windows:{rows},session:{true},secure:{false})
+   var view=BrowserBadgePresentation(begin:{frames.append($0);return UInt64(frames.count)},move:{_,bounds in frames.append(bounds)},hide:{_ in hidden+=1},renew:{_ in},complete:{_ in})
+   view.state={_,value in states.append(value)}
+   let badge=BrowserControlBadge(runtime:runtime,schedule:false,presentation:view)
+   let session=String(repeating:"c",count:64),observe=String(repeating:"a",count:64),action=String(repeating:"b",count:64)
+   @MainActor func begin(_ token:String,_ bounds:CGRect)throws {
+    _=try badge.handle(method:"controlBadge.begin",params:["token":token,"sessionToken":session,"expectedApp":"com.fixture.app","pid":Int32(42),"processStartToken":"100:1","windowBounds":["x":Double(bounds.minX),"y":Double(bounds.minY),"width":Double(bounds.width),"height":Double(bounds.height)],"durationMs":300])
+   }
+   // The native observation and action bridge both enter these same routes.
+   try begin(observe,rows[0].bounds);XCTAssertEqual(states.last,true)
+   _=try badge.handle(method:"controlBadge.end",params:["token":observe]);XCTAssertEqual(states.last,false)
+   try begin(action,rows[0].bounds);XCTAssertEqual(states.last,true);XCTAssertEqual(frames.count,1)
+   _=try badge.handle(method:"controlBadge.end",params:["token":action]);XCTAssertEqual(states.last,false)
+   let translated=rows[0].bounds.offsetBy(dx:40,dy:50)
+   rows[0]=SessionKeyWindow(id:7,pid:42,layer:0,visible:true,alpha:1,bounds:translated)
+   XCTAssertEqual(badge.refresh(),"shown");XCTAssertEqual(frames.last,translated)
+   rows.swapAt(0,1);XCTAssertEqual(badge.refresh(),"hidden") // Same app, different window.
+   rows.swapAt(0,1);XCTAssertEqual(badge.refresh(),"shown");XCTAssertEqual(states.last,false)
+   _=try badge.handle(method:"controlBadge.stop",params:["token":action]);XCTAssertEqual(badge.refresh(),"hidden")
+   XCTAssertGreaterThan(hidden,0)
+  }
+ }
  func testTransportEndReleasesAllOwnersWithoutAHeartbeat()async throws {
   try await MainActor.run {
    var hidden=0

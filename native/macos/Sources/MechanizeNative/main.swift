@@ -485,6 +485,14 @@ final class Helper {
                     let windows = try windows(root, pid: app.processIdentifier, uid: getuid(), birth: processStartToken, bundle: app.bundleIdentifier!, check: { try budget.check() })
                     guard windows.indices.contains(index) else { throw NativeFailure("targetNotFound", "Window index not available") }; roots = [windows[index]]
                 } else { scopedRoot = nil; roots = [root] }
+                // Observation owns the same presentation as AX actions. Choose
+                // the exact resolved window when present; broad app/menu roots
+                // use only that application's foreground window.
+                if let bounds = roots.compactMap({ AutomationPointer.windowBounds(element: $0, pid: app.processIdentifier) }).first {
+                    controlBadge = AutomationPointer.beginOwnedControl(pid: app.processIdentifier, birth: processStartToken, bundle: app.bundleIdentifier!, window: bounds, sessionToken: presentationSession, actionDeadline: badgeActionDeadline)
+                } else {
+                    controlBadge = AutomationPointer.beginApplicationControl(pid: app.processIdentifier, birth: processStartToken, bundle: app.bundleIdentifier!, sessionToken: presentationSession, actionDeadline: badgeActionDeadline)
+                }
                 let maxNodes = min(max(params["maxNodes"] as? Int ?? 200, 1), 1000)
                 let maxDepth = min(max(params["maxDepth"] as? Int ?? 6, 0), 20)
                 var queue = roots.map { ($0, 0, "") }; var nodes: [[String: Any]] = []; var partial = false
@@ -616,6 +624,8 @@ final class Helper {
                       DispatchTime.now().uptimeNanoseconds - ref.observedAt < 5_000_000_000,
                       let app = NSRunningApplication(processIdentifier: ref.pid), app.bundleIdentifier == ref.bundleID, applicationProcessStartToken(ref.pid) == ref.startToken else { throw NativeFailure("staleReference", "Target identity or generation changed") }
                 guard let attributes = params["attributes"] as? [String], !attributes.isEmpty, attributes.count <= 5 else { throw NativeFailure("invalidAttribute", "Bounded explicit read attributes required") }
+                try ref.validateInputScope(budget)
+                startRequestBadge()
                 AXUIElementSetMessagingTimeout(ref.element, min(0.2, budget.remainingSeconds))
                 var values: [String: Any] = [:]; var unavailable: [String] = []
                 defer {if attributes.contains("focused") {logKeyboardRoutingDiagnostic(requestID:id,ref:ref,budget:budget)}}
@@ -771,6 +781,8 @@ final class Helper {
                     if let failure = outcome.failure { reply["error"] = ["code": failure.code, "message": failure.message, "stage": "native", "dispatchState": "unknown", "retryableRead": false] }
                     refs.removeAll(); generation += 1
                 } else {
+                    try validate()
+                    startRequestBadge()
                     result["matches"] = try nativeValueMatches(ref.element, expected: expected, revalidate: validate)
                     result["observedAt"] = iso.string(from: Date()); reply["result"] = result
                 }

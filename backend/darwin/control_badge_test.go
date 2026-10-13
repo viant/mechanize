@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/viant/mechanize/auth"
+	"github.com/viant/mechanize/model"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,14 @@ func (f *badgeFixture) Call(ctx context.Context, r Request) (Reply, error) {
 	value := map[string]any{"status": f.status}
 	if r.Method == "doctor" {
 		value = map[string]any{"axTrusted": true}
+	}
+	switch r.Method {
+	case "apps.list":
+		value = map[string]any{"complete": true, "apps": []map[string]any{{"pid": 1, "bundleID": "fixture.app", "launchTime": "launch"}}}
+	case "elements.snapshot":
+		value = map[string]any{"observationId": "badge-observation", "generation": 1, "complete": true, "nodes": []map[string]any{{"ref": "badge-ref", "identifier": "save", "nativeRole": "AXButton"}}, "startedAt": "2026-10-03T00:00:00Z", "returnedAt": "2026-10-03T00:00:00Z"}
+	case "elements.read":
+		value = map[string]any{"values": map[string]any{"enabled": true}}
 	}
 	if f.extra && r.Method != "doctor" {
 		value["content"] = "PRIVATE-CANARY"
@@ -161,5 +170,56 @@ func TestControlBadgeMutexWaitRespectsDeadlineWithoutCallingHelper(t *testing.T)
 	}
 	if len(f.calls) != 0 {
 		t.Fatalf("expired presentation reached helper %d times", len(f.calls))
+	}
+}
+
+// Exercise the public gateway routes: observation and read-only AX work must
+// carry the same session owner without requiring an input lease.
+func TestAccessibilityObservationAndReadCarryPresentationSession(t *testing.T) {
+	f := &badgeFixture{status: "shown"}
+	readonly, err := NewReadOnlyCaller(f, func(context.Context) (Caller, error) { t.Fatal("unexpected helper replacement"); return nil, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readonly.Close()
+	g, err := NewGateway(readonly, GatewayOptions{AllowedBundles: []string{"fixture.app"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, p := badgeContext()
+	ctx = auth.WithConsentBinding(ctx, auth.ConsentBinding{SessionID: "ax-session", GrantID: "grant", Purpose: "observe"})
+	observation, err := g.Observe(ctx, p, model.Surface{Kind: "native", BundleID: "fixture.app"})
+	if err != nil || len(observation.Nodes) != 1 {
+		t.Fatal(observation, err)
+	}
+	step := nativeStep("element.read")
+	step.Effect.Class = model.ReadOnly
+	step.Arguments = map[string]model.Value{"attribute": {Kind: model.StringValue, String: "enabled"}}
+	result, err := g.Execute(ctx, p, step, nil)
+	if err != nil || result.Value == nil || !result.Value.Bool {
+		t.Fatal(result, err)
+	}
+	if len(presentationSession(ctx)) != 64 {
+		t.Fatal("missing opaque presentation session")
+	}
+	seen := map[string]bool{}
+	for _, request := range f.calls {
+		if request.Method != "elements.snapshot" && request.Method != "elements.read" {
+			continue
+		}
+		seen[request.Method] = true
+		if request.PresentationSession != presentationSession(ctx) || request.Lease != nil {
+			t.Fatalf("AX route lost presentation owner or gained input authority: %+v", request)
+		}
+	}
+	if !seen["elements.snapshot"] || !seen["elements.read"] {
+		t.Fatal("AX routes not exercised", seen)
+	}
+	if _, err = g.ReleaseControlBadgeSession(ctx, p, "ax-session"); err != nil {
+		t.Fatal(err)
+	}
+	last := f.calls[len(f.calls)-1]
+	if last.Method != "controlBadge.releaseSession" || last.Lease != nil {
+		t.Fatal(last)
 	}
 }
