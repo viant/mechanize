@@ -653,6 +653,11 @@ func (b *Broker) serve(conn net.Conn) {
 		}
 		if json.Unmarshal(data, &privateKind) == nil && strings.HasPrefix(privateKind.Type, "credential") {
 			clear(data)
+			// A retired inspector can reply late. Wipe it before generic DOM
+			// decoding without closing the independently authenticated channel.
+			if privateKind.Type == "credentialInspectResult" {
+				continue
+			}
 			return
 		}
 		if b.acceptPlaywrightFrame(c, conn, data) {

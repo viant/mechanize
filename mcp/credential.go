@@ -37,12 +37,14 @@ type CredentialRecover func(context.Context, auth.Principal, CredentialRecoverIn
 // CredentialResult is the complete public projection. It never reports login
 // success or includes Vault refs, values, record names, documents or raw diagnostics.
 type CredentialResult struct {
-	PreparationID string         `json:"preparationId"`
-	State         string         `json:"state"`
-	DispatchState string         `json:"dispatchState,omitempty"`
-	Stage         string         `json:"stage,omitempty"`
-	AttentionCode string         `json:"attentionCode,omitempty"`
-	Surface       *model.Surface `json:"surface,omitempty"`
+	// PreflightRelease reports protection-only cleanup after confirmed no input.
+	PreflightRelease string         `json:"preflightRelease,omitempty"`
+	PreparationID    string         `json:"preparationId"`
+	State            string         `json:"state"`
+	DispatchState    string         `json:"dispatchState,omitempty"`
+	Stage            string         `json:"stage,omitempty"`
+	AttentionCode    string         `json:"attentionCode,omitempty"`
+	Surface          *model.Surface `json:"surface,omitempty"`
 }
 type CredentialPrepare func(context.Context, auth.Principal, CredentialPrepareInput) (CredentialResult, error)
 type CredentialOperation func(context.Context, auth.Principal, CredentialRefInput) (CredentialResult, error)
@@ -156,6 +158,9 @@ func validPreparationScopeAttention(code string) bool {
 	return false
 }
 func validCredentialResultForTool(name string, r CredentialResult) bool {
+	if r.PreflightRelease != "" && (name != "mechanize_credential_status" || r.State != "needsNativeAction") {
+		return false
+	}
 	// Cleanup can refuse before a new preparation exists. No other operation,
 	// state or capability-bearing field may use this narrow missing-ID result.
 	if r.PreparationID == "" {
@@ -165,6 +170,11 @@ func validCredentialResultForTool(name string, r CredentialResult) bool {
 }
 
 func validCredentialResult(r CredentialResult) bool {
+	switch r.PreflightRelease {
+	case "", "released", "unconfirmed":
+	default:
+		return false
+	}
 	b, e := hex.DecodeString(r.PreparationID)
 	if e != nil || len(b) != 32 || hex.EncodeToString(b) != r.PreparationID {
 		return false

@@ -56,6 +56,7 @@ type credentialSession struct {
 	exposure                   atomic.Pointer[credentialExposure]
 	fillAttempt, submitAttempt string
 	uncertain                  bool
+	preflightNoInput           bool
 	attempts                   []data.CredentialDeliveryRecord
 }
 type nativeCredentialPending struct {
@@ -389,6 +390,20 @@ func (s *credentialService) operation(ctx context.Context, p auth.Principal, in 
 	if !entered || e != nil && out.PreparationID == "" {
 		return gateway.CredentialResult{}, errPrivateCredential
 	}
+	if kind == "status" {
+		// Retire only after leaving the generated invocation and item locks.
+		// Pending/unknown inspections lack the local no-input proof and remain held.
+		item.mu.Lock()
+		rejected := item.preflightNoInput
+		item.mu.Unlock()
+		if rejected {
+			if e := s.releaseRejectedPreflight(ctx, p, item); e != nil {
+				out.PreflightRelease = "unconfirmed"
+			} else {
+				out.PreflightRelease = "released"
+			}
+		}
+	}
 	return out, nil
 }
 func (s *credentialService) pin(ctx context.Context, p auth.Principal, item *credentialSession, admit func(context.Context) error) error {
@@ -441,6 +456,7 @@ func (s *credentialService) pin(ctx context.Context, p auth.Principal, item *cre
 	binding, protected, e := prep.Pin(ctx, func(c context.Context) (vault.Binding, error) {
 		a, e := s.browser().AdmitCredentialControl(c, p, item.surface, guard)
 		if e != nil || !a.Confirmed {
+			item.preflightNoInput = a.PreflightNoInput && !a.Created && !a.Confirmed
 			// Exact local phases only: no provider error or renderer detail can
 			// become an automation-visible diagnostic.
 			switch a.FailureStage {

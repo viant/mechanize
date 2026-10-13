@@ -121,7 +121,9 @@ func (g *Gateway) controlChannel(a ControlAuthority) *channel {
 // acquire was acknowledged or that an uncertain lease was safely cleaned up.
 type ControlAdmission struct {
 	acquireNotInstalled bool
-	CredentialStage     string
+	// PreflightNoInput is local proof from a correlated non-ready inspection, never a wire authority claim.
+	PreflightNoInput bool `json:"-"`
+	CredentialStage  string
 	// FailureStage is a host-only closed phase, never renderer text or values.
 	FailureStage  string
 	FailureReason string

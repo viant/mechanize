@@ -34,6 +34,7 @@ type credentialBrowserFixture struct {
 	fills, submits                        int
 	admissions, freshness                 int
 	inspectionFailure                     string
+	inspectionNoInput                     bool
 }
 
 func (f *credentialBrowserFixture) AdmitCredentialControl(ctx context.Context, p auth.Principal, s model.Surface, admit func(context.Context) error) (chrome.ControlAdmission, error) {
@@ -45,7 +46,7 @@ func (f *credentialBrowserFixture) AdmitCredentialControl(ctx context.Context, p
 		f.t.Fatal("probe preceded durable preparation", e)
 	}
 	if f.inspectionFailure != "" {
-		return chrome.ControlAdmission{FailureStage: "inspection", FailureReason: f.inspectionFailure, CredentialStage: "challenge"}, errors.New("closed fixture inspection refusal")
+		return chrome.ControlAdmission{PreflightNoInput: f.inspectionNoInput, FailureStage: "inspection", FailureReason: f.inspectionFailure, CredentialStage: "challenge"}, errors.New("closed fixture inspection refusal")
 	}
 	if f.unavailable {
 		return chrome.ControlAdmission{}, errors.New("synthetic unavailable private inspector")

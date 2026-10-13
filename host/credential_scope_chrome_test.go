@@ -32,6 +32,7 @@ type credentialHostFixtureHooks struct {
 	origin            string
 	storageRoot       func(string)
 	configure         func(*credentialBrowserFixture)
+	beforeStatus      func(*testing.T, *Host, context.Context, auth.Principal, gateway.CredentialRefInput, gateway.CredentialPrepareInput, *credentialBrowserFixture, *atomic.Int64)
 	exercise          func(*testing.T, *Host, context.Context, auth.Principal, gateway.CredentialRefInput, gateway.CredentialPrepareInput, *credentialBrowserFixture, *atomic.Int64)
 }
 

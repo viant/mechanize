@@ -32,6 +32,9 @@ func (g *Gateway) VerifyCredentialPreflightIdle(ctx context.Context, p auth.Prin
 		if c.grant.Principal.Namespace != p.Namespace {
 			continue
 		}
+		if c.privateInspection != nil && (c.privateOwner.Namespace != p.Namespace || c.privateOwner.ClientID != p.ClientID || c.privateConsent != binding || c.privateInspection.lease != nil) {
+			return scopeFailure("scopePreflightBusy")
+		}
 		if c.privateInspection != nil && !c.privateInspection.knownNoInput || c.privateCredential != nil || c.privateFlow != nil || c.privateAdvance != nil || c.privacy != nil || c.privacyPending != nil || c.manualTransition != nil || c.manualPending != nil || c.protectionPending != nil || c.playwright != nil || len(c.pending) > 0 || len(c.unknown) > 0 {
 			return scopeFailure("scopePreflightBusy")
 		}
@@ -44,6 +47,7 @@ func (g *Gateway) RetireCredentialPreflight(ctx context.Context, p auth.Principa
 	}
 	g.controlMu.Lock()
 	defer g.controlMu.Unlock()
+	binding, _ := auth.ConsentBindingFromContext(ctx)
 	b := g.broker
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -54,6 +58,9 @@ func (g *Gateway) RetireCredentialPreflight(ctx context.Context, p auth.Principa
 		if c.grant.Principal.Namespace != p.Namespace {
 			continue
 		}
+		if c.privateInspection != nil && (c.privateOwner.Namespace != p.Namespace || c.privateOwner.ClientID != p.ClientID || c.privateConsent != binding || c.privateInspection.lease != nil) {
+			return scopeFailure("scopePreflightBusy")
+		}
 		if c.privateInspection != nil && !c.privateInspection.knownNoInput || c.privateCredential != nil || c.privateFlow != nil || c.privateAdvance != nil || c.privacy != nil || c.privacyPending != nil || c.manualTransition != nil || c.manualPending != nil || c.protectionPending != nil || c.playwright != nil || len(c.pending) > 0 || len(c.unknown) > 0 {
 			return scopeFailure("scopePreflightBusy")
 		}
@@ -62,14 +69,8 @@ func (g *Gateway) RetireCredentialPreflight(ctx context.Context, p auth.Principa
 		if c.grant.Principal.Namespace != p.Namespace || c.privateInspection == nil || !c.privateInspection.knownNoInput {
 			continue
 		}
-		original := c.privateInspection.identity
-		kept := c.documents[:0]
-		for _, doc := range c.documents {
-			if doc.ProfileChannel != original.ProfileChannel || doc.BrowserInstance != original.BrowserInstance || doc.TabID != original.TabID || doc.DocumentID != original.DocumentID {
-				kept = append(kept, doc)
-			}
-		}
-		c.documents = kept
+		// Inspection read no values and installed no input lease. Keep the safe
+		// pre-existing document metadata; late private replies are wiped in readLoop.
 		c.privateInspection = nil
 	}
 	return nil

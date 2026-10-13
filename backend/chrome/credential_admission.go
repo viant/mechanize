@@ -145,7 +145,7 @@ func (b *Broker) acceptCredentialAdmissionLocked(c *channel, raw []byte) bool {
 	}
 	pending := c.privateInspection
 	if pending.lease == nil {
-		if envelope.Type != "credentialInspectResult" {
+		if envelope.Type != "credentialInspectResult" || envelope.RequestID != pending.requestID {
 			return true
 		}
 	} else if envelope.Type != "" || envelope.RequestID != pending.requestID {
@@ -333,6 +333,7 @@ func (g *Gateway) AdmitCredentialControl(ctx context.Context, p auth.Principal, 
 		b.mu.Lock()
 		if c.conn == conn && c.privateInspection != nil && c.privateInspection.requestID == requestID && c.privateInspection.lease == nil {
 			c.privateInspection.knownNoInput = true
+			result.PreflightNoInput = true
 			completed = true
 		}
 		b.mu.Unlock()

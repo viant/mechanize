@@ -146,6 +146,16 @@ continuing. If private status becomes unavailable, inspect the original attempt
 and supported metadata; do not resubmit credentials or launch a repeated login
 loop merely because content access is denied.
 
+`needsNativeAction` describes a fallback, not a new approval request. For
+`privateInspectionNoCredentialFields`, check the existing tab's public location
+metadata and use native window discovery and a screenshot to understand the
+page. It may show a challenge, an error, or an already authenticated page;
+the diagnostic alone does not distinguish them. Do not repeatedly prepare or
+submit credentials. Ask the user only when the observed page requires their
+participation or an explicit permission diagnostic requires it. If the fallback
+is itself rejected, preserve the original preparation and report the exact
+rejection instead of assuming that another approval will fix it.
+
 Keep the original credential preparation's session, consent grant and purpose
 text unchanged for subsequent redacted observations and plans. The current
 host verifies the complete consent binding, including purpose; changing only

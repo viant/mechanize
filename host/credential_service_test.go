@@ -284,6 +284,10 @@ func credentialHostFixtureFlow(t *testing.T, mode string, hooks ...credentialHos
 		}
 		return
 	}
+	if hook.beforeStatus != nil {
+		hook.beforeStatus(t, h, ctx, p, ref, input, fixture, vaultReads)
+		return
+	}
 	beforePreflightReads := vaultReads.Load()
 	status, e := h.CredentialStatus(ctx, p, ref)
 	if mode == "inspectionChallenge" {
