@@ -105,7 +105,7 @@ func (g *Gateway) credentialControlSnapshot(ctx context.Context, p auth.Principa
 	}
 	e := *c.processEvidence
 	e.Ancestors = append([]session.ProcessIdentity(nil), e.Ancestors...)
-	return ControlAuthority{AllWebsites: c.grant.AllWebsites, MutationFingerprintVersion: c.mutationFingerprintVersion, TrustScope: c.grant.TrustScope, ScopeQualified: true, Owner: p.Namespace, ClientID: p.ClientID, ExtensionOrigin: c.grant.ExtensionOrigin, BrokerEpoch: b.epoch, ChannelEpoch: c.epoch, ScopeHash: c.scopeHash, Document: doc, Evidence: e, ProfileQualified: c.profileQualified, ExtensionQualified: c.grant.ExtensionOrigin != "", DocumentQualified: true, ExecutorQualified: true}, c, nil
+	return ControlAuthority{AllWebsites: c.grant.AllWebsites, MutationFingerprintVersion: c.mutationFingerprintVersion, SelectOptionVersion: c.selectOptionVersion, TrustScope: c.grant.TrustScope, ScopeQualified: true, Owner: p.Namespace, ClientID: p.ClientID, ExtensionOrigin: c.grant.ExtensionOrigin, BrokerEpoch: b.epoch, ChannelEpoch: c.epoch, ScopeHash: c.scopeHash, Document: doc, Evidence: e, ProfileQualified: c.profileQualified, ExtensionQualified: c.grant.ExtensionOrigin != "", DocumentQualified: true, ExecutorQualified: true}, c, nil
 }
 func (g *Gateway) CredentialCandidateAvailable(ctx context.Context, p auth.Principal, s model.Surface) error {
 	if g == nil || g.broker == nil {

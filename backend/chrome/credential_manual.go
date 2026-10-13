@@ -371,7 +371,7 @@ func (t *ManualCredentialTransition) Qualify(ctx context.Context, p auth.Princip
 	}
 	d := Document{Identity: identity, Origin: t.source.Origin, MutationFingerprintVersion: 2}
 	d.TabHandle = d.QualifiedTabID()
-	a := ControlAuthority{AllWebsites: c.grant.AllWebsites, Owner: p.Namespace, ClientID: p.ClientID, Document: d, ExtensionOrigin: c.grant.ExtensionOrigin, BrokerEpoch: b.epoch, ChannelEpoch: c.epoch, ScopeHash: c.scopeHash, TrustScope: c.grant.TrustScope, ScopeQualified: channelScopeQualified(c), ProfileQualified: c.profileQualified, MutationFingerprintVersion: 2, Evidence: *c.processEvidence}
+	a := ControlAuthority{AllWebsites: c.grant.AllWebsites, Owner: p.Namespace, ClientID: p.ClientID, Document: d, ExtensionOrigin: c.grant.ExtensionOrigin, BrokerEpoch: b.epoch, ChannelEpoch: c.epoch, ScopeHash: c.scopeHash, TrustScope: c.grant.TrustScope, ScopeQualified: channelScopeQualified(c), ProfileQualified: c.profileQualified, MutationFingerprintVersion: 2, SelectOptionVersion: c.selectOptionVersion, Evidence: *c.processEvidence}
 	s := &credentialPrivacyState{gateway: g, channel: c, conn: t.conn, source: a, authority: a, binding: t.binding, permitID: t.proofID, identity: identity, admit: t.admit, active: true, published: true}
 	g.control = nil
 	g.controlRetiring = false

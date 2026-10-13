@@ -156,7 +156,7 @@ func webMutationStep(step model.Step) error {
 	if err := step.Validate(); err != nil {
 		return err
 	}
-	if step.Target.Surface.Kind != "web" || step.Effect.Class == model.ReadOnly || (step.Action != "element.press" && step.Action != "element.fill" && step.Action != "browser.navigate" && step.Action != "browser.activate") {
+	if step.Target.Surface.Kind != "web" || step.Effect.Class == model.ReadOnly || (step.Action != "element.press" && step.Action != "element.fill" && step.Action != "element.select" && step.Action != "browser.navigate" && step.Action != "browser.activate") {
 		return ErrWebControlUnqualified
 	}
 	if step.Target.Surface.Origin == "" || step.Target.Surface.BundleID != "" || len(step.Target.Scope.Frame) > 0 || len(step.Target.Scope.Window) > 0 || step.Target.Ancestor != nil {
@@ -700,7 +700,7 @@ func (m *WebControlManager) Capabilities(ctx context.Context, p auth.Principal) 
 					continue
 				}
 			}
-			if !supportsWebAction(ready, "element.press") && !supportsWebAction(ready, "element.fill") {
+			if !supportsWebAction(ready, "element.press") && !supportsWebAction(ready, "element.fill") && !supportsWebAction(ready, "element.select") {
 				continue
 			}
 			locatorReady := false
@@ -721,6 +721,9 @@ func (m *WebControlManager) Capabilities(ctx context.Context, p auth.Principal) 
 			if supportsWebAction(ready, "element.press") {
 				result["web:semanticPress"] = true
 				result["web:element.press"] = true
+			}
+			if supportsWebAction(ready, "element.select") {
+				result["web:selectOption"], result["web:element.select"] = true, true
 			}
 			if supportsWebAction(ready, "element.fill") {
 				result["web:replaceValue"] = true

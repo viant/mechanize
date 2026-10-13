@@ -271,7 +271,13 @@ func controllerRejected(dispatch string, codes ...string) *schema.CallToolResult
 			code = codes[0]
 		}
 	}
-	message := "Tool request unavailable; review local permissions and operation status."
+	message := "Tool request was rejected. Inspect its code and dispatchState and use the advertised tool schema."
+	switch code {
+	case "permissionRequired", "permissionExpired", "permissionDenied":
+		message = "Current saved policy or consent does not authorize this operation. Inspect its permission status."
+	case "invalidArguments":
+		message = "Invalid tool arguments. Use the advertised input schema and exact discovered identities."
+	}
 	if code == "invalidPredicate" {
 		message = "Invalid verification contract. For web.valueEquals use observational authority and typed origin, strategy, selector, attribute and expected inputs; use strategy id plus selector for an element ID."
 	}
@@ -368,6 +374,9 @@ func (d *ControllerDispatcher) CallTool(ctx context.Context, id chrome.Controlle
 	if answer.IsError != nil && *answer.IsError {
 		dispatch, _ := structured["dispatchState"].(string)
 		code, _ := structured["code"].(string)
+		if code == "capabilityUnavailable" {
+			return controllerCapabilityRejected(structured), nil
+		}
 		if code == "protectionMetadataUnavailable" {
 			return controllerProtectionMetadataRejected(dispatch, structured), nil
 		}

@@ -21,6 +21,7 @@ type ControlAuthority struct {
 	PrivateRecipientID                                                         string `json:"-"`
 	AllWebsites                                                                bool   `json:"allWebsites,omitempty"`
 	MutationFingerprintVersion                                                 int
+	SelectOptionVersion                                                        int
 	TrustScope                                                                 string `json:"trustScope"`
 	ScopeQualified                                                             bool   `json:"scopeQualified"`
 	ProfileQualified, ExtensionQualified, DocumentQualified, ExecutorQualified bool
@@ -77,10 +78,10 @@ func (g *Gateway) controlMetadataSnapshot(ctx context.Context, p auth.Principal,
 	}
 	e := *c.processEvidence
 	e.Ancestors = append([]session.ProcessIdentity(nil), e.Ancestors...)
-	return ControlAuthority{AllWebsites: c.grant.AllWebsites, MutationFingerprintVersion: c.mutationFingerprintVersion, TrustScope: c.grant.TrustScope, ScopeQualified: channelScopeQualified(c), Owner: p.Namespace, ClientID: p.ClientID, ExtensionOrigin: c.grant.ExtensionOrigin, BrokerEpoch: g.broker.epoch, ChannelEpoch: c.epoch, ScopeHash: c.scopeHash, Document: d, Evidence: e, ProfileQualified: c.profileQualified, ExtensionQualified: c.grant.ExtensionOrigin != "", DocumentQualified: c.inventoryComplete, ExecutorQualified: c.executorQualified}, c, nil
+	return ControlAuthority{AllWebsites: c.grant.AllWebsites, MutationFingerprintVersion: c.mutationFingerprintVersion, SelectOptionVersion: c.selectOptionVersion, TrustScope: c.grant.TrustScope, ScopeQualified: channelScopeQualified(c), Owner: p.Namespace, ClientID: p.ClientID, ExtensionOrigin: c.grant.ExtensionOrigin, BrokerEpoch: g.broker.epoch, ChannelEpoch: c.epoch, ScopeHash: c.scopeHash, Document: d, Evidence: e, ProfileQualified: c.profileQualified, ExtensionQualified: c.grant.ExtensionOrigin != "", DocumentQualified: c.inventoryComplete, ExecutorQualified: c.executorQualified}, c, nil
 }
 func sameControl(a, b ControlAuthority) bool {
-	return a.PrivateRecipientID == b.PrivateRecipientID && a.AllWebsites == b.AllWebsites && a.MutationFingerprintVersion == b.MutationFingerprintVersion && a.TrustScope == b.TrustScope && a.ScopeQualified == b.ScopeQualified && a.ProfileQualified == b.ProfileQualified && a.Owner == b.Owner && a.ClientID == b.ClientID && a.ExtensionOrigin == b.ExtensionOrigin && a.BrokerEpoch == b.BrokerEpoch && a.ChannelEpoch == b.ChannelEpoch && a.ScopeHash == b.ScopeHash && a.Document == b.Document && a.Evidence.NativeHost == b.Evidence.NativeHost && a.Evidence.ChromeParent == b.Evidence.ChromeParent && a.Lease == b.Lease
+	return a.PrivateRecipientID == b.PrivateRecipientID && a.AllWebsites == b.AllWebsites && a.MutationFingerprintVersion == b.MutationFingerprintVersion && a.SelectOptionVersion == b.SelectOptionVersion && a.TrustScope == b.TrustScope && a.ScopeQualified == b.ScopeQualified && a.ProfileQualified == b.ProfileQualified && a.Owner == b.Owner && a.ClientID == b.ClientID && a.ExtensionOrigin == b.ExtensionOrigin && a.BrokerEpoch == b.BrokerEpoch && a.ChannelEpoch == b.ChannelEpoch && a.ScopeHash == b.ScopeHash && a.Document == b.Document && a.Evidence.NativeHost == b.Evidence.NativeHost && a.Evidence.ChromeParent == b.Evidence.ChromeParent && a.Lease == b.Lease
 }
 func (g *Gateway) controlCheck(ctx context.Context, p auth.Principal, a ControlAuthority, c *channel, retirement bool, navigationRetired ...bool) error {
 	if err := authorize(ctx, p, true); err != nil {
@@ -92,7 +93,7 @@ func (g *Gateway) controlCheck(ctx context.Context, p auth.Principal, a ControlA
 	}
 	g.broker.mu.Lock()
 	defer g.broker.mu.Unlock()
-	if a.AllWebsites != c.grant.AllWebsites || !allowedOrigin(c.grant, a.Document.Origin) || a.MutationFingerprintVersion != c.mutationFingerprintVersion || c.fixtureOnly || c.conn == nil || g.broker.closed || c.processEvidence == nil || !c.processEvidence.KernelPeerQualified || c.processEvidence.NativeHost != a.Evidence.NativeHost || c.processEvidence.ChromeParent != a.Evidence.ChromeParent || !channelScopeQualified(c) || !a.ScopeQualified || a.TrustScope != c.grant.TrustScope || a.ProfileQualified != c.profileQualified || !c.executorQualified || !c.inventoryComplete || g.broker.epoch != a.BrokerEpoch || c.epoch != a.ChannelEpoch || c.scopeHash != a.ScopeHash || c.grant.ExtensionOrigin != a.ExtensionOrigin {
+	if a.AllWebsites != c.grant.AllWebsites || !allowedOrigin(c.grant, a.Document.Origin) || a.MutationFingerprintVersion != c.mutationFingerprintVersion || a.SelectOptionVersion != c.selectOptionVersion || c.fixtureOnly || c.conn == nil || g.broker.closed || c.processEvidence == nil || !c.processEvidence.KernelPeerQualified || c.processEvidence.NativeHost != a.Evidence.NativeHost || c.processEvidence.ChromeParent != a.Evidence.ChromeParent || !channelScopeQualified(c) || !a.ScopeQualified || a.TrustScope != c.grant.TrustScope || a.ProfileQualified != c.profileQualified || !c.executorQualified || !c.inventoryComplete || g.broker.epoch != a.BrokerEpoch || c.epoch != a.ChannelEpoch || c.scopeHash != a.ScopeHash || c.grant.ExtensionOrigin != a.ExtensionOrigin {
 		return browserError("staleAuthority", "Connected channel evidence changed", "notDispatched")
 	}
 	// A fingerprint-bound navigation receipt can prove the exact source lease
@@ -274,8 +275,11 @@ func (g *Gateway) ExecuteControlBound(ctx context.Context, p auth.Principal, ste
 }
 func (g *Gateway) executeControl(ctx context.Context, p auth.Principal, step model.Step, bindings map[string]model.Value, a ControlAuthority, browserAttemptID string, commit CommitMutationBinding) (integration.StepResult, error) {
 	result := integration.StepResult{DispatchState: "notDispatched", VerificationState: "unknown"}
-	if step.Action != "element.press" && step.Action != "element.fill" && step.Action != "browser.navigate" && step.Action != "browser.activate" {
+	if step.Action != "element.press" && step.Action != "element.fill" && step.Action != "element.select" && step.Action != "browser.navigate" && step.Action != "browser.activate" {
 		return result, browserError("unsupportedAction", "Qualified renderer or browser action required", "notDispatched")
+	}
+	if step.Action == "element.select" && (commit == nil || a.SelectOptionVersion != 1 || a.MutationFingerprintVersion != 2 || a.Document.MutationFingerprintVersion != 2) {
+		return result, browserError("unsupportedAction", "Select requires negotiated committed v2 document control", "notDispatched")
 	}
 	if err := step.Validate(); err != nil {
 		return result, err
@@ -318,10 +322,10 @@ func (g *Gateway) executeControl(ctx context.Context, p auth.Principal, step mod
 		cmd.AttemptID = browserAttemptID
 		cmd.FingerprintVersion = 2
 	}
-	if step.Action == "element.fill" {
+	if step.Action == "element.fill" || step.Action == "element.select" {
 		value, e := model.ResolveValue(step.Arguments["value"], bindings)
 		if e != nil || value.Kind != model.StringValue {
-			return result, browserError("invalidValue", "Resolved string fill required", "notDispatched")
+			return result, browserError("invalidValue", "Resolved string mutation value required", "notDispatched")
 		}
 		cmd.Args = map[string]any{"value": value.String}
 	}

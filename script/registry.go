@@ -91,7 +91,7 @@ func (Registry) CheckCapabilities(plan *model.Plan, supported map[string]bool) e
 		}
 		need := definition.Capability
 		if !supported[s.Target.Surface.Kind+":"+need] {
-			return fmt.Errorf("step %s requires capability %s:%s", s.ID, s.Target.Surface.Kind, need)
+			return &CapabilityUnavailableError{Action: s.Action, Surface: s.Target.Surface.Kind, Capability: need}
 		}
 		if s.Assertion != nil && s.Assertion.Matcher == "toBeChecked" && !supported[s.Target.Surface.Kind+":checkedObservation"] {
 			return fmt.Errorf("step %s requires checkedObservation capability", s.ID)

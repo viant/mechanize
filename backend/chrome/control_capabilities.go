@@ -49,6 +49,9 @@ func (g *Gateway) ControlCapabilitiesFor(ctx context.Context, p auth.Principal) 
 		for _, name := range []string{"semanticPress", "element.press", "replaceValue", "element.fill", "browser.activate", "roleLocator", "idLocator", "testIdLocator", "labelRelationships"} {
 			result["web:"+name] = true
 		}
+		if authority.SelectOptionVersion == 1 {
+			result["web:selectOption"], result["web:element.select"] = true, true
+		}
 		if authority.AllWebsites {
 			result["web:browser.navigate"] = true
 		}

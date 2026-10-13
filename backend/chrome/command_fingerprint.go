@@ -32,7 +32,7 @@ func fingerprintV2Text(value string, maximum int, empty bool) bool {
 func logicalMutationEnvelopeV2(command Command) ([]byte, error) {
 	failure := func() ([]byte, error) { return nil, errors.New("invalid qualified logical mutation envelope") }
 	browserAction := command.Action == "browser.navigate" || command.Action == "browser.activate"
-	if command.Action != "element.press" && command.Action != "element.fill" && !browserAction {
+	if command.Action != "element.press" && command.Action != "element.fill" && command.Action != "element.select" && !browserAction {
 		return failure()
 	}
 	i := command.Identity

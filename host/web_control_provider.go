@@ -91,6 +91,9 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, recordUn
 	}
 	readiness := func(a chrome.ControlAuthority, reader *webPostconditionRead) WebControlReadiness {
 		actions := []string{"element.press", "element.fill", "browser.activate"}
+		if a.SelectOptionVersion == 1 {
+			actions = append(actions, "element.select")
+		}
 		if a.AllWebsites {
 			actions = append(actions, "browser.navigate")
 		}

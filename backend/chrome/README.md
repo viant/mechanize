@@ -118,6 +118,9 @@ lease; it does not claim that the whole document is permanently shut down.
 A fresh lease requires new verified endpoint/policy admission and per-step consent.
 Retired lease identities are retained within the bounded document lifetime.
 `executor.quiesce` still permanently stops the entire document. The host production
-provider currently qualifies only typed exact root `element.press`/`element.fill`;
-other mutation methods remain outside that admission route. No live release
+provider qualifies typed exact root `element.press`/`element.fill`, plus
+`element.select` when the authenticated worker advertises `selectOptionVersion:1`.
+Select uses committed v2 authority and the qualified DOM route for one native
+SELECT with one enabled matching option; its events remain untrusted and its
+receipt does not prove business completion. Check/uncheck remain unadvertised. No live release
 qualification is implied by passing the injected peer/DOM test fixtures.

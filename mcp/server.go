@@ -241,6 +241,11 @@ func result(value any) (*schema.CallToolResult, *jsonrpc.Error) {
 }
 func failure(err error) (*schema.CallToolResult, *jsonrpc.Error) {
 	yes := true
+	if diagnostic := closedCapabilityDiagnostic(err); diagnostic != nil {
+		out, rpcErr := result(diagnostic)
+		out.IsError = &yes
+		return out, rpcErr
+	}
 	var validation *scriptValidationDiagnostic
 	if errors.As(err, &validation) && validation != nil {
 		out, rpcErr := result(validation)

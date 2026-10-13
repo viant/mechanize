@@ -23,6 +23,10 @@ func controlFixture(t *testing.T) (*Gateway, auth.Principal, context.Context, *a
 }
 func controlFixtureVersion(t *testing.T, version int, privateStage ...func() string) (*Gateway, auth.Principal, context.Context, *atomic.Int64) {
 	t.Helper()
+	selectOption := version == 2
+	if version == -2 {
+		version = 2
+	} // Legacy v2 worker without select feature.
 	dir, err := os.MkdirTemp("/private/tmp", "control-test-")
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +51,11 @@ func controlFixtureVersion(t *testing.T, version int, privateStage ...func() str
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	WriteFrame(conn, map[string]any{"type": "hello", "protocolVersion": 1, "profileChannel": "p1", "browserInstance": "b1", "extensionOrigin": grant.ExtensionOrigin, "credential": credential, "profileDirectory": dir, "profileLaunchQualified": true})
+	hello := map[string]any{"type": "hello", "protocolVersion": 1, "profileChannel": "p1", "browserInstance": "b1", "extensionOrigin": grant.ExtensionOrigin, "credential": credential, "profileDirectory": dir, "profileLaunchQualified": true}
+	if selectOption {
+		hello["selectOptionVersion"] = 1
+	}
+	WriteFrame(conn, hello)
 	raw, _ := ReadFrame(conn)
 	var ack map[string]any
 	json.Unmarshal(raw, &ack)
@@ -142,6 +150,15 @@ func controlFixtureVersion(t *testing.T, version int, privateStage ...func() str
 				r.Validated = true
 			case "executor.retire":
 				r.RetiredAuthorityQuiesced = true
+			case "element.select":
+				if len(privateStage) > 0 && privateStage[0]() == "selectDOM" {
+					count.Add(1)
+					var err error
+					r, err = packagedSelectReply(cmd)
+					if err != nil {
+						r = Reply{RequestID: cmd.RequestID, Identity: cmd.Identity, Error: browserError("fixtureBoundaryFailed", "Synthetic select boundary failed", "unknown")}
+					}
+				}
 			case "element.press", "element.fill", "browser.navigate", "browser.activate":
 				if cmd.Action == "browser.navigate" {
 					r.RetiredAuthorityQuiesced = true

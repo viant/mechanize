@@ -1,0 +1,20 @@
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const {webcrypto}=require('node:crypto');
+const source=process.argv[2];const {JSDOM}=require(path.join(source,'extension/chrome/node_modules/jsdom'));
+(async()=>{
+ const cmd=JSON.parse(fs.readFileSync(0,'utf8'));
+ const dom=new JSDOM('<label for="color">Color</label><select id="color"><option value="blue">Blue</option><option value="green">Green</option></select>',{url:'https://fixture.test',runScripts:'outside-only'}),w=dom.window,listeners=[];
+ w.TextEncoder=TextEncoder;Object.defineProperty(w,'crypto',{value:webcrypto,configurable:true});w.HTMLElement.prototype.getClientRects=()=>[{width:100,height:20}];
+ w.chrome={runtime:{id:'fixture',onMessage:{addListener:f=>listeners.push(f)}}};
+ for(const name of ['protocol.js','fingerprint.js','accessibility-provider.js','dom.js','recorder.js','content.js'])w.eval(fs.readFileSync(path.join(source,'extension/chrome',name),'utf8'));
+ const send=m=>new Promise(resolve=>listeners[0](m,{id:'fixture'},resolve));
+ const binding={identity:cmd.identity,brokerEpoch:cmd.brokerEpoch,channelEpoch:cmd.channelEpoch,scopeHash:cmd.scopeHash,leaseRequired:true,mutationFingerprintVersion:2};
+ const base={requestId:'setup',identity:cmd.identity,brokerEpoch:cmd.brokerEpoch,channelEpoch:cmd.channelEpoch,scopeHash:cmd.scopeHash,deadlineUnixMs:cmd.deadlineUnixMs};
+ assert.equal((await send({type:'bind',binding})).mutationFingerprintVersion,2);
+ assert.equal((await send({...base,action:'executor.acquire',controlLease:cmd.controlLease})).error,undefined);
+ assert.equal((await w.MechanizeFingerprint.mutationV2(cmd)).sha256,cmd.fingerprintSHA256);
+ const events=[],select=w.document.querySelector('#color');select.addEventListener('input',()=>events.push('input'));select.addEventListener('change',()=>events.push('change'));
+ const reply=await send(cmd);assert.equal(reply.dispatchState,'dispatched');assert.equal(select.value,'green');assert.deepEqual(events,['input','change']);
+ const repeated=await send({...cmd,requestId:'repeat'});assert.equal(repeated.dispatchState,'dispatched');assert.deepEqual(events,['input','change']);
+ console.log(JSON.stringify(reply));dom.window.close();
+})().catch(()=>{process.stderr.write('syntheticSelectBoundaryFailed');process.exitCode=1});

@@ -104,6 +104,7 @@ type channel struct {
 	lifecycleOwner                     string
 	lifecycleGuard                     *LifecycleReceiptGuard
 	mutationFingerprintVersion         int
+	selectOptionVersion                int
 	fixtureOnly                        bool
 	processEvidence                    *nativepeer.ChromeProcessEvidence
 	profileQualified                   bool
@@ -426,6 +427,7 @@ func (b *Broker) serve(conn net.Conn) {
 		TabMetadataVersion                 int             `json:"tabMetadataVersion"`
 		TabInventoryVersion                int             `json:"tabInventoryVersion"`
 		ExtensionMaintenanceVersion        int             `json:"extensionMaintenanceVersion"`
+		SelectOptionVersion                int             `json:"selectOptionVersion"`
 		OpenOriginVersion                  int             `json:"openOriginVersion"`
 		ProtectionScopeVersion             int             `json:"protectionScopeVersion"`
 		CredentialPublicReadVersion        int             `json:"credentialPublicReadVersion"`
@@ -529,6 +531,7 @@ func (b *Broker) serve(conn net.Conn) {
 	c.tabMetadataVersion = hello.TabMetadataVersion
 	c.tabInventoryVersion = hello.TabInventoryVersion
 	c.extensionMaintenanceVersion = hello.ExtensionMaintenanceVersion
+	c.selectOptionVersion = hello.SelectOptionVersion
 	c.openOriginVersion = hello.OpenOriginVersion
 	c.protectionScopeVersion = hello.ProtectionScopeVersion
 	c.credentialPublicReadVersion = hello.CredentialPublicReadVersion
