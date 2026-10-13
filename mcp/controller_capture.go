@@ -10,6 +10,7 @@ import (
 
 	"github.com/viant/mcp-protocol/schema"
 	native "github.com/viant/mechanize/backend/darwin"
+	"github.com/viant/mechanize/data"
 )
 
 // Canonical screenshots retain MaximumInlineCaptureBytes and use the existing
@@ -114,4 +115,57 @@ func projectControllerCapture(ctx context.Context, name string, encoded []byte, 
 		out.Content = append(out.Content, schema.ImageContent{Type: "image", MimeType: preview.MimeType, Data: base64.StdEncoding.EncodeToString(preview.Image)})
 	}
 	return out, nil
+}
+
+// projectControllerCaptureFailure reuses the canonical capture failure messages.
+// Only finite codes, a closed dispatch state and a typed cleanup acknowledgement
+// cross the browser boundary; upstream text and arbitrary metadata never do.
+func projectControllerCaptureFailure(structured map[string]any) *schema.CallToolResult {
+	code, _ := structured["code"].(string)
+	dispatch, _ := structured["dispatchState"].(string)
+	if dispatch != "notDispatched" && dispatch != "dispatched" {
+		dispatch = "unknown"
+	}
+	cleanup, hasCleanup := structured["cleanupConfirmed"].(bool)
+	if !hasCleanup && (code == "permissionDenied" || code == "invalidScope") {
+		return controllerRejected(dispatch, code)
+	}
+	if code == "staleFramePermit" || code == "windowFrameUnconfirmed" || code == "captureEvidenceMismatch" {
+		message := "The window frame permit is stale; capture the exact current window again before input"
+		if code == "captureEvidenceMismatch" {
+			message = "Capture evidence did not match the exact requested window; refresh scoped discovery before another capture"
+		}
+		if code == "windowFrameUnconfirmed" {
+			message = "Window frame input receipt is unconfirmed; reconcile its outcome before replay"
+		}
+		body := map[string]any{"code": code, "message": message, "dispatchState": dispatch}
+		if hasCleanup {
+			body["cleanupConfirmed"] = cleanup
+		}
+		out, _ := result(body)
+		yes := true
+		out.IsError = &yes
+		return out
+	}
+	var cause error = errors.New("capture unavailable")
+	switch code {
+	case "captureFailed", "permissionDenied", "targetNotFound", "staleReference", "staleEpoch", "captureTooLarge", "captureOffDisplay", "captureAmbiguousDisplay", "captureUnqualified", "invalidScope":
+		cause = &native.NativeError{Code: code}
+	default:
+		if !hasCleanup {
+			rejected := controllerRejected(dispatch, code)
+			if rejected.StructuredContent.(map[string]any)["code"] != "controllerToolRejected" {
+				return rejected
+			}
+		}
+	}
+	out, _ := captureFailure(&native.CaptureError{Cause: cause, DispatchState: dispatch, CleanupConfirmed: cleanup}, data.ArtifactReference{})
+	if !hasCleanup {
+		body := out.StructuredContent.(map[string]any)
+		delete(body, "cleanupConfirmed")
+		out, _ = result(body)
+		yes := true
+		out.IsError = &yes
+	}
+	return out
 }

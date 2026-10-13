@@ -65,10 +65,11 @@ globalThis.MechanizeProtectionScopes=(()=>{
    try{
     check();
     if(request.mode==='publicRead'){
-     if(typeof publicRead!=='function'||request.targetTabId!==request.sourceIdentity.tabId||request.targetOrigin!==request.sourceOrigin)throw 'scopeTargetProtected';
+     if(typeof publicRead!=='function')throw 'scopeUnavailable';
+     if(request.targetTabId!==request.sourceIdentity.tabId||request.targetOrigin!==request.sourceOrigin)throw 'scopeChanged';
      const before=await root(request.targetTabId,check);if(!before||new URL(before.tab.url).origin!==request.targetOrigin||new URL(before.frame.url).origin!==request.targetOrigin)throw 'scopeChanged';
      const proof=await publicRead(request,before,check);check();
-     if(!proof||Object.keys(proof).sort().join()!=='identity,public,routeSHA256,version'||proof.version!==1||proof.public!==true||!identity(proof.identity)||fields.filter(k=>!['documentGeneration','documentId'].includes(k)).some(k=>proof.identity[k]!==request.sourceIdentity[k])||proof.identity.documentId!==before.frame.documentId||!/^([a-f0-9]{64})$/.test(proof.routeSHA256))throw 'scopeTargetProtected';
+     if(!proof||Object.keys(proof).sort().join()!=='identity,public,routeSHA256,version'||proof.version!==1||proof.public!==true||!identity(proof.identity)||fields.filter(k=>!['documentGeneration','documentId'].includes(k)).some(k=>proof.identity[k]!==request.sourceIdentity[k])||proof.identity.documentId!==before.frame.documentId||!/^([a-f0-9]{64})$/.test(proof.routeSHA256))throw 'scopeChanged';
      const after=await root(request.targetTabId,check);if(!after||after.frame.documentId!==before.frame.documentId||publicRoute(after.frame.url)!==publicRoute(before.frame.url)||publicRoute(after.tab.url)!==publicRoute(after.frame.url)||await hash(publicRoute(after.frame.url))!==proof.routeSHA256)throw 'scopeChanged';check();
      return {...reply(true,'none'),publicDocument:proof};
     }

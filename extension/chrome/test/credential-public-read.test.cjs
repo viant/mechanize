@@ -2,8 +2,8 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 const base=require('node:path').resolve(__dirname,'..');
 const {JSDOM}=require(base+'/node_modules/jsdom');
 function fixture(html){const dom=new JSDOM(html,{url:'https://bank.example/login',runScripts:'outside-only'}),w=dom.window;w.TextEncoder=TextEncoder;Object.defineProperty(w.crypto,"subtle",{value:require("node:crypto").webcrypto.subtle});w.HTMLElement.prototype.getClientRects=function(){return [{width:100,height:20}]};for(const f of ['protocol.js','accessibility-provider.js'])w.eval(fs.readFileSync(base+'/'+f,'utf8'));w.eval(fs.readFileSync(base+'/dom.js','utf8'));return {w,doc:w.document,api:w.MechanizeDOM};}
-test('metadata classification never reads values and rejects login, error, incomplete tree',()=>{
- for(const html of ['<input type=password value=CANARY>','<input autocomplete=username value=CANARY>','<h1>nie możemy Cię zalogować</h1>','<h1>Login failed</h1>','<div></div>'.repeat(2100)]){
+test('metadata classification never reads values and rejects login and error',()=>{
+ for(const html of ['<input type=password value=CANARY>','<input autocomplete=username value=CANARY>','<h1>nie możemy Cię zalogować</h1>','<h1>Login failed</h1>']){
  const f=fixture(html);for(const input of f.doc.querySelectorAll('input'))Object.defineProperty(input,'value',{get(){throw Error('value read')}});
  const c=f.api.credentialLayout(f.doc);assert.notEqual(c.state,'public');assert.ok(!JSON.stringify(c).includes('CANARY'));f.w.close();}
 });
@@ -84,4 +84,32 @@ test('existing scope transport validates public proof against fresh Chrome URL/d
  const accepted=await scopes.respond(q,()=>{},()=>false);assert.equal(accepted.ready,true);assert.equal(accepted.targetIdentity,null);
  for(const bad of ['doc','url','foreign','unqualified']){mode=bad;doc='original';url='https://bank.example/history';assert.equal((await scopes.respond(q,()=>{},()=>false)).ready,false,bad);}
  assert.equal(writes,0);assert.equal(scopes.records().length,0);
+});
+
+test('large generic history has independent credential coverage and bounded snapshot output',()=>{
+ const f=fixture('<h1>History</h1>'+'<div>History item</div>'.repeat(5000));
+ const started=performance.now();assert.equal(f.api.credentialLayout(f.doc).state,'public');
+ console.log(`5000-item metadata classification: ${(performance.now()-started).toFixed(1)} ms`);
+ const snapshot=f.api.withCredentialScope(f.doc,()=>true,()=>f.api.snapshot(f.doc,{limit:10}));assert.ok(snapshot.nodes.length<=10);assert.equal(snapshot.truncated,true);
+ f.w.close();
+});
+
+test('credential controls and login errors late in large light and open shadow trees remain protected',()=>{
+ for(const html of ['<input type=password value=CANARY>','<input autocomplete=username value=CANARY>','<h1>Login failed</h1>'])for(const shadow of [false,true]){
+  const f=fixture('<h1>History</h1>'+'<div>Row</div>'.repeat(5000)+'<section id=late></section>');
+  const root=shadow?f.doc.querySelector('#late').attachShadow({mode:'open'}):f.doc.querySelector('#late');root.innerHTML=html;
+  for(const input of root.querySelectorAll('input'))Object.defineProperty(input,'value',{get(){throw Error('value read')}});
+  assert.equal(f.api.credentialLayout(f.doc).state,'login');f.w.close();
+ }
+});
+test('exhausted metadata coverage or unavailable traversal never becomes public',()=>{
+ const f=fixture('<div></div>'.repeat(20001));assert.deepEqual(JSON.parse(JSON.stringify(f.api.credentialLayout(f.doc))),{state:'unavailable',reason:'coverage'});f.w.close();
+ const broken=fixture('<h1>History</h1>');broken.doc.createTreeWalker=()=>{throw Error('unavailable')};assert.equal(broken.api.credentialLayout(broken.doc).state,'unavailable');broken.w.close();
+ const late=fixture('<div></div>'.repeat(20001)+'<section id=late></section>');late.doc.querySelector('#late').attachShadow({mode:'open'}).innerHTML='<input type=password value=CANARY>';assert.equal(late.api.credentialLayout(late.doc).state,'unavailable');late.w.close();
+ const controls=fixture('<input hidden>'.repeat(2001));assert.equal(controls.api.credentialLayout(controls.doc).state,'unavailable');controls.w.close();
+});
+
+test('display-contents shadow host cannot hide a visible password',()=>{
+ const f=fixture('<section id=host style="display:contents"></section>');const host=f.doc.querySelector('#host');host.getClientRects=()=>[];
+ host.attachShadow({mode:'open'}).innerHTML='<input type=password value=CANARY>';assert.equal(f.api.credentialLayout(f.doc).state,'login');f.w.close();
 });

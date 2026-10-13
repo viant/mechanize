@@ -186,9 +186,10 @@ and `processStartToken` from a fresh discovery row; never use either alone or
 treat the pair as lasting authority. The helper rechecks exact application
 ownership.
 
-A once grant used for discovery is consumed. Use a bounded session grant for
-discovery followed by capture, or obtain a separate once grant for the capture.
-One capture grant covers capture, helper cleanup, encrypted bytes and Datly
+Reuse existing saved access; do not request another approval for each screenshot.
+If the user explicitly chose a once-only grant, discovery consumes it; inspect
+the reported permission status rather than treating this as a transport failure.
+One capture operation covers capture, helper cleanup, encrypted bytes and Datly
 publication. Check cleanup/publication uncertainty before another attempt.
 The tool returns the original PNG up to its inline byte limit. Larger images
 remain saved in full and may return an explicitly labelled PNG/JPEG preview:
@@ -222,6 +223,10 @@ Native tool surfaces need a bundle ID, for example
 application identity. For screenshots, discover physical windows with
 `mechanize_capture_windows` and capture the returned window instead of first
 observing a web page or menu bar.
+Use `mechanize_capture` for inspection. A retained frame-click permit is needed
+only when preparing a visual click, not for reading an image. If the exact
+application has no discoverable foreground window, activate that application
+once and repeat window discovery; do not reuse an old physical window ID.
 An exact native `windowScope` also requires the discovered `surface.processId`
 and `surface.processStartToken`; a window title and bundle ID alone are insufficient.
 Use the current discovery result rather than guessing the native window title

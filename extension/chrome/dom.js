@@ -50,16 +50,33 @@ globalThis.MechanizeDOM = globalThis.MechanizeDOM || (() => {
     try {
       const url=new URL(doc.URL);
       if(!['http:','https:'].includes(url.protocol)||url.username||url.password)return {state:'unavailable',reason:'location'};
-      const result=walk(doc);
-      if(!result.complete)return {state:'unavailable',reason:'coverage'};
+      // Classification has its own metadata budget. Stream elements rather
+      // than collecting snapshot nodes or computing layout for ordinary rows.
+      // Every open shadow root participates; exhausted coverage never proves
+      // public. The snapshot's smaller output budget remains independent.
+      const roots=[doc];let inspected=0,candidates=0;
       const valueControl=el=>['INPUT','TEXTAREA','SELECT'].includes(el.tagName)||el.isContentEditable||['textbox','searchbox','combobox'].includes(el.getAttribute('role'));
-      for(const el of result.nodes) {
+      for(let rootIndex=0;rootIndex<roots.length;rootIndex++) {
+        const walker=doc.createTreeWalker(roots[rootIndex],1);
+        for(let el=walker.nextNode();el;el=walker.nextNode()) {
+        if(++inspected>20000)return {state:'unavailable',reason:'coverage'};
+        if(el.shadowRoot)roots.push(el.shadowRoot);
+        const control=valueControl(el),heading=['H1','H2','H3'].includes(el.tagName)||el.getAttribute('role')==='alert';
+        if(!control&&!heading)continue;
+        if(++candidates>2000)return {state:'unavailable',reason:'coverage'};
         if(!visible(el)||el.closest('[hidden],[inert]'))continue;
-        if(valueControl(el)&&(el.type==='password'||identifierCredential(el)||/password|username|user.?name|login|one-time-code|otp|captcha|security.?code|authorization|autoryzac/i.test([el.id,el.name,el.autocomplete,el.getAttribute('aria-label'),el.getAttribute('placeholder'),...(el.labels?[...el.labels].map(x=>x.textContent):[])].join(' '))))return {state:'login',reason:'credentialField'};
-        if(['H1','H2','H3'].includes(el.tagName)||el.getAttribute('role')==='alert') {
+        let host=el.getRootNode().host,hiddenHost=false;
+        for(;host;host=host.getRootNode().host){
+          const style=doc.defaultView.getComputedStyle(host);
+          if(host.closest('[hidden],[inert]')||style.display==='none'||style.visibility==='hidden'){hiddenHost=true;break;}
+        }
+        if(hiddenHost)continue;
+        if(control&&(el.type==='password'||identifierCredential(el)||/password|username|user.?name|login|one-time-code|otp|captcha|security.?code|authorization|autoryzac/i.test([el.id,el.name,el.autocomplete,el.getAttribute('aria-label'),el.getAttribute('placeholder'),...(el.labels?[...el.labels].map(x=>x.textContent):[])].join(' '))))return {state:'login',reason:'credentialField'};
+        if(heading) {
           const heading=(el.textContent||'').slice(0,256);
           if(/(?:nie.możemy.ci[eę].zalogować|(?:login|sign.?in).*(?:failed|error)|(?:failed|unable).*(?:login|sign.?in)|(?:you.have.been|you.are).*(?:logged|signed).out)/i.test(heading))return {state:'login',reason:'loginError'};
         }
+      }
       }
       return {state:'public',reason:'none'};
     } catch { return {state:'unavailable',reason:'coverage'}; }

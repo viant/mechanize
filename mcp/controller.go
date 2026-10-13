@@ -383,6 +383,9 @@ func (d *ControllerDispatcher) CallTool(ctx context.Context, id chrome.Controlle
 		if code == "protectionMetadataUnavailable" {
 			return controllerProtectionMetadataRejected(dispatch, structured), nil
 		}
+		if call.Name == "mechanize_capture" || call.Name == "mechanize_capture_window_frame" {
+			return projectControllerCaptureFailure(structured), nil
+		}
 		return controllerRejected(dispatch, code), nil
 	}
 	if call.Name == "mechanize_session_open" {

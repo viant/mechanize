@@ -215,7 +215,8 @@ if (!globalThis.__mechanizeExecutor) {
   }
   async function qualifyPublicRead(message,sender,reply) {
     publicReadScope=null;
-    const refused=()=>reply({requestId:message?.requestId,publicDocument:null});
+    let refusal='scopeChanged';
+    const refused=()=>reply({requestId:message?.requestId,publicDocument:null,reason:refusal});
     try {
       const keys=[...privateKeys,'redactions'],i=message.identity;
       if(sender.tab||sender.url&&sender.url!==`chrome-extension://${chrome.runtime.id}/worker.js`||Object.keys(message).sort().join()!==keys.sort().join()||!i||Object.keys(i).sort().join()!=='browserInstance,documentGeneration,documentId,frameId,profileChannel,tabId'||i.frameId!==0||window.top!==window||!Number.isSafeInteger(i.documentGeneration)||i.documentGeneration<0||!Number.isSafeInteger(i.tabId)||i.tabId<1||!['profileChannel','browserInstance','documentId'].every(k=>typeof i[k]==='string'&&i[k].length>0&&i[k].length<=128)||!/^[a-f0-9]{64}$/.test(message.requestId)||!['brokerEpoch','channelEpoch','scopeHash'].every(k=>typeof message[k]==='string'&&message[k].length>0&&message[k].length<=128)||!Number.isSafeInteger(message.deadlineUnixMs)||message.deadlineUnixMs<=Date.now()||message.deadlineUnixMs>Date.now()+5000||location.origin!==message.origin||quiesced||reconnectIntent||pendingFingerprints||pendingBrowserInputs||recorder.active)throw Error();
@@ -225,7 +226,13 @@ if (!globalThis.__mechanizeExecutor) {
       flush();const heldBinding=binding,heldGeneration=generation;
       const current=()=>binding===heldBinding&&generation===heldGeneration&&!quiesced&&!reconnectIntent&&!pendingFingerprints&&!pendingBrowserInputs&&!recorder.active&&Date.now()<message.deadlineUnixMs;
       const proof=await globalThis.MechanizeDOM.credentialScopeEvidence(document,current);flush();
-      if(!proof.public||!current())throw Error();
+      if(!proof.public){
+        // Missing coverage/binding evidence is not evidence of a login page.
+        // Return only closed metadata; never include fields, routes or values.
+        refusal=['credentialField','loginError'].includes(proof.reason)?'scopeTargetProtected':proof.reason==='coverage'?'scopeInventoryUnavailable':'scopeChanged';
+        throw Error();
+      }
+      if(!current())throw Error();
       if(!binding)binding={identity:{...i,documentGeneration:generation},brokerEpoch:message.brokerEpoch,channelEpoch:message.channelEpoch,scopeHash:message.scopeHash,leaseRequired:true,mutationFingerprintVersion:2};
       const u=new URL(document.URL);
       publicReadScope={identity:{...binding.identity,documentGeneration:generation},brokerEpoch:binding.brokerEpoch,channelEpoch:binding.channelEpoch,scopeHash:binding.scopeHash,deadline:message.deadlineUnixMs,route:u.origin+u.pathname,redactions};

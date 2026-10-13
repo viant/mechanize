@@ -47,7 +47,9 @@ async function qualifyPublicReadRenderer(request,sample,current){
  if(i.profileChannel!==enrollment.profileChannel||i.browserInstance!==enrollment.browserInstance||!allowedOrigin(sample.frame.url,enrollment)||!allowedOrigin(sample.tab.url,enrollment))throw 'scopeChanged';
  await chrome.scripting.executeScript({target:{tabId:i.tabId,documentIds:[i.documentId]},world:'ISOLATED',files:['protocol.js','fingerprint.js','accessibility-provider.js','dom.js','recorder.js','secure-input.js','content.js']});current();
  const result=await privateRenderer({type:'credentialPublicScope',requestId:request.requestId,identity:i,brokerEpoch:request.brokerEpoch,channelEpoch:request.channelEpoch,scopeHash:request.scopeHash,deadlineUnixMs:request.deadlineUnixMs,origin:request.targetOrigin,redactions:[...privateRedactions]});current();
- if(!result||Object.keys(result).sort().join()!=='publicDocument,requestId'||result.requestId!==request.requestId)throw 'scopeChanged';
+ if(!result||!['publicDocument,requestId','publicDocument,reason,requestId'].includes(Object.keys(result).sort().join())||result.requestId!==request.requestId)throw 'scopeChanged';
+ if(result.publicDocument===null)throw ['scopeTargetProtected','scopeInventoryUnavailable','scopeChanged'].includes(result.reason)?result.reason:'scopeUnavailable';
+ if(Object.hasOwn(result,'reason'))throw 'scopeChanged';
  return result.publicDocument;
 }
 async function receiveScopedPublicRead(command){

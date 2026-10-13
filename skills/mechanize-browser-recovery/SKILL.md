@@ -29,9 +29,17 @@ do not replace a failed role locator with `getByText` when `web:textLocator` is
 unavailable. Choose an advertised exact role, ID, test ID or label where supported.
 
 After a semantic action times out before dispatch, inspect the existing target
-tab and use the native screenshot/frame route when available. Discover the
-physical window, activate the target tab, capture a fresh frame, inspect its
-image, and use its coordinate mapping and one-use permit for the intended action.
+tab with `mechanize_capture_windows` followed by `mechanize_capture`. Plain
+inspection does not need a retained click permit. Reuse saved access and the
+current session. A stale window means refresh window discovery, not request
+approval again. If discovery returns no window because Chrome is in the
+background, activate the intended Chrome application once and rediscover it.
+Activate the target tab when necessary before interpreting its image.
+
+Only when the next action needs a visual click, acquire
+`mechanize_capture_window_frame`, inspect that fresh image, and use its coordinate
+mapping and one-use permit for the intended action. Do not spend the permit's
+lifetime on unrelated status calls.
 Use the native API syntax in `mechanize-desktop` and `mechanize_describe`; do not
 invent arguments. Verify the new page state before continuing. A policy or
 protected-entry refusal still needs its stated issue resolved; changing transport
