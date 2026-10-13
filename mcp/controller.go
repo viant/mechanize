@@ -293,6 +293,13 @@ func controllerRejected(dispatch string, codes ...string) *schema.CallToolResult
 	if code == "invalidScope" {
 		message = "Use an exact discovered scope. Native window observation requires surface.processId and surface.processStartToken plus a discovered window title. For screenshots, discover windows with mechanize_capture_windows and capture the returned window instead."
 	}
+	if len(codes) > 0 {
+		switch codes[0] {
+		case "incompleteObservation", "staleFocus", "staleReference", "staleEpoch", "observationTimeout", "nativeObservationUnavailable":
+			code = codes[0]
+			message, _ = observationDiagnosticMessage(code)
+		}
+	}
 	switch code {
 	case "protectionMetadataUnavailable":
 		message = "Browser protection metadata is unavailable; inspect its metadata phase and cause."

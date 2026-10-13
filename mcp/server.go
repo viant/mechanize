@@ -474,8 +474,44 @@ const privateDOMMessage = "DOM observation is unavailable for this document whil
 func observationFailure(err error) (*schema.CallToolResult, *jsonrpc.Error) {
 	if errors.Is(err, vault.ErrDeliveryProtected) {
 		err = &model.MechanizeError{Code: "privateDOMUnavailable", Message: privateDOMMessage, Stage: "admission", DispatchState: "notDispatched", EffectState: "none"}
+	} else if errors.Is(err, context.DeadlineExceeded) {
+		message, _ := observationDiagnosticMessage("observationTimeout")
+		err = &model.MechanizeError{Code: "observationTimeout", Message: message, Stage: "observation", DispatchState: "notDispatched", EffectState: "none"}
+	} else {
+		var nativeError *native.NativeError
+		if errors.As(err, &nativeError) {
+			code := nativeError.Code
+			message, known := observationDiagnosticMessage(code)
+			if !known {
+				code = "nativeObservationUnavailable"
+				message, _ = observationDiagnosticMessage(code)
+			}
+			// This endpoint performs a read only. Preserve a closed diagnostic,
+			// never the helper's raw message, app title, or wrapper exception.
+			err = &model.MechanizeError{Code: code, Message: message, Stage: "observation", DispatchState: "notDispatched", EffectState: "none"}
+		}
 	}
 	return failure(err)
+}
+
+func observationDiagnosticMessage(code string) (string, bool) {
+	switch code {
+	case "incompleteObservation":
+		return "The accessibility observation was incomplete. Narrow the native subtree or capture the exact application window for visual inspection.", true
+	case "staleFocus":
+		return "Application focus changed during observation. Refresh the current target or capture its exact window.", true
+	case "staleReference", "staleEpoch":
+		return "The native observation is stale. Discover the current process and window and observe again.", true
+	case "targetNotFound", "ambiguousTarget":
+		return "The current native target was not uniquely identified. Refresh application/window discovery and select the intended target.", true
+	case "permissionDenied":
+		return "Native observation permission is unavailable. Inspect the existing macOS permission status.", true
+	case "observationTimeout":
+		return "Observation reached its deadline without input. Narrow the requested scope or use exact-window capture.", true
+	case "nativeObservationUnavailable":
+		return "Native semantic observation is unavailable. Inspect current application/window metadata and use exact-window capture when available.", true
+	}
+	return "", false
 }
 
 func observeSurfaceIdentityValid(surface model.Surface) bool {
