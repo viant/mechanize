@@ -69,6 +69,13 @@ until the server reports the relevant authorization and the result is verified.
 
 ## Choose a website or native application
 
+To start an installed native application when no process is running, use the
+discovered bundle ID with `app("com.example.Editor").open(timeout:3s)` or the
+typed `app.open` action. The capability is named `native:appLaunch`; its DSL
+method is `open`, not `launch`. After completion, discover the new process and
+window identities before interacting. Use `activate` only for a running app;
+do not reuse process identifiers from an earlier instance.
+
 A website displayed in Chrome is a `web` surface, even when its product name
 sounds like a desktop app. Never derive a native bundle ID from a website name
 or hostname. When capabilities include `controllerContext`, it identifies the
