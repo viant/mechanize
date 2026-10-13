@@ -420,7 +420,10 @@ func (g *Gateway) RetireControl(ctx context.Context, p auth.Principal, a Control
 	}
 	if !navigationRetired {
 		reply, err := g.broker.call(ctx, c, Command{Action: "executor.retire", Identity: a.Document.Identity, ControlLease: &a.Lease}, false, check)
-		if err != nil || !reply.RetiredAuthorityQuiesced || reply.Identity != a.Document.Identity || reply.ControlLease == nil || *reply.ControlLease != a.Lease {
+		// Normal renderer retirement reports its current document generation.
+		// The broker already validates exact source identity with a monotonic
+		// generation. Source-absence proof instead ACKs the original identity.
+		if err != nil || !reply.RetiredAuthorityQuiesced || knownSourceRetirement && reply.Identity != a.Document.Identity || reply.ControlLease == nil || *reply.ControlLease != a.Lease {
 			return false, errors.Join(err, browserError("retirementUnknown", "Exact renderer lease retirement unconfirmed", "unknown"))
 		}
 	}

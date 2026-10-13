@@ -150,6 +150,25 @@ func controlFixtureVersion(t *testing.T, version int, privateStage ...func() str
 				r.Validated = true
 			case "executor.retire":
 				r.RetiredAuthorityQuiesced = true
+				if len(privateStage) > 0 && strings.HasPrefix(privateStage[0](), "fillRetirementContent") {
+					var err error
+					r, err = packagedFillRetirementReply(cmd)
+					if err == nil {
+						switch privateStage[0]() {
+						case "fillRetirementContentWrongDocument":
+							r.Identity.DocumentID = "foreign-document"
+						case "fillRetirementContentOldGeneration":
+							r.Identity.Generation = 0
+						case "fillRetirementContentWrongLease":
+							copied := *r.ControlLease
+							copied.ID = "foreign-lease"
+							r.ControlLease = &copied
+						}
+					}
+					if err != nil {
+						r = Reply{RequestID: cmd.RequestID, Identity: cmd.Identity, Error: browserError("fixtureBoundaryFailed", "Synthetic fill retirement boundary failed", "unknown")}
+					}
+				}
 				if len(privateStage) > 0 && privateStage[0]() == "knownSourceWorker" {
 					var err error
 					r, err = packagedSourceRetirementReply(cmd)

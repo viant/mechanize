@@ -1,0 +1,23 @@
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const {webcrypto}=require('node:crypto');
+const source=process.argv[2],{JSDOM}=require(path.join(source,'extension/chrome/node_modules/jsdom'));
+(async()=>{
+ const retire=JSON.parse(fs.readFileSync(0,'utf8'));
+ const dom=new JSDOM('<label for="message">Message</label><input id="message"><output id="status"></output>',{url:'https://fixture.test',runScripts:'outside-only'}),w=dom.window,listeners=[];
+ w.TextEncoder=TextEncoder;Object.defineProperty(w,'crypto',{value:webcrypto,configurable:true});w.HTMLElement.prototype.getClientRects=()=>[{width:100,height:20}];
+ w.chrome={runtime:{id:'fixture',onMessage:{addListener:f=>listeners.push(f)}}};
+ for(const name of ['protocol.js','fingerprint.js','accessibility-provider.js','dom.js','recorder.js','content.js'])w.eval(fs.readFileSync(path.join(source,'extension/chrome',name),'utf8'));
+ const send=m=>new Promise(resolve=>listeners[0](m,{id:'fixture'},resolve));
+ const binding={identity:retire.identity,brokerEpoch:retire.brokerEpoch,channelEpoch:retire.channelEpoch,scopeHash:retire.scopeHash,leaseRequired:true,mutationFingerprintVersion:2};
+ assert.equal((await send({type:'bind',binding})).mutationFingerprintVersion,2);
+ const base={identity:retire.identity,brokerEpoch:retire.brokerEpoch,channelEpoch:retire.channelEpoch,scopeHash:retire.scopeHash,deadlineUnixMs:retire.deadlineUnixMs,controlLease:retire.controlLease};
+ assert.equal((await send({...base,requestId:'acquire',action:'executor.acquire'})).validated,true);
+ const input=w.document.querySelector('#message');let changes=0;
+ input.addEventListener('input',()=>{changes++;w.document.querySelector('#status').textContent='Updated';});
+ const fill={...base,requestId:'fill',attemptId:'a'.repeat(64),action:'element.fill',locator:{strategy:'id',value:'message',exact:true},args:{value:'Fixture ready'},fingerprintVersion:2};fill.fingerprintSHA256=(await w.MechanizeFingerprint.mutationV2(fill)).sha256;
+ const filled=await send(fill);assert.equal(filled.dispatchState,'dispatched');assert.equal(input.value,'Fixture ready');assert.equal(changes,1);
+ await new Promise(resolve=>setTimeout(resolve,0));
+ const result=await send(retire);assert.equal(result.retiredAuthorityQuiesced,true);assert.ok(result.identity.documentGeneration>retire.identity.documentGeneration);assert.equal(changes,1);
+ assert.equal((await send({...fill,requestId:'forbidden-repeat',attemptId:'b'.repeat(64)})).error.code,'staleAuthority');assert.equal(changes,1);
+ process.stdout.write(JSON.stringify(result));dom.window.close();
+})().catch(()=>{process.stderr.write('syntheticFillRetirementBoundaryFailed');process.exitCode=1;});
