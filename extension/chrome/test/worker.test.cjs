@@ -2812,3 +2812,9 @@ test('extension reload maintenance gates new native renderer dispatch while its 
  await f.receive(command('racing-input'));assert.equal(f.state.deliveries,0);assert.equal(f.messages.at(-1).error.code,'executorNotQuiescent');assert.equal(f.messages.at(-1).error.dispatchState,'notDispatched');
  release();await original;assert.equal(f.state.reloads,1);assert.equal(f.state.deliveries,0);
 });
+
+test('native hello advertises bounded DOM select separately from fingerprint and Playwright versions',async()=>{
+ const f=await metadataActivationFixture();f.disconnect();await f.connect();
+ const hello=f.messages.find(m=>m.type==='hello');assert.equal(hello.selectOptionVersion,1);assert.equal(hello.workerBuild,32);
+ assert.equal(hello.checkOptionVersion,undefined);assert.equal(hello.uncheckOptionVersion,undefined);assert.equal(f.state.deliveries,0);
+});

@@ -305,7 +305,9 @@ globalThis.MechanizeDOM = globalThis.MechanizeDOM || (() => {
       const win = doc.defaultView;
       let proto;
       if (action === "element.select") {
-        if (el.tagName !== "SELECT" || ![...el.options].some(o => o.value === args.value && !o.disabled)) fail("unsupportedControl", "Select requires an enabled existing option");
+        if (el.tagName !== "SELECT" || el.multiple) fail("unsupportedControl", "Select requires a native single-selection control");
+        const options = [...el.options].filter(o => o.value === args.value);
+        if (options.length !== 1 || options[0].disabled || options[0].closest("optgroup[disabled]")) fail("unsupportedControl", "Select requires one enabled existing option");
         proto = win.HTMLSelectElement.prototype;
       } else {
         if (!["INPUT", "TEXTAREA"].includes(el.tagName) || el.readOnly || ["checkbox", "radio", "button", "submit", "range", "color", "hidden"].includes(el.type)) fail("unsupportedControl", "Fill supports native text inputs/textarea; custom editors require qualification");

@@ -56,3 +56,11 @@ test('indexed exact locator binds document order and index without changing unin
  for(const patch of [{index:0},{order:'document'},{index:-1,order:'document'},{index:1000,order:'document'},{index:0,order:'visual'},{index:0.5,order:'document'}]){const c=structuredClone(original);Object.assign(c.locator,patch);await assert.rejects(()=>fingerprint(c));}
  assert.equal((await fingerprint(original)).sha256,baseline.sha256);
 });
+test('select v2 binds the exact value and leaves unsupported checkbox actions closed',async()=>{
+ const select=structuredClone(vectors.cases[0].command);select.action='element.select';select.args={value:'green'};
+ const digest=(await fingerprint(select)).sha256;
+ assert.notEqual((await fingerprint({...select,args:{value:'blue'}})).sha256,digest);
+ assert.notEqual((await fingerprint({...select,action:'element.fill'})).sha256,digest);
+ for(const action of ['element.check','element.uncheck'])await assert.rejects(fingerprint({...select,action}));
+ for(const args of [{value:['green']},{value:'green',label:'Green'},{}])await assert.rejects(fingerprint({...select,args}));
+});

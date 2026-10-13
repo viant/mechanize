@@ -23,7 +23,7 @@ globalThis.MechanizeFingerprint = (() => {
   }
   function canonicalEnvelope(command) {
     object(command,["action","identity","brokerEpoch","channelEpoch","scopeHash","attemptId","controlLease"],["locator","args","requestId","deadlineUnixMs","fingerprintVersion","fingerprintSHA256"]);
-    if (!["element.press","element.fill","browser.navigate","browser.activate"].includes(command.action)) fail();
+    if (!["element.press","element.fill","element.select","browser.navigate","browser.activate"].includes(command.action)) fail();
     const i=command.identity; object(i,["profileChannel","browserInstance","tabId","frameId","documentId","documentGeneration"]);
     if (![i.profileChannel,i.browserInstance,i.documentId,command.brokerEpoch,command.channelEpoch,command.attemptId].every(opaque) || !hash(command.scopeHash) || !positive(i.tabId) || i.tabId>2147483647 || i.frameId!==0 || !positive(i.documentGeneration)) fail();
     const lease=command.controlLease; object(lease,["id","generation"]); if (!opaque(lease.id) || !positive(lease.generation)) fail();

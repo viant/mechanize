@@ -5,8 +5,8 @@ const {webcrypto}=require('node:crypto');
 const {JSDOM}=require('jsdom');
 const identity={profileChannel:'profile1',browserInstance:'browser1',tabId:7,frameId:0,documentId:'doc1',documentGeneration:1};
 const lease={id:'lease1',generation:7};
-function fixture(version=2){
- const dom=new JSDOM('<button id="save">Save</button><input id="field">',{url:'https://fixture.test',runScripts:'outside-only'}),w=dom.window,listeners=[];
+function fixture(version=2,html='<button id="save">Save</button><input id="field">'){
+ const dom=new JSDOM(html,{url:'https://fixture.test',runScripts:'outside-only'}),w=dom.window,listeners=[];
  w.TextEncoder=TextEncoder;Object.defineProperty(w,'crypto',{value:webcrypto,configurable:true});w.HTMLElement.prototype.getClientRects=()=>[{width:100,height:20}];
  w.chrome={runtime:{id:'fixture',onMessage:{addListener:f=>listeners.push(f)}}};
  for(const file of ['protocol.js','fingerprint.js','accessibility-provider.js','dom.js','recorder.js','content.js'])w.eval(fs.readFileSync(path.join(__dirname,'..',file),'utf8'));
@@ -55,4 +55,40 @@ test('lease retirement DOM change and deadline expiry during v2 hashing prevent 
   let release,entered;const wait=new Promise(resolve=>release=resolve),started=new Promise(resolve=>entered=resolve);Object.defineProperty(f.w,'crypto',{value:{subtle:{digest:async(...args)=>{entered();await wait;return webcrypto.subtle.digest(...args)}}},configurable:true});
   const pending=f.send(cmd);await started;if(mode==='retire')await f.send(f.command('executor.retire',{controlLease:lease}));else if(mode==='DOM')f.w.document.body.appendChild(f.w.document.createElement('div'));else cmd.deadlineUnixMs=Date.now()-1;release();const result=await pending;assert.ok(result.error);assert.equal(clicks,0);assert.equal(result.fingerprintVersion,2);
  }
+});
+
+test('qualified select changes one public option and retains receipt without replay',async t=>{
+ const f=fixture(2,'<label for="color">Color</label><select id="color"><option value="blue">Blue</option><option value="green">Green</option></select>');t.after(f.close);await f.ready();
+ const el=f.w.document.querySelector('#color'),events=[];for(const name of ['input','change'])el.addEventListener(name,e=>events.push([e.type,e.isTrusted]));
+ const cmd=await f.mutation('element.select',{locator:{strategy:'id',value:'color',exact:true},args:{value:'green'}});
+ const first=await f.send(cmd);assert.equal(first.dispatchState,'dispatched');assert.equal(first.value,'green');assert.equal(el.value,'green');assert.deepEqual(events,[['input',false],['change',false]]);
+ const again=await f.send({...cmd,requestId:'same-attempt'});assert.equal(again.fingerprintSHA256,cmd.fingerprintSHA256);assert.equal(events.length,2);
+ const changed=await f.mutation('element.select',{locator:cmd.locator,args:{value:'blue'}});assert.ok((await f.send(changed)).error);assert.equal(el.value,'green');assert.equal(events.length,2);
+ const receipt=await f.send(f.command('receipt.query',{attemptId:cmd.attemptId}));assert.equal(receipt.fingerprintSHA256,cmd.fingerprintSHA256);
+});
+
+test('select rejects invalid option controls, foreign leases and credential targets before input',async t=>{
+ for(const [name,html,value,extra] of [
+  ['missing','<select id="color"><option value="blue">Blue</option></select>','green'],
+  ['duplicate','<select id="color"><option value="blue">Blue</option><option value="green">One</option><option value="green">Two</option></select>','green'],
+  ['disabled','<select id="color"><option value="blue">Blue</option><option disabled value="green">Green</option></select>','green'],
+  ['group','<select id="color"><option value="blue">Blue</option><optgroup disabled><option value="green">Green</option></optgroup></select>','green'],
+  ['multiple','<select multiple id="color"><option value="blue" selected>Blue</option><option value="green">Green</option></select>','green'],
+  ['custom','<input id="color" value="blue">','green'],
+  ['lease','<select id="color"><option value="blue">Blue</option><option value="green">Green</option></select>','green',{controlLease:{id:'foreign',generation:7}}],
+  ['secret','<input type="password"><select id="color"><option value="blue">Blue</option><option value="green">Green</option></select>','green']
+ ]){
+  const f=fixture(2,html);t.after(f.close);await f.ready();const el=f.w.document.querySelector('#color'),before=el.value;let inputs=0;el.addEventListener('input',()=>inputs++);
+  const result=await f.send(await f.mutation('element.select',{locator:{strategy:'id',value:'color',exact:true},args:{value},...extra}));
+  assert.ok(result.error,name);assert.equal(result.error.dispatchState,'notDispatched',name);assert.equal(el.value,before,name);assert.equal(inputs,0,name);
+ }
+});
+
+test('existing content listener uses refreshed packaged select fingerprint and DOM helpers',async t=>{
+ const f=fixture(2,'<select id="color"><option value="blue">Blue</option><option value="green">Green</option></select>');t.after(f.close);await f.ready();
+ // Model an old injected global helper. Exact attach reinjects the current modules,
+ // while content.js intentionally preserves its original listener/receipt closure.
+ f.w.MechanizeFingerprint={mutationV2:async()=>{throw Error('old helper');}};
+ for(const file of ['fingerprint.js','dom.js','content.js'])f.w.eval(fs.readFileSync(path.join(__dirname,'..',file),'utf8'));
+ const result=await f.send(await f.mutation('element.select',{locator:{strategy:'id',value:'color',exact:true},args:{value:'green'}}));assert.equal(result.dispatchState,'dispatched');assert.equal(f.w.document.querySelector('#color').value,'green');
 });
