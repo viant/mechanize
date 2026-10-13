@@ -7,15 +7,13 @@ const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
  const fence=x=>({brokerEpoch:x.brokerEpoch,channelEpoch:x.channelEpoch,scopeHash:x.scopeHash}); const history=[]; for(let i=0;i<64;i++) history.push({nonce:(i+1).toString(16).padStart(64,'0'),oldFence:{...fence(old),brokerEpoch:'history-'+i,channelEpoch:'history-'+i},newFence:i===63?fence(old):{...fence(old),brokerEpoch:'history-'+(i+1),channelEpoch:'history-'+(i+1)},executors:[]}); const tail=history.at(-1);local.mechanizeReconnect={version:1,phase:'adopted',nonce:tail.nonce,oldFence:tail.oldFence,newFence:tail.newFence,history};
  const original=JSON.stringify(local.mechanizeReconnect);
  const event={addListener(){}};
- const storage=values=>({async get(key){return key===null?{...values}:Object.hasOwn(values,key)?{[key]:values[key]}:{}},async set(value){Object.assign(values,value);if(!input.success)for(const key of Object.keys(value))if(key.startsWith('mechanizeReconnectArchive:'))values[key]={version:1,journal:{}};}});
+ const storage=values=>({async setAccessLevel(options){if(options?.accessLevel!=='TRUSTED_CONTEXTS')throw Error('unexpected storage access level');},async get(key){return key===null?{...values}:Object.hasOwn(values,key)?{[key]:values[key]}:{}},async set(value){Object.assign(values,value);if(!input.success)for(const key of Object.keys(value))if(key.startsWith('mechanizeReconnectArchive:'))values[key]={version:1,journal:{}};}});
  const chrome={permissions:{contains:async()=>true},storage:{local:storage(local),session:storage(session)},runtime:{id:'fixture',getManifest:()=>({version:'fixture'}),getURL:value=>'chrome-extension://fixture/'+value,onMessage:event,sendMessage:async()=>{},connectNative:()=>({onMessage:event,onDisconnect:event,postMessage:value=>responses.push(JSON.parse(JSON.stringify(value)))})},tabs:{query:async()=>[],onRemoved:event},webNavigation:{getAllFrames:async()=>[],onCommitted:event}};
  async function boot(command){
  const start=responses.length;
  const context=vm.createContext({chrome,TextEncoder,URL,Date,setTimeout,clearTimeout,crypto:require('node:crypto').webcrypto});
  const root=path.resolve(__dirname,'../../../extension/chrome');
- for(const file of ['protocol.js','protection-scopes.js','focused-location.js','tab-metadata.js','control-badge-metadata.js','connection-lifecycle.js','browser.js','cdp-transport.js','browser-input.js','secure-input.js','retirement.js','setup-metadata.js','controller.js','fingerprint.js','playwright-target.js','playwright-relay.js','playwright-worker.js'])vm.runInContext(fs.readFileSync(path.join(root,file),'utf8'),context);
- const worker=fs.readFileSync(path.join(root,'worker.js'),'utf8').replace(/import "\.\/(protocol|tab-metadata|control-badge-metadata|protection-scopes|focused-location|connection-lifecycle|browser|retirement|setup-metadata|controller|fingerprint|secure-input|browser-input|cdp-transport|playwright-target|playwright-relay|playwright-worker)\.js";/g,'');
- vm.runInContext(worker+'\nglobalThis.fixtureReceive=receive;',context);
+ require('./load_worker.cjs')(context,root,'globalThis.fixtureReceive=receive;');
  for(let i=0;i<100&&!responses.slice(start).some(r=>r.type==='hello');i++)await new Promise(resolve=>setTimeout(resolve,5));
  if(!responses.slice(start).some(r=>r.type==='hello'))throw Error('startup-unavailable');
  await context.fixtureReceive(command);return responses.slice(start);
