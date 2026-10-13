@@ -43,8 +43,10 @@ globalThis.MechanizeProtocol = (() => {
     if (["brokerEpoch", "channelEpoch", "scopeHash"].some(k => typeof command[k] !== "string" || !command[k])) throw error("invalidFence", "Broker, channel and scope fences required");
     if (mutations.has(command.action) && (typeof command.attemptId !== "string" || !command.attemptId)) throw error("invalidRequest", "Mutation attemptId required");
     if (!Number.isSafeInteger(command.deadlineUnixMs) || command.deadlineUnixMs <= Date.now() || command.deadlineUnixMs > Date.now() + 30000) throw error("dispatchExpired", "Dispatch deadline expired or exceeds 30 seconds");
+    const targetRetirement=command.action==='executor.retire'&&command.attemptId!==undefined&&command.fingerprintVersion===2;
+    if(targetRetirement&&(typeof command.attemptId!=='string'||!/^[A-Za-z0-9._:-]{1,128}$/.test(command.attemptId)||!command.controlLease||command.locator!==undefined||command.args!==undefined||command.fingerprintVersion!==2))throw error('invalidRequest','Exact original attempt retirement metadata required');
     if (command.fingerprintVersion !== undefined || command.fingerprintSHA256 !== undefined) {
-      if (!mutations.has(command.action) || command.fingerprintVersion !== 2 || typeof command.fingerprintSHA256 !== "string" || !/^[0-9a-f]{64}$/.test(command.fingerprintSHA256)) throw error("fingerprintMismatch", "Explicit v2 mutation fingerprint required");
+      if ((!mutations.has(command.action)&&!targetRetirement) || command.fingerprintVersion !== 2 || typeof command.fingerprintSHA256 !== "string" || !/^[0-9a-f]{64}$/.test(command.fingerprintSHA256)) throw error("fingerprintMismatch", "Explicit v2 mutation fingerprint required");
     }
     if (command.action === "executor.receipts") {
       const args = command.args;

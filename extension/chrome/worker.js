@@ -78,6 +78,12 @@ function ordinaryDisjoint(i){
 const ordinaryPrivateBlocked=i=>privatePending||((privateAdmission||privateFlow||port===privateSilencedPort)&&!ordinaryDisjoint(i));
 const documentFingerprintVersions = new Map();
 const unknownAttempts = new Set();
+// UNKNOWN journal records remain immutable. These connection-local proofs only
+// distinguish dead executor hazards from unresolved business outcomes.
+const retiredUnknownTargets = new Map();
+function rearmRetiredUnknownTargets(){for(const attempt of retiredUnknownTargets.keys())unknownAttempts.add(attempt);retiredUnknownTargets.clear();}
+function currentRetiredUnknown(attempt){const proof=retiredUnknownTargets.get(attempt);return proof&&proof.port===port&&setupFence&&['brokerEpoch','channelEpoch','scopeHash'].every(k=>proof.fence[k]===setupFence[k])?proof:null;}
+
 // Classification is volatile and bound to this exact signed native connection.
 // The original attempt and terminal journal are never deleted or rewritten.
 const visibilityUnknown = new Map();
@@ -86,6 +92,7 @@ let setupFence = null, setupActiveCommands = 0;
 // Native-only Playwright hooks share the existing browser mutation authority.
 const playwrightWorker = MechanizePlaywrightWorker.create(chrome, {
   port: () => port,
+  retiredUnknown(record){const proof=currentRetiredUnknown(record.attemptId);return Boolean(proof&&reconnectCanonical(proof.record)===reconnectCanonical(record));},
   acquire(held) {
     if(visibilityUnknown.has(held.command.attemptId))throw Error();
     if (maintenanceBusy || !port || port !== held.originalPort || !grant || !qualifiedNativePorts.has(port) || mutationBusy || setupActiveCommands || domUnknownBlocked() || lifecycleGuardId || ordinaryPrivateBlocked(held.identity) || port === startupFailurePort) throw Error();
@@ -108,6 +115,12 @@ const playwrightWorker = MechanizePlaywrightWorker.create(chrome, {
         void config().then(inventory).then(snapshot=>{if(port===ownPort&&grant===ownGrant)send({type:'documents',...snapshot});}).catch(()=>{});
       }
     }
+  },
+  receiptCurrent(held) {
+    // This grants no document access or input. Only the original authenticated
+    // execution may finish its receipt after its own navigation invalidates DOM.
+    const c=held.command;
+    return Boolean(port===held.originalPort&&grant===held.originalGrant&&grant?.leaseRequired&&qualifiedNativePorts.has(port)&&port!==startupFailurePort&&!maintenanceBusy&&!lifecycleGuardId&&!privatePending&&Date.now()<c.deadlineUnixMs&&['brokerEpoch','channelEpoch','scopeHash'].every(k=>c[k]===grant[k]));
   },
   async current(held) {
     const c=held.command,i=c.identity,key=`${i.tabId}:${i.documentId}`;
@@ -1241,7 +1254,7 @@ function reconnectPendingWireBound(pending){
  const largest={type:'reconnectBindings',requestId:'f'.repeat(64),executorChallenge:'x'.repeat(128),brokerEpoch:'x'.repeat(128),channelEpoch:'x'.repeat(128),scopeHash:'f'.repeat(64),deadlineUnixMs:Number.MAX_SAFE_INTEGER,pending};
  if(new TextEncoder().encode(JSON.stringify(largest)).length>MechanizeProtocol.MAX_BYTES)throw reconnectJournalRefuse('historyLimit');
 }
-async function reconnectBindingSnapshot(journal,command,ownPort,qualification){
+async function reconnectBindingSnapshot(journal,command,ownPort,qualification,targetRetirementAttempts){
  if(command.reconnectBindingsVersion!==1)throw reconnectRefuse('executorRefused');
  reconnectPendingWireBound(journal);
  const requestId=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');
@@ -1254,7 +1267,9 @@ async function reconnectBindingSnapshot(journal,command,ownPort,qualification){
  const cancel=()=>{if(port===ownPort)ownPort.postMessage({type:'reconnectBindingsDone',requestId,complete:false});reconnectBindingWaiters.delete(requestId);};
  qualification.cancelReconnectBindings=cancel;
  try{
-  let send=()=>ownPort.postMessage({type:'reconnectBindings',requestId,executorChallenge:command.executorChallenge,brokerEpoch:command.brokerEpoch,channelEpoch:command.channelEpoch,scopeHash:command.scopeHash,deadlineUnixMs:qualification.deadline,pending:journal});
+  const request={type:'reconnectBindings',requestId,executorChallenge:command.executorChallenge,brokerEpoch:command.brokerEpoch,channelEpoch:command.channelEpoch,scopeHash:command.scopeHash,deadlineUnixMs:qualification.deadline,pending:journal,...(targetRetirementAttempts?{targetRetirementAttempts}:{})};
+  if(new TextEncoder().encode(JSON.stringify(request)).length>MechanizeProtocol.MAX_BYTES)throw reconnectJournalRefuse('historyLimit');
+  let send=()=>ownPort.postMessage(request);
   const bindings=[];let total,bindingsDigest;
   do{
    const reply=await next(send);
@@ -1267,10 +1282,11 @@ async function reconnectBindingSnapshot(journal,command,ownPort,qualification){
   }while(bindings.length<total);
   const encoded=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(bindings)));
   if(Array.from(new Uint8Array(encoded),b=>b.toString(16).padStart(2,'0')).join('')!==bindingsDigest)throw reconnectJournalRefuse('bindingSnapshotUnavailable');
-  return {bindings,digest,release:async()=>{
+  let released=false;return {bindings,digest,release:async()=>{
+   if(released)return;
    const ack=await next(()=>ownPort.postMessage({type:'reconnectBindingsDone',requestId,complete:true}));
    if(port!==ownPort||reconnectRecordKeys(ack)!=='complete,requestId,type'||ack.type!=='reconnectBindingsCommitReady'||ack.complete!==true)throw reconnectJournalRefuse('bindingSnapshotUnavailable');
-   reconnectBindingWaiters.delete(requestId);qualification.cancelReconnectBindings=null;
+   reconnectBindingWaiters.delete(requestId);qualification.cancelReconnectBindings=null;released=true;
   }};
  }catch(error){cancel();throw error;}
 }
@@ -1363,7 +1379,7 @@ async function reconnectCurrentCensus(enrollment,qualification){
 }
 function reconnectRows(rows,enrollment,scopeHash){
  const ids=new Set();for(const row of rows){const i=row?.identity,f=row?.fence;
-  if(reconnectRecordKeys(row)!=='attemptId,dispatchState,fence,fingerprintSHA256,identity'||reconnectRecordKeys(i)!=='browserInstance,documentGeneration,documentId,frameId,profileChannel,tabId'||
+  if(!['attemptId,dispatchState,fence,fingerprintSHA256,identity','attemptId,controlLease,dispatchState,fence,fingerprintSHA256,identity'].includes(reconnectRecordKeys(row))||row.controlLease!==undefined&&(reconnectRecordKeys(row.controlLease)!=='generation,id'||!channelShape(row.controlLease.id)||!Number.isSafeInteger(row.controlLease.generation)||row.controlLease.generation<1)||reconnectRecordKeys(i)!=='browserInstance,documentGeneration,documentId,frameId,profileChannel,tabId'||
    i.profileChannel!==enrollment.profileChannel||i.browserInstance!==enrollment.browserInstance||!channelShape(i.documentId)||!Number.isSafeInteger(i.tabId)||i.tabId<1||i.frameId!==0||!Number.isSafeInteger(i.documentGeneration)||i.documentGeneration<1||
    !reconnectFenceValid(f)||f.scopeHash!==scopeHash||!/^[a-f0-9]{64}$/.test(row.attemptId)||!/^[a-f0-9]{64}$/.test(row.fingerprintSHA256)||!['dispatched','notDispatched','unknown'].includes(row.dispatchState)||ids.has(row.attemptId))throw reconnectJournalRefuse('bindingSnapshotUnavailable');
   ids.add(row.attemptId);
@@ -1392,7 +1408,7 @@ async function reconnectReceiptSnapshot(){
 async function reconnectMatchReceipts(rows,census,renderer,session){
  const key=i=>`${i.tabId}:${i.frameId}:${i.documentId}`,live=new Set(census.filter(x=>x.documentId).map(x=>x.documentId)),byAttempt=new Map(rows.map(r=>[r.attemptId,r])),receipts=new Map();
  const add=(identity,r,fence)=>{const b=byAttempt.get(r?.attemptId);
-  if(!b||key(b.identity)!==key(identity)||fence&&!sameReconnectFence(b.fence,fence)||r.fingerprintVersion!==2||r.fingerprintSHA256!==b.fingerprintSHA256||!['dispatched','notDispatched'].includes(r.dispatchState)||r.dispatchState!==b.dispatchState||r.effectState==='unknown'||r.errorDispatchState&&r.errorDispatchState!==r.dispatchState||receipts.has(r.attemptId))throw reconnectRefuse('unknownReceipts');
+  if(!b||key(b.identity)!==key(identity)||fence&&!sameReconnectFence(b.fence,fence)||r.fingerprintVersion!==2||r.fingerprintSHA256!==b.fingerprintSHA256||!['dispatched','notDispatched','unknown'].includes(r.dispatchState)||r.dispatchState!==b.dispatchState||(r.dispatchState==='unknown'?r.effectState!=='unknown'||!currentRetiredUnknown(r.attemptId)||live.has(identity.documentId):r.effectState==='unknown')||r.errorDispatchState&&r.errorDispatchState!==r.dispatchState||receipts.has(r.attemptId))throw reconnectRefuse('unknownReceipts');
   receipts.set(r.attemptId,true);
  };
  for(const x of renderer)for(const r of x.export.rows)add(x.identity,r);
@@ -1439,7 +1455,7 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
   }
   let quarantineStorage;
   async function barriers() {
-    current();if(reconnectCanonical(await reconnectStorage(()=>config(),qualification))!==scope)throw reconnectRefuse("scopeChanged");
+    current();await revalidateRetiredUnknownTargets(current);if(reconnectCanonical(await reconnectStorage(()=>config(),qualification))!==scope)throw reconnectRefuse("scopeChanged");
     const session=await reconnectStorage(()=>chrome.storage.session.get(null),qualification),durable=await reconnectStorage(()=>chrome.storage.local.get("mechanizeProtectedOrigins"),qualification),retired=await reconnectStorage(()=>chrome.storage.local.get(MechanizeRetirement.KEY),qualification);
     if(session.mechanizeLifecycleInhibited || retired[MechanizeRetirement.KEY]!==undefined)throw reconnectRefuse("lifecycle");
     if(!retainedQuarantine(session.mechanizeProtectedOrigins) || !retainedQuarantine(durable.mechanizeProtectedOrigins) ||
@@ -1468,12 +1484,12 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
   if((journal?.history.length||0)>=64)journal=await rolloverReconnectJournal(journal,previous,barriers,qualification);
   if(recovering)reconnectDiagnosticPhase="inventory";
   let recoveryInventory=null,recoveryBinding=null,recoveryCensus=null,recoverySession=null;
-  if(recovering){
-    try{recoveryInventory=await emptyReconnectInventory(undefined,qualification);}
+  if(recovering||qualification.retirementSnapshot){
+    try{if(qualification.retirementSnapshot){reconnectInventoryReason="nonSetupTab";throw reconnectRefuse("inventoryChanged");}recoveryInventory=await emptyReconnectInventory(undefined,qualification);}
     catch(error){
       if(!["nonSetupTab","discardedTab"].includes(reconnectInventoryReason)||command.reconnectBindingsVersion!==1)throw error;
       reconnectRecoveryDiagnostic={missingLiveReceipts:0,unknownLiveReceipts:0,unavailableExecutors:0,privateSources:0};
-      recoveryBinding=await reconnectBindingSnapshot(journal,command,ownPort,qualification);
+      recoveryBinding=qualification.retirementSnapshot||await reconnectBindingSnapshot(journal,command,ownPort,qualification);
       reconnectRows(recoveryBinding.bindings,enrollment,previous.scopeHash);
       recoveryCensus=await reconnectCurrentCensus(enrollment,qualification);
       recoverySession=await reconnectStorage(reconnectReceiptSnapshot,qualification);
@@ -1500,7 +1516,7 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
   const originalJournal=reconnectCanonical(journal);
   async function recoveryCheck(afterCommit=false) {
     await barriers();await verifyReconnectArchives(journal,qualification);await verifyReconnectArchives(pending,qualification);
-    if(recovering) {
+    if(recovering||recoveryBinding) {
       if(recoveryBinding){
         if(reconnectCanonical(await reconnectCurrentCensus(enrollment,qualification))!==reconnectCanonical(recoveryCensus))throw reconnectInventoryRefuse("inventoryDrift");
         if(reconnectCanonical(await reconnectStorage(reconnectReceiptSnapshot,qualification))!==reconnectCanonical(recoverySession))throw reconnectRefuse("unknownReceipts");
@@ -1613,7 +1629,7 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
     await recoveryCheck();
     if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==reconnectCanonical(pending))throw reconnectRefuse("journalChanged");
   }
-  if(recovering||committed.archive||committed.recovery)reconnectRecoveryChecks.set(committed,async afterCommit=>{
+  if(recovering||recoveryBinding||committed.archive||committed.recovery)reconnectRecoveryChecks.set(committed,async afterCommit=>{
     await recoveryCheck(afterCommit);
     if(reconnectCanonical((await reconnectStorage(()=>chrome.storage.local.get(reconnectKey),qualification))[reconnectKey])!==reconnectCanonical(afterCommit?committed:pending))throw reconnectRefuse("journalChanged");
     current();
@@ -1741,6 +1757,7 @@ async function receive(command) {
     const heldPort=port,heldFence=setupFence;
     try{const enrollment=await config();const reply=await MechanizeFocusedLocation.respond(chrome,command,heldFence,enrollment,()=>port===heldPort&&setupFence===heldFence&&Boolean(heldPort));if(reply&&port===heldPort&&setupFence===heldFence)heldPort.postMessage(reply);}catch{}return;
   }
+  if(command?.action==='executor.retire'&&command.attemptId!==undefined&&command.fingerprintVersion===2)return receiveUnknownTargetRetirement(command);
   if(reconnectBusy)return;
   if(['credentialTabAbsent','credentialManualPrivacy','credentialManualPrivacyCommit'].includes(command?.type))return receiveCredentialManualPrivacy(command);
   if(["credentialPrivacy","credentialPrivacyCommit","credentialPrivacyVerify"].includes(command?.type))return receiveCredentialPrivacy(command);
@@ -1750,6 +1767,7 @@ async function receive(command) {
   if (command?.type === "credentialDelivery") return receiveCredential(command);
   if (command?.type === "credentialInspect") return receiveCredentialInspect(command);
   if(command?.publicRead!==undefined)return receiveScopedPublicRead(command);
+  if(command?.action==='executor.retire'&&await retireAbsentPlaywrightSource(command))return;
   const metadataQualification=["enrolled","processQualified"].includes(command?.type);
   if (!metadataQualification&&(privatePending||port===privateSilencedPort&&!ordinaryDisjoint(command?.identity))) return;
   if (!metadataQualification&&privateAdmission && !ordinaryDisjoint(command?.identity) && !(command?.action === "executor.acquire" && privateAdmission.port === port && privateAdmission.deadline > Date.now() &&
@@ -1769,6 +1787,71 @@ async function receive(command) {
     lifecycleLane = operation.catch(() => {});
     return await operation;
   } finally { setupActiveCommands--; }
+}
+async function proveTabTargetAbsent(identity,current){
+ for(let sample=0;sample<2;sample++){
+  current();if(!MechanizeCDP.idle(chrome))throw Error();
+  const tabs=await chrome.tabs.query({});current();
+  if(!Array.isArray(tabs)||tabs.length>200||tabs.some(tab=>!tab||!Number.isSafeInteger(tab.id)||tab.id<1)||new Set(tabs.map(tab=>tab.id)).size!==tabs.length||tabs.some(tab=>tab.id===identity.tabId))throw Error();
+  if(typeof chrome.debugger?.getTargets!=='function')throw Error();
+  const targets=await chrome.debugger.getTargets();current();
+  if(!Array.isArray(targets)||targets.length>2000||targets.some(target=>!target||!channelShape(target.id)||typeof target.type!=='string'||!target.type||target.type.length>64||target.tabId!==undefined&&(!Number.isSafeInteger(target.tabId)||target.tabId<1)||target.type==='page'&&target.tabId===undefined)||new Set(targets.map(target=>target.id)).size!==targets.length||targets.some(target=>target.tabId===identity.tabId)||!MechanizeCDP.idle(chrome))throw Error();
+ }
+}
+async function receiveUnknownTargetRetirement(command){
+ const ownPort=port,ownFence=setupFence,flight=qualificationFlight;
+ const inSnapshot=()=>Boolean(flight&&qualificationFlight===flight&&flight.retiringTargets&&flight.retirementBindings?.some(row=>row.attemptId===command.attemptId&&row.dispatchState==='unknown'&&reconnectCanonical(row.identity)===reconnectCanonical(command.identity)&&reconnectCanonical(row.controlLease)===reconnectCanonical(command.controlLease)&&row.fingerprintSHA256===command.fingerprintSHA256));
+ const current=()=>{if(!ownPort||port!==ownPort||!ownFence||!setupFence||['brokerEpoch','channelEpoch','scopeHash'].some(k=>command[k]!==ownFence[k]||setupFence[k]!==ownFence[k])||ownPort===startupFailurePort||mutationBusy||(setupActiveCommands!==0&&!(setupActiveCommands===1&&inSnapshot()))||privatePending||privateAdmission||privateFlow||privatePrivacy||activeBrowserInputs.size||lifecycleGuardId||reconnectBusy&&!inSnapshot()||Date.now()>=command.deadlineUnixMs)throw Error();};
+ try{
+  MechanizeProtocol.validate(command);if(command.type!==undefined&&command.type!=='command'||!manualIdentity(command.identity))throw Error();current();
+  const enrollment=await config();current();if(command.identity.profileChannel!==enrollment.profileChannel||command.identity.browserInstance!==enrollment.browserInstance)throw Error();
+  const record=await playwrightWorker.retireUnknownTarget(command,()=>proveTabTargetAbsent(command.identity,current));current();
+  retiredUnknownTargets.set(command.attemptId,{port:ownPort,fence:{...ownFence},record});unknownAttempts.delete(command.attemptId);
+  ownPort.postMessage({requestId:command.requestId,attemptId:command.attemptId,identity:{...command.identity},controlLease:{...command.controlLease},fingerprintVersion:2,fingerprintSHA256:command.fingerprintSHA256,retiredAuthorityQuiesced:true,dispatchState:'unknown',effectState:'unknown'});
+ }catch{if(ownPort&&port===ownPort&&typeof command.requestId==='string')try{ownPort.postMessage({requestId:command.requestId,identity:command.identity,error:MechanizeProtocol.error('retirementUnknown','Exact original target death and drained input proof required','unknown')});}catch{}}
+}
+// This exchange is metadata-only. The existing Host admission/snapshot remains
+// held through executorPrepared; Done acknowledges rows, never business outcomes.
+async function retireReconnectUnknownTargets(journal,previous,candidate,enrollment,command,ownPort,qualification){
+ if(!unknownAttempts.size)return;
+ if(command.type!=='processQualified'||!previous||sameReconnectFence(previous,candidate)||!setupFence||mutationBusy||privatePending||privateAdmission||privateFlow||privatePrivacy||lifecycleGuardId||activeBrowserInputs.size||setupActiveCommands!==1)throw reconnectRefuse('unknownReceipts');
+ let pending=journal;
+ if(!pendingReconnectValid(pending,previous)){
+  pending={version:journal?.version||1,phase:'pending',nonce:Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join(''),oldFence:reconnectFence(previous),newFence:reconnectFence(candidate),history:journal?.history||[],...(journal?.archive?{archive:journal.archive}:{}),...(journal?.recovery?{recovery:journal.recovery}:{})};
+ }
+ if(!pendingReconnectValid(pending,previous))throw reconnectJournalRefuse('lineageInvalid');
+ await verifyReconnectArchives(pending,qualification);
+ const attempts=[...unknownAttempts].sort();
+ if(attempts.length>512||attempts.some(id=>!/^[a-f0-9]{64}$/.test(id)))throw reconnectRefuse('unknownReceipts');
+ const snapshot=await reconnectBindingSnapshot(pending,command,ownPort,qualification,attempts);
+ reconnectRows(snapshot.bindings,enrollment,previous.scopeHash);
+ if(attempts.some(id=>!snapshot.bindings.some(row=>row.attemptId===id&&row.dispatchState==='unknown'&&row.controlLease)))throw reconnectRefuse('unknownReceipts');
+ qualification.retirementBindings=snapshot.bindings.filter(row=>attempts.includes(row.attemptId));qualification.retiringTargets=true;
+ try{await snapshot.release();}finally{qualification.retiringTargets=false;qualification.retirementBindings=null;}
+ qualificationCurrent(qualification);
+ if(unknownAttempts.size)throw reconnectRefuse('unknownReceipts');
+ qualification.retirementSnapshot=snapshot;qualification.releaseReconnectBindings=snapshot.release;
+}
+async function revalidateRetiredUnknownTargets(current){
+ for(const [attempt,proof]of retiredUnknownTargets){
+  if(!currentRetiredUnknown(attempt))throw reconnectRefuse('unknownReceipts');
+  try{await proveTabTargetAbsent(proof.record.identity,current);}catch{unknownAttempts.add(attempt);retiredUnknownTargets.delete(attempt);throw reconnectRefuse('unknownReceipts');}
+ }
+}
+// Existing retirement protocol, using immutable known receipt evidence when
+// navigation destroyed the original renderer. No current-page DOM is inspected.
+async function retireAbsentPlaywrightSource(command) {
+ const ownPort=port,ownGrant=grant,i=command.identity,key=i&&`${i.tabId}:${i.documentId}`;
+ try{
+  MechanizeProtocol.validate(command);
+  if(command.type!==undefined&&command.type!=='command'||command.action!=='executor.retire'||!command.controlLease||command.locator!==undefined||command.args!==undefined||command.attemptId!==undefined||!manualIdentity(i))return false;
+  const current=()=>{if(!ownPort||port!==ownPort||!ownGrant||grant!==ownGrant||!qualifiedNativePorts.has(ownPort)||!ownGrant.leaseRequired||ownPort===startupFailurePort||mutationBusy||privatePending||activeBrowserInputs.size||unknownAttempts.size||lifecycleGuardId||Date.now()>=command.deadlineUnixMs||['brokerEpoch','channelEpoch','scopeHash'].some(k=>command[k]!==ownGrant[k])||documents.has(key)||documentControlLeases.has(key)||!inactiveLeaseDocuments.has(key))throw Error();};
+  current();const enrollment=await config();current();if(i.profileChannel!==enrollment.profileChannel||i.browserInstance!==enrollment.browserInstance)return false;
+  const proved=await playwrightWorker.retireKnownSource(command,()=>protectionScopes.proveSourceAbsent(i,current));current();if(!proved)return false;
+  // Keep the suspended-document tombstone: cached/reactivated content cannot
+  // borrow this old lease. Only normal fresh qualification can replace it.
+  ownPort.postMessage({requestId:command.requestId,identity:{...i},retiredAuthorityQuiesced:true,controlLease:{...command.controlLease}});return true;
+ }catch{return false;}
 }
 async function receiveCommand(command, qualification) {
   const commandPort = port;
@@ -1820,6 +1903,7 @@ async function receiveCommand(command, qualification) {
     // renderer grant. Changing that connection still revokes document sessions.
     if (setupFence && (!nextSetupFence || ["brokerEpoch","channelEpoch","scopeHash"].some(k=>setupFence[k]!==nextSetupFence[k]))) controllers.reset();
     publicReadScopes.clear();
+    if(retiredUnknownTargets.size&&(!nextSetupFence||[...retiredUnknownTargets.values()].some(proof=>proof.port!==commandPort||['brokerEpoch','channelEpoch','scopeHash'].some(k=>proof.fence[k]!==nextSetupFence[k]))))rearmRetiredUnknownTargets();
     setupFence = nextSetupFence;
     const controllerBinding = controllers.fence();
     if (controllerBinding) sendController({type:"controllerSync",...controllerBinding});
@@ -1846,6 +1930,7 @@ async function receiveCommand(command, qualification) {
       if (![1,2].includes(mutationFingerprintVersion)) { replyTo({type:"attention", error:MechanizeProtocol.error("executorBindingFailed", "Supported mutation fingerprint negotiation required")}); return; }
       const candidate = {mutationFingerprintVersion, brokerEpoch: command.brokerEpoch, channelEpoch: command.channelEpoch, scopeHash: command.scopeHash};
       if(changedFence && command.type!=="processQualified"){replyTo({type:"attention",error:reconnectFail()});return;}
+      if(unknownAttempts.size&&changedFence)await retireReconnectUnknownTargets(savedReconnect,lastGrant,candidate,scope,command,commandPort,qualification);
       if(mutationBusy||unknownAttempts.size||privatePending||privateAdmission||privateFlow||privatePrivacy||privateRedactions.length){replyTo({type:'attention',error:changedFence?reconnectFail():MechanizeProtocol.error('executorNotQuiescent','Active executor work requires reconciliation')});return;}
       if (command.type === "processQualified") {
         const trustScope = command.trustScope === undefined || command.trustScope === "" ? "profile" : command.trustScope;
@@ -1887,7 +1972,7 @@ async function receiveCommand(command, qualification) {
       if (snapshot.truncated) { replyTo({type: "attention", error: MechanizeProtocol.error("inventoryIncomplete", "Complete root inventory required")}); return; }
       if(port!==commandPort)throw reconnectFail();
       const emptyRecovery=reconnectRecord?.version>=2 && savedReconnect?.phase==="pending";
-      const verifyCommit=emptyRecovery||Boolean(reconnectRecord?.archive||reconnectRecord?.recovery);
+      const verifyCommit=emptyRecovery||Boolean(reconnectRecord?.archive||reconnectRecord?.recovery||qualification.retirementSnapshot);
       try {
         if(verifyCommit)await reconnectRecoveryChecks.get(reconnectRecord)(false);
         // Obtain commit readiness while Host admission stays held. Lost
@@ -1913,6 +1998,7 @@ async function receiveCommand(command, qualification) {
         throw error;
       }
       qualificationCurrent(qualification);
+      await revalidateRetiredUnknownTargets(()=>qualificationCurrent(qualification));
       grant = candidate;connectionAttention='none';chrome.runtime.sendMessage({type:'nativeConnectionStatus',connected:true,qualified:true,attentionCode:'none'}).catch(()=>{});
       if(command.type==="processQualified")qualifiedNativePorts.add(commandPort);
       // Complete awaited setup before acknowledging renderer qualification. An
@@ -2084,7 +2170,7 @@ function closeNativeConnection(expected=port){
  verifiedPendingArchives.clear();verifiedHistoryArchives.clear();
  if(queuedQualification?.port===expected)queuedQualification=null;
  playwrightWorker.invalidate();MechanizeCDP.invalidate(chrome);controllers.reset();
- disjointDocuments.clear();publicReadScopes.clear();port=null;grant=null;setupFence=null;privateAdmission=null;privateFlow=null;privatePrivacy=null;manualPrivacyFlow=null;privateRedactions=[];privateRecipients.clear();privateSilencedPort=null;
+ rearmRetiredUnknownTargets();disjointDocuments.clear();publicReadScopes.clear();port=null;grant=null;setupFence=null;privateAdmission=null;privateFlow=null;privatePrivacy=null;manualPrivacyFlow=null;privateRedactions=[];privateRecipients.clear();privateSilencedPort=null;
  try{expected.disconnect();}catch{}
 }
 const connectionLifecycle=MechanizeConnectionLifecycle.create(chrome,{
@@ -2236,13 +2322,13 @@ async function connectNativeOnce(token,valid=()=>true) {
     }catch{metadataStartupBarrier='inventoryUnavailable';}
     // This fixed metadata hello is independent of secret/document visibility.
     // No retained document or input payload is replayed on a replacement port.
-    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:32,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
+    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,playwrightTargetRetirementVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:32,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
 
   } catch {
     if (lifecycleGuardId) connectionAttention = "lifecycleInhibited";
     const failedPort = port;
     controllers.reset();
-    publicReadScopes.clear();port = null; grant = null; setupFence = null; privateAdmission = null; privateFlow=null;privatePrivacy=null;manualPrivacyFlow=null;privateRedactions=[];
+    rearmRetiredUnknownTargets();publicReadScopes.clear();port = null; grant = null; setupFence = null; privateAdmission = null; privateFlow=null;privatePrivacy=null;manualPrivacyFlow=null;privateRedactions=[];
     try { failedPort?.disconnect(); } catch {}
     // The transport scheduler decides the next bounded attempt; no command is replayed.
   }
@@ -2298,7 +2384,7 @@ chrome.webNavigation.onCommitted.addListener(event => {
   noteInactiveFrame(event.tabId,event);
   for(const [key,value]of publicReadScopes)if(value.proof.identity.tabId===event.tabId)publicReadScopes.delete(key);
   for(const key of disjointDocuments.keys())if(key.startsWith(event.tabId+":")&&key!==`${event.tabId}:${event.documentId}`)disjointDocuments.delete(key);
-  playwrightWorker.invalidate(held=>held.identity.tabId===event.tabId&&event.frameId===0&&held.identity.documentId!==event.documentId);
+  playwrightWorker.invalidate(held=>held.identity.tabId===event.tabId&&event.frameId===0&&held.identity.documentId!==event.documentId,true);
   for (const [key, identity] of documents) if (identity.tabId === event.tabId && identity.frameId === event.frameId && identity.documentId !== event.documentId) { if(documentControlLeases.has(key))inactiveLeaseDocuments.add(key);documents.delete(key); documentFingerprintVersions.delete(key); documentControlLeases.delete(key); documentOrigins.delete(key); }
   if (grant && !privatePending) { const admitted = port; config().then(inventory).then(result => { if (port === admitted) send({type: "documents", ...result}); }).catch(() => {}); }
 });

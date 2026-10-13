@@ -90,7 +90,7 @@ globalThis.MechanizeProtectionScopes=(()=>{
     const observed=knownIdentity(request.targetTabId,target.frame.documentId);const i={profileChannel:request.sourceIdentity.profileChannel,browserInstance:request.sourceIdentity.browserInstance,tabId:request.targetTabId,frameId:0,documentId:target.frame.documentId,...(observed?{documentGeneration:observed.documentGeneration}:{})};if(protects(target.frame.url,i))throw 'scopeTargetProtected';const after=await root(request.targetTabId,check);if(!after||after.frame.documentId!==i.documentId||new URL(after.frame.url).origin!==request.targetOrigin)throw 'scopeChanged';return reply(true,'none',request.loginRouteSHA256,i);
    }catch(reason){return reply(false,['scopeChanged','scopeSourcePresent','scopeTargetProtected','scopeInventoryUnavailable','scopeLimit'].includes(reason)?reason:'scopeUnavailable');}
   }
-  return {load,respond,protects,boundOrigin,loginRoute,hasSource:i=>records.some(r=>same(r.identity,i)),records:()=>records.map(r=>({preparationId:r.preparationId,identity:{...r.identity},origin:r.origin,loginRouteSHA256:r.loginRouteSHA256}))};
+  return {load,respond,proveSourceAbsent,protects,boundOrigin,loginRoute,hasSource:i=>records.some(r=>same(r.identity,i)),records:()=>records.map(r=>({preparationId:r.preparationId,identity:{...r.identity},origin:r.origin,loginRouteSHA256:r.loginRouteSHA256}))};
  }
  return {create,KEY};
 })();

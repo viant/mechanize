@@ -103,3 +103,16 @@ test('root consumer context replay excludes child-session and destroyed unique c
  f.event(7,'Runtime.executionContextDestroyed',{executionContextUniqueId:'dead-context'});
  const fresh=await wide.attach(7,Date.now()+1000),events=[];fresh.onEvent(e=>events.push(e));await fresh.send('Runtime.enable',{},Date.now()+1000);assert.equal(events.length,0);
 });
+
+test('drain evidence survives logical timeout invalidation and replacement until original Chrome call settles',async()=>{
+ for(const mode of ['timeout','invalidate','replace']){
+  const f=fixture(),session=await f.transport.attach(7,Date.now()+1000);let finish;
+  f.api.debugger.sendCommand=()=>new Promise(resolve=>{finish=resolve;});
+  const pending=session.send('Input.dispatchMouseEvent',{},Date.now()+20);
+  const transport=require('../cdp-transport.js');assert.equal(transport.idle(f.api),false);
+  if(mode==='invalidate')transport.invalidate(f.api);
+  if(mode==='replace'){f.detach(7,'target_closed');await f.transport.attach(7,Date.now()+1000);}
+  await assert.rejects(pending);assert.equal(transport.idle(f.api),false,mode);
+  finish({});await new Promise(resolve=>setImmediate(resolve));assert.equal(transport.idle(f.api),true,mode);
+ }
+});

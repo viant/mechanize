@@ -150,6 +150,14 @@ func controlFixtureVersion(t *testing.T, version int, privateStage ...func() str
 				r.Validated = true
 			case "executor.retire":
 				r.RetiredAuthorityQuiesced = true
+				if len(privateStage) > 0 && privateStage[0]() == "knownSourceWorker" {
+					var err error
+					r, err = packagedSourceRetirementReply(cmd)
+					if err != nil {
+						t.Logf("shipped retirement fixture: %v", err)
+						r = Reply{RequestID: cmd.RequestID, Identity: cmd.Identity, Error: browserError("fixtureBoundaryFailed", "Synthetic retirement boundary failed", "unknown")}
+					}
+				}
 			case "element.select":
 				if len(privateStage) > 0 && privateStage[0]() == "selectDOM" {
 					count.Add(1)

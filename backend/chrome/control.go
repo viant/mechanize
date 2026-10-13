@@ -175,6 +175,7 @@ func (g *Gateway) AdmitControlWithStatus(ctx context.Context, p auth.Principal, 
 	return ControlAdmission{}, browserError("staleGeneration", "Metadata admission did not settle", "notDispatched")
 }
 func (g *Gateway) admitControlOnce(ctx context.Context, p auth.Principal, surface model.Surface, original *ControlAuthority) (ControlAdmission, error) {
+	g.consumeTargetRetirement(p)
 	g.controlMu.Lock()
 	retiring, needsObservation := g.controlRetiring, g.control == nil
 	g.controlMu.Unlock()
@@ -391,7 +392,24 @@ func (g *Gateway) RetireControl(ctx context.Context, p auth.Principal, a Control
 	if err := g.broker.verifyChannelProcess(ctx, c); err != nil {
 		return false, err
 	}
-	if err := g.controlCheck(ctx, p, a, c, true, navigationRetired); err != nil {
+	g.broker.mu.Lock()
+	knownSourceRetirement := knownPressSourceRetirementLocked(c, a.Document.Identity, &a.Lease, g.broker.epoch)
+	g.broker.mu.Unlock()
+	check := func() error {
+		g.broker.mu.Lock()
+		known := knownSourceRetirement && knownPressSourceRetirementLocked(c, a.Document.Identity, &a.Lease, g.broker.epoch)
+		g.broker.mu.Unlock()
+		if knownSourceRetirement && !known {
+			return browserError("retirementUnknown", "Original navigation receipt changed before retirement", "unknown")
+		}
+		if known {
+			if err := g.broker.guardPrivacyCommand(ctx, c, Command{Action: "executor.retire", Identity: a.Document.Identity, ControlLease: &a.Lease}, false); err != nil {
+				return err
+			}
+		}
+		return g.controlCheck(ctx, p, a, c, true, navigationRetired || known)
+	}
+	if err := check(); err != nil {
 		return false, err
 	}
 	g.broker.mu.Lock()
@@ -401,8 +419,8 @@ func (g *Gateway) RetireControl(ctx context.Context, p auth.Principal, a Control
 		return false, browserError("executorUnknown", "In-flight or unknown actions prevent retirement proof", "unknown")
 	}
 	if !navigationRetired {
-		reply, err := g.broker.call(ctx, c, Command{Action: "executor.retire", Identity: a.Document.Identity, ControlLease: &a.Lease}, false, func() error { return g.controlCheck(ctx, p, a, c, true) })
-		if err != nil || !reply.RetiredAuthorityQuiesced || reply.ControlLease == nil || *reply.ControlLease != a.Lease {
+		reply, err := g.broker.call(ctx, c, Command{Action: "executor.retire", Identity: a.Document.Identity, ControlLease: &a.Lease}, false, check)
+		if err != nil || !reply.RetiredAuthorityQuiesced || reply.Identity != a.Document.Identity || reply.ControlLease == nil || *reply.ControlLease != a.Lease {
 			return false, errors.Join(err, browserError("retirementUnknown", "Exact renderer lease retirement unconfirmed", "unknown"))
 		}
 	}

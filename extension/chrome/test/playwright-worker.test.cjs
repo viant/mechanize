@@ -8,7 +8,7 @@ async function fixture(saved={},local={}){
  for(const name of ['protocol','fingerprint','playwright-worker'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',name+'.js'),'utf8'),context);
  context.MechanizePlaywrightRelay={create:(_,authorize)=>({open:async binding=>{if(!await authorize(binding))throw Error();const validate=async()=>{state.validations=(state.validations||0)+1;if(state.denyValidation||!await authorize(binding))throw Object.assign(Error(),{code:'playwrightAuthorityChanged',dispatchState:'notDispatched'});};return{onEvent:()=>()=>{},close(){},validate,send:async(method,params)=>{state.beforeSend?.();await validate();inputs.push({method,params,phase:saved['playwrightAttempt:attempt']?.phase});if(state.inputLost)throw Error('PASSWORD-CANARY');return{};}};}})};
  const api={tabs:{get:async()=>state.tab||{id:7,windowId:9,title:'DO-NOT-EXPORT',url:'https://fixture.test/private'}},windows:{get:async()=>{state.windowLookedUp=true;if(state.dropAfterWindow)state.current=false;return state.window||{id:9,type:'normal',state:'normal',left:10,top:30,width:1000,height:700,title:'DO-NOT-EXPORT'};}},storage:{local:{setAccessLevel:async level=>{assert.deepEqual(JSON.parse(JSON.stringify(level)),{accessLevel:'TRUSTED_CONTEXTS'});if(state.failAccess)throw Error();state.accessCalls=(state.accessCalls||0)+1;if(state.blockAccess)await state.blockAccess;state.trusted=true;},get:async key=>{assert.equal(state.trusted,true);return {[key]:structuredClone(local[key])};},set:async value=>{assert.equal(state.trusted,true);if(state.failLocal)throw Error();Object.assign(local,structuredClone(value));if(state.lostLocalAck){state.lostLocalAck=false;throw Error();}}},session:{get:async()=>structuredClone(saved),set:async v=>{if(state.failStore)throw Error();Object.assign(saved,structuredClone(v));}}}};
- const worker=context.MechanizePlaywrightWorker.create(api,{port:()=>state.port,current:()=>state.current,acquire(){if(state.busy)throw Error();state.busy=true;},release(){state.busy=false;},unknown:(id,v)=>v?unknown.add(id):unknown.delete(id),redact:v=>v.replaceAll('PASSWORD-CANARY','[REDACTED]')});
+ const worker=context.MechanizePlaywrightWorker.create(api,{port:()=>state.port,receiptCurrent:()=>state.ownerCurrent!==false,current:()=>state.current,acquire(){if(state.busy)throw Error();state.busy=true;},release(){state.busy=false;},unknown:(id,v)=>v?unknown.add(id):unknown.delete(id),redact:v=>v.replaceAll('PASSWORD-CANARY','[REDACTED]')});
  const command={requestId:'command',action:'element.press',identity,brokerEpoch:'broker',channelEpoch:'channel',scopeHash:'a'.repeat(64),deadlineUnixMs:Date.now()+10000,locator:{strategy:'id',value:'save',exact:true},attemptId:'attempt',controlLease:{id:'lease',generation:1},fingerprintVersion:2};
  command.fingerprintSHA256=(await context.MechanizeFingerprint.mutationV2(command)).sha256;
  let sequence=0;const send=async(type,extra={})=>{await worker.receive({type:'playwright.'+type,requestId:'request'+ ++sequence,relayId:'relay',deadlineUnixMs:command.deadlineUnixMs,...extra},state.port);return sent.at(-1);};
@@ -21,10 +21,11 @@ test('journal precedes actual input; stored receipt reconciles original attempt 
  const f=await fixture();assert.equal((await f.open()).result.opened,true);
  await f.send('send',{method:'Input.dispatchMouseEvent',params:{type:'mouseMoved',x:1,y:1}});assert.equal(f.saved['playwrightAttempt:attempt'].phase,'ready');
  await f.send('send',{method:'Input.dispatchMouseEvent',params:{type:'mousePressed',x:1,y:1}});assert.equal(f.inputs.at(-1).phase,'input');
+ await f.send('send',{method:'Input.dispatchMouseEvent',params:{type:'mouseReleased',x:1,y:1}});
  assert.equal((await f.send('receipt',{dispatchState:'dispatched',effectState:'unverified'})).result.persisted,true);
  await f.send('close');assert.equal(f.state.busy,false);
  const r=await f.worker.query({...f.command,requestId:'query'});assert.equal(r.dispatchState,'dispatched');assert.equal(r.fingerprintSHA256,f.command.fingerprintSHA256);
- assert.ok((await f.open()).errorCode);assert.equal(f.inputs.length,2);
+ assert.ok((await f.open()).errorCode);assert.equal(f.inputs.length,3);
  assert.ok(!JSON.stringify(f.saved).includes('save'));
 });
 test('unknown actual input survives restart and cannot become a confirmed receipt or replay',async()=>{
@@ -104,7 +105,7 @@ test('durable terminal receipts survive extension reload with session cleared an
  for(const dispatch of ['dispatched','notDispatched','unknown']){
   const f=await fixture();await f.open();
   if(dispatch!=='notDispatched')await f.send('send',{method:'Input.insertText',params:{text:'PUBLIC-PAYLOAD-CANARY'}});
-  if(dispatch==='unknown')await f.send('close');else{await f.send('receipt',{dispatchState:dispatch,effectState:dispatch==='dispatched'?'unverified':'none'});await f.send('close');}
+  if(dispatch==='unknown'){f.worker.invalidate();await f.send('close');}else{await f.send('receipt',{dispatchState:dispatch,effectState:dispatch==='dispatched'?'unverified':'none'});await f.send('close');}
   const before=JSON.stringify(f.local),restored=await fixture({},structuredClone(f.local));await restored.worker.recover();
   assert.equal((await restored.worker.query(restored.command)).dispatchState,dispatch);
   assert.equal(restored.unknown.has('attempt'),dispatch==='unknown');assert.ok((await restored.open()).errorCode);assert.equal(restored.inputs.length,0);assert.equal(JSON.stringify(restored.local),before);
@@ -150,4 +151,53 @@ test('journal initialization is shared and no storage or input proceeds before t
  const recovering=f.worker.recover(),query=f.worker.query(f.command),opening=f.open();
  await new Promise(resolve=>setImmediate(resolve));assert.equal(f.inputs.length,0);assert.deepEqual(f.local,{});assert.equal(f.state.trusted,undefined);release();
  await recovering;await query;assert.equal((await opening).result.opened,true);assert.equal(f.state.accessCalls,1);await f.send('close');
+});
+
+test('navigation closes DOM/input while only original receipt finalization remains available',async()=>{
+ const f=await fixture();await f.open();
+ await f.send('send',{method:'Input.dispatchMouseEvent',params:{type:'mousePressed',x:1,y:1}});
+ await f.send('send',{method:'Input.dispatchMouseEvent',params:{type:'mouseReleased',x:1,y:1}});
+ f.state.current=false;f.worker.invalidate(()=>true,true);
+ const before=JSON.stringify(f.local),inputs=f.inputs.length;
+ for(const type of ['send','redact']){const r=await f.send(type,type==='send'?{method:'Runtime.callFunctionOn',params:{}}:{value:'PRIVATE-CANARY'});assert.equal(r.errorCode,'playwrightAuthorityChanged');assert.equal(f.inputs.length,inputs);assert.equal(JSON.stringify(f.local),before);}
+ assert.equal((await f.send('close')).result.closed,true);assert.equal(f.state.busy,true);assert.equal(JSON.stringify(f.local),before);
+ const completed=await f.send('receipt',{dispatchState:'dispatched',effectState:'unverified'});assert.equal(completed.result.persisted,true);assert.equal(f.state.busy,false);
+ const receipt=await f.worker.query(f.command);assert.equal(receipt.dispatchState,'dispatched');assert.equal(receipt.identity.documentId,identity.documentId);assert.equal(receipt.fingerprintSHA256,f.command.fingerprintSHA256);assert.equal(f.inputs.length,inputs);
+});
+test('receipt-only finalization rejects foreign owner/hash/relay and never changes historical unknown',async()=>{
+ for(const mode of ['port','relay','hash','attempt','channel','noRelease']){
+  const f=await fixture();await f.open();await f.send('send',{method:'Input.dispatchMouseEvent',params:{type:'mousePressed',x:1,y:1}});
+  if(mode!=='noRelease')await f.send('send',{method:'Input.dispatchMouseEvent',params:{type:'mouseReleased',x:1,y:1}});
+  f.state.current=false;f.worker.invalidate(()=>true,true);const before=JSON.stringify(f.local),inputs=f.inputs.length;
+  const extras={dispatchState:'dispatched',effectState:'unverified',...(mode==='relay'?{relayId:'other'}:{}),...(mode==='hash'?{fingerprintSHA256:'f'.repeat(64)}:{}),...(mode==='attempt'?{attemptId:'other'}:{})};
+  if(mode==='channel')f.state.ownerCurrent=false;
+  if(mode==='port'){const count=f.sent.length;await f.worker.receive({type:'playwright.receipt',requestId:'foreign',relayId:'relay',deadlineUnixMs:f.command.deadlineUnixMs,...extras},{postMessage(){throw Error('foreign owner reply');}});assert.equal(f.sent.length,count);}else assert.ok((await f.send('receipt',extras)).errorCode,mode);
+  assert.equal(JSON.stringify(f.local),before,mode);assert.equal(f.inputs.length,inputs,mode);
+  // Reconnect/cancel is a hard invalidation, retaining the original UNKNOWN.
+  f.worker.invalidate();await f.send('close');const unknown=JSON.stringify(f.local);assert.equal((await f.worker.query(f.command)).dispatchState,'unknown');
+  await f.send('receipt',{dispatchState:'dispatched',effectState:'unverified'});assert.equal(JSON.stringify(f.local),unknown);assert.equal(f.inputs.length,inputs);
+ }
+});
+test('receipt-only deadline and lost release remain unknown and cannot replay',async()=>{
+ for(const mode of ['deadline','releaseLost']){
+  const f=await fixture();f.command.deadlineUnixMs=Date.now()+80;await f.open();
+  await f.send('send',{method:'Input.dispatchMouseEvent',params:{type:'mousePressed',x:1,y:1}});
+  if(mode==='releaseLost')f.state.inputLost=true;
+  await f.send('send',{method:'Input.dispatchMouseEvent',params:{type:'mouseReleased',x:1,y:1}});
+  if(mode==='deadline'){f.state.current=false;f.worker.invalidate(()=>true,true);await new Promise(resolve=>setTimeout(resolve,100));}
+  const original=await f.worker.query(f.command);assert.equal(original.dispatchState,'unknown');assert.equal(f.state.busy,false);
+  const journal=JSON.stringify(f.local),inputs=f.inputs.length;assert.ok((await f.send('receipt',{dispatchState:'dispatched',effectState:'unverified'})).errorCode);assert.equal(JSON.stringify(f.local),journal);assert.equal(f.inputs.length,inputs);
+ }
+});
+
+test('one original release cannot satisfy another press or be erased by later text input',async()=>{
+ for(const mode of ['secondPress','insertAfterPress']){
+  const f=await fixture();await f.open();await f.send('send',{method:'Input.dispatchMouseEvent',params:{type:'mousePressed',x:1,y:1}});
+  if(mode==='secondPress')await f.send('send',{method:'Input.dispatchMouseEvent',params:{type:'mouseReleased',x:1,y:1}});
+  const before=f.inputs.length;
+  const refused=await f.send('send',mode==='secondPress'?{method:'Input.dispatchMouseEvent',params:{type:'mousePressed',x:1,y:1}}:{method:'Input.insertText',params:{text:'public'}});
+  assert.equal(refused.errorCode,'playwrightInputReplay');assert.equal(f.inputs.length,before);
+  const receipt=await f.worker.query(f.command);assert.equal(receipt.dispatchState,'unknown');const saved=JSON.stringify(f.local);
+  await f.send('receipt',{dispatchState:'dispatched',effectState:'unverified'});assert.equal(JSON.stringify(f.local),saved);
+ }
 });

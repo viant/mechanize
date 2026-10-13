@@ -4,81 +4,7 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 const targetGuard = require('../playwright-target.js');
-const identity = {profileChannel: 'p1', browserInstance: 'b1', tabId: 7, frameId: 0, documentId: 'd1', documentGeneration: 1};
-const grant = {brokerEpoch: 'broker1', channelEpoch: 'channel1', scopeHash: 'a'.repeat(64)};
-const command = (requestId, action = 'element.press', extra = {}) => ({requestId, action, identity, ...grant, deadlineUnixMs: Date.now() + 5000, attemptId: 'a1', locator: {strategy: 'id', value: 'save'}, ...extra});
-function sortedStorageValue(value) {
- if(Array.isArray(value))return value.map(sortedStorageValue);
- if(value && typeof value==='object')return Object.fromEntries(Object.keys(value).sort().map(key=>[key,sortedStorageValue(value[key])]));
- return value;
-}
-async function fixture(sessionState = {}, {enroll = true} = {}) {
-  const messages = [], state = {url: 'https://fixture.example.test/page', frameURL: 'https://fixture.example.test/frame', lost: false, deliveries: 0, nativeConnections: 0};
-  let runtimeMessage, nativeDisconnect, toolbarClick;
-  const statusMessages = [];
-  const storage = {enrollment: {profileChannel: 'p1', browserInstance: 'b1', origins: ['https://fixture.example.test']}};
-  const event = {addListener() {}};
-  const chrome = {
-    action: {onClicked: {addListener(listener) { toolbarClick = listener; }}},
-    permissions:{contains:async()=>state.hostGranted!==false,request:async()=>{state.permissionRequests=(state.permissionRequests||0)+1;throw Error('unexpected permission request');},onAdded:{addListener:f=>state.permissionAdded=f},onRemoved:{addListener:f=>state.permissionRemoved=f}},
-    windows: {get:async id=>({id,type:'normal',state:'normal',focused:state.focusedWindow?.id===id}),getAll:async()=>state.focusedWindows||[],async update(id, details) { state.windowUpdates=(state.windowUpdates||0)+1;state.focusedWindow = {id, details}; }},
-    storage: {onChanged:{addListener:f=>state.storageChanged=f},local: {async setAccessLevel(value){assert.equal(value.accessLevel,'TRUSTED_CONTEXTS');state.localTrusted=true;},async get(key) { if(Array.isArray(key)){if(key.includes(state.rejectStorageRead))throw Error('PRIVATE_FAILURE');return Object.fromEntries(key.filter(k=>Object.hasOwn(storage,k)).map(k=>[k,storage[k]]));} if(key==='mechanizeConnectionRetryV1')return {mechanizeConnectionRetryV1:state.connectionRetry}; if (state.rejectStorageRead === key) throw Error("PRIVATE_FAILURE credential https://private.example.test"); if(state.blockStorageReadKey===key) await state.blockStorageRead; return Object.hasOwn(storage,key) ? {[key]: state.sortedStorage ? sortedStorageValue(storage[key]) : storage[key]} : {}; }, async set(value) { if(Object.hasOwn(value,'mechanizeConnectionRetryV1')){state.connectionRetry=structuredClone(value.mechanizeConnectionRetryV1);value={...value};delete value.mechanizeConnectionRetryV1;} if(state.blockReconnectCommit && value.lastGrant && value.mechanizeReconnect){state.commitEntered=true;await state.blockReconnectCommit;} if(state.rejectReconnectCommit && value.lastGrant && value.mechanizeReconnect)throw Error("private-storage-error"); if (state.rejectStorageWrite) throw Error("PRIVATE_FAILURE credential"); if(state.blockStorageWrite) await state.blockStorageWrite; Object.assign(storage, state.sortedStorage ? sortedStorageValue(value) : value);state.afterStorageWrite?.(value); if(value.lastGrant && value.mechanizeReconnect)state.afterReconnectCommit?.(); if(!value.lastGrant && value.mechanizeReconnect?.phase==='pending')state.afterPendingWrite?.(); }}, session: {async get() { if(state.blockSessionRead)await state.blockSessionRead; return state.sortedStorage ? sortedStorageValue(sessionState) : {...sessionState}; }, async set(value) { if(state.rejectSessionWrite) throw Error("fixture private storage error"); for(const [key,record] of Object.entries(value))if(key.startsWith('playwrightAttempt:'))(state.playwrightJournalPhases ||= []).push(record.phase); Object.assign(sessionState,value); }}},
-    runtime: {id: 'extension', reload(){state.reloads=(state.reloads||0)+1;state.reloadHook?.();}, onConnectExternal:{addListener:f=>state.controllerConnect=f}, getManifest: () => ({version: '0.1.0'}), getURL: value => `chrome-extension://extension/${value}`,
-      onMessage: {addListener(listener) { runtimeMessage = listener; (state.runtimeListeners ||= []).push(listener); }},
-      async sendMessage(message) { statusMessages.push(message); },
-      connectNative: () => { state.nativeConnections++; if (state.nativeFailure) throw Error('private-native-error');
-        const callbacks={};(state.nativePorts ||= []).push(callbacks);
-        return {onMessage:{addListener(listener){callbacks.message=listener;}},
-        onDisconnect: {addListener(listener) { nativeDisconnect = listener; callbacks.disconnect=listener; }}, postMessage: message => {messages.push(message);state.nativePost?.(message);}}; }},
-    debugger:{onDetach:event,attach:async target=>{(state.debuggerAttaches ||= []).push(target);if(state.debuggerAttachDelay)await new Promise(resolve=>setTimeout(resolve,state.debuggerAttachDelay));},sendCommand:async (target,method,args)=>{if(method==='Runtime.evaluate'&&args.expression==='fixtureInjectedEngine')return {result:{objectId:'fixture-selector-engine'}};if(method==='DOM.describeNode')return {node:{backendNodeId:1}};if(method==='DOM.resolveNode')return {object:{objectId:'fixture-guarded-element'}};if(method==='Runtime.callFunctionOn'&&args.arguments?.[3]?.value===targetGuard.querySource)return {result:{type:'number',value:1}};if(method==='Runtime.callFunctionOn'&&args.functionDeclaration===targetGuard.snapshotSource)return {result:{value:'fixture-semantic-signature'}};if(method==='Runtime.callFunctionOn'&&(args.functionDeclaration===targetGuard.boundarySource||args.arguments?.[3]?.value==='('+targetGuard.publicTarget.toString()+')')){state.debuggerGuardCalls=(state.debuggerGuardCalls||0)+1;return {result:{value:state.targetSafe!==false}};}(state.debuggerInputs ||= []).push({target,method,args});state.debuggerHook?.(method,args);}},
-    tabs: {async remove(id) { state.removals=(state.removals||0)+1;state.removedTab=id;if(state.blockRemoval)await state.blockRemoval;if(state.rejectRemoval)throw Error('PASSWORD-CANARY');if(!state.keepRemovedTab)state.inventoryTabs=(state.inventoryTabs||[]).filter(x=>x.id!==id); }, async update(id, details) { state.tabUpdates=(state.tabUpdates||0)+1;state.activatedSetupTab = {id, details};if(state.tabMetadata)state.tabMetadata.active=true;state.activationHook?.(); }, async create(details) { state.createdSetupTabs = (state.createdSetupTabs || 0) + 1; state.createdSetup = details; }, query: async query => { if(query?.active===true)return state.focusedTabs||[]; if(typeof query?.url==='string'&&query.url.startsWith('https://'))return (state.inventoryTabs||[]).filter(tab=>typeof tab.url==='string'&&new URL(tab.url).origin===query.url.slice(0,-2)); if (query?.url) { if (state.blockSetupQuery) await state.blockSetupQuery; state.setupQuery = query; return state.setupTabs || []; }  state.inventoryReads = (state.inventoryReads || 0) + 1; state.inventoryHook?.(state.inventoryReads); if (state.rejectTabQuery || state.rejectSecondInventory && state.inventoryReads === 2) throw Error("PRIVATE_FAILURE URL"); return state.inventoryTabs || []; }, get: async id => {if(state.absentTabIds?.includes(id))throw Error('fixture tab absent');return {id,url:state.url,...(state.tabMetadata||{}),...(state.tabDiscarded?{discarded:true}:{}),...(state.tabStatus?{status:state.tabStatus}:{})};}, onRemoved:{addListener:f=>(state.removedListeners ||= []).push(f)},
-      async sendMessage(tabId, message) {
-        if(state.renderer)return state.renderer(tabId,message);
-        if(message.type==='brokerReconnect') {
-          (state.reconnectCalls ||= []).push(JSON.parse(JSON.stringify(message)));
-          if(state.blockReconnectPhase===message.phase)await state.reconnectBlock;
-          if(!state.reconnectSupported || state.reconnectError===message.phase)return {error:{code:'unavailable'}};
-          const current={...message.newBinding.identity,documentGeneration:state.reconnectGeneration||1};
-          if(message.phase==='inspect')return {nonce:message.nonce,phase:'inspected',version:1,identity:current};
-          return {nonce:state.badReconnectNonce?'bad':message.nonce,phase:message.phase==='prepare'?'prepared':'adopted',identity:current,receiptRevision:state.reconnectRevision||0,receiptCount:state.reconnectRevision||0,quiescent:true};
-        }
-        if (message.type === 'bind') { state.binds = (state.binds || 0) + 1; if (state.rejectBind) throw Error('PRIVATE_FAILURE binding'); if (state.bindError) return {error:{code:'private-code',message:'PRIVATE_FAILURE credential'}}; if (state.badBoundDocument) return {identity:{...identity,documentId:'wrong-document'}}; return {identity:state.boundDynamicIdentity?message.binding.identity:identity, mutationFingerprintVersion: state.boundFingerprintVersion}; }
-        state.deliveries++; state.lastRendererMessage = message;
-        if (state.block) await state.block;
-        if (state.lost) throw Error('Renderer disappeared');
-        if (message.type === 'credentialInspect') return state.privateReply || {ready:true,stage:'pair',privateCredentialProtocolVersion:2,identity};
-        if(message.type==='credentialPostSubmit'){state.lastPostSubmitDeadline=message.deadlineUnixMs;state.postSubmitHook?.();if(state.postSubmitBlock)await state.postSubmitBlock;if(state.postSubmitLost)throw Error('PASSWORD-CANARY');return state.privatePostReply||{ready:false,stage:state.postSubmitStage||'pending',privateCredentialProtocolVersion:2,identity:message.identity};}
-        if (message.type === 'credentialDelivery') return state.privateReply || {status:'dispatched'};
-        if (message.type === 'credentialSubmit') {state.privateSubmits=(state.privateSubmits||0)+1;return state.privateReply || {status:'dispatched',retiredAuthorityQuiesced:true,controlLease:message.controlLease};}
-        if (message.type === 'credentialBind') return state.privateReply || {ready:true,stage:'password',identity:message.identity};
-        if(['credentialPrivacyBind','credentialPrivacyCommit','credentialPrivacyInspect','credentialManualPrivacyBind','credentialManualPrivacyCommit'].includes(message.type)){state.privacyReads=(state.privacyReads||0)+1;state.privacyReadHook?.(state.privacyReads);return state.privateReply||{ready:true,redactionReady:true,privateInputRetired:true,permitId:message.permitId,identity:message.identity};}
-        if(state.publicReply)return state.publicReply;
-        if (message.action === 'executor.validate') return {requestId:message.requestId,identity:{...message.identity,documentGeneration:state.rendererGeneration||message.identity.documentGeneration},validated:true};
-        if (message.action === 'executor.acquire') return {requestId:message.requestId,identity,validated:true,controlLease:message.controlLease};
-        return {requestId: message.requestId, dispatchState: 'dispatched', identity};
-      }},
-    webNavigation: {getFrame:async()=>({url:'https://shell.fixture.test/app',documentId:'controller-document'}),getAllFrames: async ({tabId}={}) => { if(Object.hasOwn(state.framesByTab||{},tabId))return state.framesByTab[tabId]; if (state.rejectFrameQuery) throw Error('PRIVATE_FAILURE frame'); if (state.frameRows) return state.frameRows; return Array.from({length:state.frameCount || 1}, (_,i) => ({frameId:i,documentId:i ? `d${i+1}` : state.documentId || 'd1',url:state.frameURL,errorOccurred:state.frameErrorOccurred === true,frameType:state.frameType || (i ? 'sub_frame' : 'outermost_frame')})); }, onCommitted:{addListener:f=>(state.committedListeners ||= []).push(f)}},
-    scripting: {executeScript: async details => {if(details.func)return [{result:state.diagnosticReason||"noCredentialFields"}]; state.injectionHook?.(details); if(state.blockInjection)await state.blockInjection; state.injections = (state.injections || 0) + 1; if (state.rejectInjection) throw Error(state.injectionError || "PRIVATE_FAILURE injection URL"); }}
-  };
-  const context = vm.createContext({chrome, TextEncoder, URL, Date, console, setTimeout, clearTimeout, crypto: require('node:crypto').webcrypto});
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'cdp-transport.js'), 'utf8'), context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'browser-input.js'), 'utf8'), context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'secure-input.js'), 'utf8'), context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'protocol.js'), 'utf8'), context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'browser.js'), 'utf8'), context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'retirement.js'), 'utf8'), context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'setup-metadata.js'), 'utf8'), context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'controller.js'), 'utf8'), context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'fingerprint.js'), 'utf8'), context);
-  for(const module of ['tab-metadata','extension-maintenance','control-badge-metadata','protection-scopes','focused-location','connection-lifecycle','playwright-target','playwright-relay','playwright-worker'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',module+'.js'),'utf8'),context);
-  const worker = fs.readFileSync(path.join(__dirname, '..', 'worker.js'), 'utf8').replace(/import "\.\/(protocol|tab-metadata|extension-maintenance|control-badge-metadata|protection-scopes|focused-location|connection-lifecycle|browser|retirement|setup-metadata|controller|fingerprint|secure-input|browser-input|cdp-transport|playwright-target|playwright-relay|playwright-worker)\.js";/g, '');
-  vm.runInContext(worker + '\nglobalThis.fixtureKeepLegacyPrivacy=()=>{const held=privatePrivacy,redactions=privateRedactions;return ()=>{privatePrivacy=held;privateRedactions=redactions;};}; globalThis.fixturePrivacyLegacy=()=>{delete privatePrivacy.sourceIdentity;}; globalThis.fixturePrivacyState=()=>({hasPrivacy:Boolean(privatePrivacy),currentPort:privatePrivacy?.port===port,grantPresent:Boolean(grant),source:privatePrivacy?.sourceIdentity,redacted:privacySanitize("USERNAME-CANARY PASSWORD-CANARY"),silenced:port===privateSilencedPort}); globalThis.fixtureSeedPublicReads=mode=>{for(let n=0;n<200;n++)publicReadScopes.set(`seed:${n}`,{port:mode==="foreignPort"?{}:port,deadline:Date.now()+(mode==="expired"?-1:60000),proof:{identity:{tabId:1000+n}}});}; globalThis.fixtureExpirePublicReads=()=>{for(const scope of publicReadScopes.values())scope.deadline=Date.now()-1;}; globalThis.fixtureRecoveryEventCount=()=>missingReceiptRecoveryEvents.size; globalThis.fixtureSeedRecoveryEvents=count=>{for(let n=0;n<count;n++)missingReceiptRecoveryEvents.add(`fixture-event:${n}`);}; globalThis.fixtureMissingReceiptSources=()=>reconnectMissingReceiptSources; globalThis.fixtureJournalValid=reconnectJournalValid; globalThis.fixtureInventory=async()=>inventory(await config()); globalThis.fixturePublicReadCounts=()=>({publicReads:publicReadScopes.size,documents:documents.size,leases:documentControlLeases.size,privateAdmission:Boolean(privateAdmission),unknown:unknownAttempts.size}); globalThis.fixtureDOMUnknown=()=>domUnknownBlocked(); globalThis.fixtureUnknownCount=()=>unknownAttempts.size; globalThis.fixtureResetVolatileLeases=()=>documentControlLeases.clear(); globalThis.fixtureSeedVolatileLease=()=>documentControlLeases.set("7:d1",{id:"held",generation:1}); globalThis.fixtureAttachReadOnlyCDP = tabId=>MechanizeCDP.create(chrome,method=>method==="Runtime.enable").attach(tabId,Date.now()+2000); globalThis.fixtureRegisterDocument=(i,o)=>{documents.set(`${i.tabId}:${i.documentId}`,i);documentOrigins.set(`${i.tabId}:${i.documentId}`,o);documentFingerprintVersions.set(`${i.tabId}:${i.documentId}`,2);}; globalThis.fixturePrivateAttemptSeen=id=>privateAttempts.has(id); globalThis.fixtureConnect = connect; globalThis.fixtureReceive = receive; globalThis.fixtureGuard = () => lifecycleGuardId; globalThis.fixturePrivateControllerSend=sendController; globalThis.fixtureReconnectDiagnostic=()=>({phase:reconnectDiagnosticPhase,reason:reconnectDiagnosticReason}); globalThis.fixtureSetActiveCommands=value=>{setupActiveCommands=value;}; globalThis.fixtureEmptyReconnectInventory=emptyReconnectInventory; globalThis.fixtureInventoryReason=()=>reconnectInventoryReason; globalThis.fixturePendingReconnectValid=pendingReconnectValid; globalThis.fixturePendingWireBound=reconnectPendingWireBound; globalThis.fixtureReconnectCanonical=reconnectCanonical; globalThis.fixtureVerifyArchives=verifyReconnectArchives; globalThis.fixtureReconnectAttention=reconnectAttention; globalThis.fixtureSetReconnectDiagnostic=(phase,reason)=>{reconnectDiagnosticPhase=phase;reconnectDiagnosticReason=reason;}; globalThis.fixtureReconnectBarrier=kind=>{if(kind==="flow")privateFlow={};if(kind==="redactions")privateRedactions=["fixture-private"];if(kind==="privateAttempt")privateAttempts.add("fixture-private");if(kind==="silenced")privateSilencedPort=port;if(kind==="unknown")unknownAttempts.add("fixture-unknown");if(kind==="lifecycle")lifecycleGuardId="fixture-guard";if(kind==="privatePending")privatePending=true;if(kind==="admission")privateAdmission={};if(kind==="privacy")privatePrivacy={};if(kind==="mutation")mutationBusy=true;if(kind==="browserInput")activeBrowserInputs.set("fixture-held",{});};', context);
-  await new Promise(resolve => setImmediate(resolve));
-  if (enroll) await context.fixtureReceive({type: 'enrolled', ...grant});
-  messages.length = 0;
-  return {keepLegacyPrivacy:context.fixtureKeepLegacyPrivacy,privacyLegacy:context.fixturePrivacyLegacy,privacyState:context.fixturePrivacyState,recoveryEventCount:context.fixtureRecoveryEventCount,seedRecoveryEvents:context.fixtureSeedRecoveryEvents,seedPublicReads:context.fixtureSeedPublicReads,expirePublicReads:context.fixtureExpirePublicReads,journalValid:context.fixtureJournalValid,inventory:context.fixtureInventory,publicReadCounts:context.fixturePublicReadCounts,domUnknown:context.fixtureDOMUnknown,unknownCount:context.fixtureUnknownCount,resetVolatileLeases:context.fixtureResetVolatileLeases,seedVolatileLease:context.fixtureSeedVolatileLease,registerDocument:context.fixtureRegisterDocument,privateAttemptSeen:context.fixturePrivateAttemptSeen,verifyArchives:context.fixtureVerifyArchives,emptyReconnectInventory:context.fixtureEmptyReconnectInventory,inventoryReason:context.fixtureInventoryReason,pendingReconnectValid:context.fixturePendingReconnectValid,pendingWireBound:context.fixturePendingWireBound,reconnectCanonical:context.fixtureReconnectCanonical,reconnectAttention:context.fixtureReconnectAttention,setReconnectDiagnostic:context.fixtureSetReconnectDiagnostic,reconnectBarrier:context.fixtureReconnectBarrier,attachReadOnlyCDP:context.fixtureAttachReadOnlyCDP,missingReceiptSources:context.fixtureMissingReceiptSources,diagnostic:context.fixtureReconnectDiagnostic,setActiveCommands:context.fixtureSetActiveCommands,connect:context.fixtureConnect,state, storage, sessionState, messages, statusMessages, receive: context.fixtureReceive, privateControllerSend:context.fixturePrivateControllerSend, guard: context.fixtureGuard, runtimeMessage,
-    toolbarClick, nativeMessage(message,index=state.nativePorts.length-1){state.nativePorts[index].message(message);}, disconnect(message) { chrome.runtime.lastError = message === undefined ? undefined : {message}; nativeDisconnect(); chrome.runtime.lastError = undefined; }};
-}
+const {identity,grant,command,sortedStorageValue,fixture,privateFrame,privateFixture,privateSubmitFrame,privacyFrame,playwrightNative,playwrightCommand}=require('./worker-fixture.cjs');
 test('worker rejects unauthorized top-level and cross-origin frame documents', async () => {
   const f = await fixture();
   f.state.url = 'https://untrusted.example.test';
@@ -482,14 +408,6 @@ test('toolbar reuses only its exact setup tab and concurrent clicks create one p
   assert.equal(f.state.setupQuery.url,'chrome-extension://extension/options.html');
 });
 
-const privateFrame = (extra={}) => ({type:'credentialDelivery',requestId:'a'.repeat(64),attemptId:'b'.repeat(64),identity,...grant,
-  controlLease:{id:'lease-private',generation:1},deadlineUnixMs:Date.now()+5000,origin:'https://fixture.example.test',username:'USERNAME-CANARY',password:'PASSWORD-CANARY',...extra});
-async function privateFixture(v2=false) {
-  const f=await fixture();f.state.inventoryTabs=[{id:7,url:f.state.url,title:'Fixture'}];if(v2)f.state.boundFingerprintVersion=2;
-  await f.receive({type:'processQualified',...grant,trustScope:'desktop',scopeQualified:true,profileQualified:false,fixtureOnly:false,executorChallenge:'challenge',...(v2?{mutationFingerprintVersion:2}:{})});
-  await f.receive(command('private-acquire','executor.acquire',{attemptId:undefined,locator:undefined,controlLease:{id:'lease-private',generation:1}}));
-  f.messages.length=0;return f;
-}
 test('private delivery never enters public receipts or storage and silences ordinary old-port output',async()=>{
   const f=await privateFixture();await f.receive(privateFrame());
   assert.equal(f.messages.length,1);assert.equal(f.messages[0].type,'credentialDeliveryResult');assert.equal(f.messages[0].status,'dispatched');
@@ -618,7 +536,6 @@ test('stale native ports and post-forwarding startup frames cannot replace curre
  f.disconnect('Native host has exited.');assert.equal(f.statusMessages.at(-1).attentionCode,'hostExited');
 });
 
-const privateSubmitFrame=()=>{const f=privateFrame({type:'credentialSubmit',attemptId:'c'.repeat(64),fillAttemptId:'b'.repeat(64)});delete f.username;delete f.password;return f;};
 test('quarantined private submit advances only exact same-origin new root with scalar password stage',async()=>{
  const f=await privateFixture();await f.receive(privateFrame());const submit=privateSubmitFrame();await f.receive(submit);
  assert.equal(f.messages.at(-1).type,'credentialSubmitResult');assert.equal(f.messages.at(-1).status,'dispatched');
@@ -650,7 +567,6 @@ test('private submit cancellation cannot reply into a replacement connection',as
  assert.equal(f.messages.length,before);assert.ok(!JSON.stringify(f.messages).includes('CANARY'));
 });
 
-const privacyFrame=()=>{const f=privateSubmitFrame();f.type='credentialPrivacy';delete f.fillAttemptId;f.permitId='f'.repeat(64);return f;};
 test('DOM privacy remains closed until explicit broker commit and redacts ordinary replies',async()=>{
  const f=await privateFixture();await f.receive(privateFrame());await f.receive(privateSubmitFrame());f.state.documentId='privacy-doc';
  const proof=privacyFrame();await f.receive(proof);let response=f.messages.at(-1);assert.equal(response.type,'credentialPrivacyResult');assert.equal(response.ready,true);
@@ -1307,24 +1223,6 @@ test('private recipient pin crosses worker-content handoff after decorative muta
  assert.ok(!JSON.stringify(f.messages).includes('CANARY'));assert.ok(!JSON.stringify(f.storage).includes('CANARY'));assert.ok(!JSON.stringify(f.sessionState).includes('CANARY'));
 });
 
-async function playwrightNative(f,c,type,extra={}) {
- const requestId='relay-'+(f.state.relaySequence=(f.state.relaySequence||0)+1);
- f.nativeMessage({type:'playwright.'+type,requestId,relayId:'fixture-relay',deadlineUnixMs:c.deadlineUnixMs,...extra});
- for(let n=0;n<300;n++){const result=f.messages.find(m=>m.type==='playwright.result'&&m.requestId===requestId);if(result){
-   if(type==='open'&&result.result?.opened&&['element.press','element.fill'].includes(c.action)&&!f.state.noTargetProof){
-    await playwrightNative(f,c,'send',{method:'Runtime.evaluate',params:{expression:'fixtureInjectedEngine',contextId:1}});
-    await playwrightNative(f,c,'send',{method:'Runtime.callFunctionOn',params:{functionDeclaration:'(utilityScript, ...args) => utilityScript.evaluate(...args)',returnByValue:true,awaitPromise:true,arguments:[{objectId:'fixture-utility'},{value:true},{value:true},{value:targetGuard.querySource},{value:2},{value:{h:0}},{value:{o:[{k:'functionText',v:'({ elements }) => elements.length'}]}},{objectId:'fixture-selector-engine'}]}});
-    const params={functionDeclaration:'(utilityScript, ...args) => utilityScript.evaluate(...args)',returnByValue:true,awaitPromise:true,arguments:[{objectId:'fixture-utility'},{value:true},{value:true},{value:'('+targetGuard.publicTarget.toString()+')'},{value:2},{value:{h:0}},{value:c.action},{objectId:'fixture-pinned-element'}]};
-    const pinned=await playwrightNative(f,c,'send',{method:'Runtime.callFunctionOn',params});assert.ok(pinned.result);
-   }
-   return result;
-  }await new Promise(r=>setImmediate(r));}
- throw Error('No native relay reply');
-}
-async function playwrightCommand(extra={}){
- const c=command('playwright-sealed','element.press',{attemptId:'playwright-attempt',locator:{strategy:'id',value:'save',exact:true},controlLease:{id:'lease-private',generation:1},fingerprintVersion:2,...extra});
- c.fingerprintSHA256=(await require('../fingerprint.js').mutationV2(c)).sha256;return c;
-}
 test('native Playwright uses exact admitted worker lease and rejects epoch, origin, and document drift',async()=>{
  for(const change of ['valid','epoch','origin','generation','lease']){
   const f=await privateFixture(true);const extra=change==='epoch'?{brokerEpoch:'foreign'}:change==='generation'?{identity:{...identity,documentGeneration:2}}:change==='lease'?{controlLease:{id:'foreign',generation:1}}:{};
@@ -1355,6 +1253,7 @@ test('native Playwright document drift retains original receipt and never forwar
 test('lifecycle receipt export retains native Playwright original attempt and fingerprint',async()=>{
  const f=await privateFixture(true),c=await playwrightCommand();await playwrightNative(f,c,'open',{command:c,origin:'https://fixture.example.test'});
  await playwrightNative(f,c,'send',{method:'Input.dispatchMouseEvent',params:{type:'mousePressed',button:'left',buttons:1,modifiers:0,clickCount:1,x:20,y:20}});
+ await playwrightNative(f,c,'send',{method:'Input.dispatchMouseEvent',params:{type:'mouseReleased',button:'left',buttons:0,modifiers:0,clickCount:1,x:20,y:20}});
  await playwrightNative(f,c,'receipt',{dispatchState:'dispatched',effectState:'unverified'});await playwrightNative(f,c,'close');
  f.state.renderer=async(_,message)=>({version:2,requestId:message.requestId,identity,total:0,revision:0,offset:0,nextOffset:0,truncated:false,receipts:[],readiness:{quiesced:true,controlLeaseHeld:false,recordingState:'none',recordingLastSequence:0,recordingDroppedThrough:0,recordingLeaseExpiresUnixMs:0}});
  await f.receive(command('playwright-retirement-export','executor.receipts',{type:'lifecycle',lifecycleGuardId:'retirement',attemptId:undefined,locator:undefined,args:{offset:0,limit:64}}));
@@ -1366,6 +1265,7 @@ test('admitted semantic Playwright tracks monotonic renderer generations and pre
   if(phase==='before')f.state.rendererGeneration=2;else f.state.debuggerHook=(method,args)=>{if(method==='Input.dispatchMouseEvent'&&args.type==='mousePressed')f.state.rendererGeneration=2;};
   const sent=await playwrightNative(f,c,'send',{method:'Input.dispatchMouseEvent',params:{type:'mousePressed',button:'left',buttons:1,modifiers:0,clickCount:1,x:20,y:20}});
   assert.deepEqual(Object.keys(sent.result),[]);
+  await playwrightNative(f,c,'send',{method:'Input.dispatchMouseEvent',params:{type:'mouseReleased',button:'left',buttons:0,modifiers:0,clickCount:1,x:20,y:20}});
   assert.equal((await playwrightNative(f,c,'receipt',{dispatchState:'dispatched',effectState:'unverified'})).result.persisted,true);await playwrightNative(f,c,'close');
   await f.receive(command('original-generation-query','receipt.query',{attemptId:c.attemptId}));const receipt=f.messages.find(m=>m.requestId==='original-generation-query');assert.equal(receipt.identity.documentGeneration,1);assert.equal(receipt.fingerprintSHA256,c.fingerprintSHA256);
   await new Promise(r=>setImmediate(r));assert.ok(f.messages.some(m=>m.type==='documents'&&m.documents?.some(d=>d.documentGeneration===2)));
@@ -2880,5 +2780,38 @@ test('legacy old-port privacy may retire under new authenticated fence only with
   if(mode!=='valid')assert.equal(JSON.stringify(f.storage),before.storage);
   const replies=f.messages.length;f.nativeMessage(privateFrame(),0);await new Promise(resolve=>setImmediate(resolve));assert.equal(f.messages.length,replies);assert.equal(f.state.deliveries,before.deliveries);
   assert.equal(f.privacyState().redacted,'[redacted]');assert.ok(!f.messages.slice(before.messages).some(x=>x.type==='executorPrepared'));
+ }
+});
+
+test('actual worker navigation preserves original finalization but cannot grant replacement document access',async()=>{
+ for(const mode of ['valid','reconnect','lifecycle']){
+  const f=await privateFixture(true),c=await playwrightCommand();await playwrightNative(f,c,'open',{command:c,origin:'https://fixture.example.test'});
+  await playwrightNative(f,c,'send',{method:'Input.dispatchMouseEvent',params:{type:'mousePressed',button:'left',buttons:1,modifiers:0,clickCount:1,x:20,y:20}});
+  await playwrightNative(f,c,'send',{method:'Input.dispatchMouseEvent',params:{type:'mouseReleased',button:'left',buttons:0,modifiers:0,clickCount:1,x:20,y:20}});
+  f.state.documentId='new-document';for(const listener of f.state.committedListeners)listener({tabId:7,frameId:0,documentId:'new-document'});
+  const inputs=f.state.debuggerInputs.length,held=JSON.stringify(f.storage.mechanizePlaywrightJournalV1);
+  const denied=await playwrightNative(f,c,'send',{method:'Runtime.callFunctionOn',params:{}});assert.equal(denied.errorCode,'playwrightAuthorityChanged');assert.equal(f.state.debuggerInputs.length,inputs);assert.equal(JSON.stringify(f.storage.mechanizePlaywrightJournalV1),held);
+  if(mode==='reconnect'){f.disconnect();await f.connect();}
+  if(mode==='lifecycle')f.reconnectBarrier('lifecycle');
+  const result=await playwrightNative(f,c,'receipt',{dispatchState:'dispatched',effectState:'unverified'});
+  if(mode==='valid'){assert.equal(result.result.persisted,true);assert.equal(f.storage.mechanizePlaywrightJournalV1.records[c.attemptId].receipt.dispatchState,'dispatched');assert.equal(f.publicReadCounts().leases,0);}else{assert.ok(result.errorCode);assert.notEqual(f.storage.mechanizePlaywrightJournalV1.records[c.attemptId].receipt?.dispatchState,'dispatched');}
+  assert.equal(f.state.debuggerInputs.length,inputs);
+ }
+});
+
+test('existing executor retirement can prove known navigation source absent without a new DOM authority',async()=>{
+ for(const mode of ['valid','sourcePresent','unknown','lease','fence']){
+  const f=await privateFixture(true),c=await playwrightCommand();await playwrightNative(f,c,'open',{command:c,origin:'https://fixture.example.test'});
+  await playwrightNative(f,c,'send',{method:'Input.dispatchMouseEvent',params:{type:'mousePressed',button:'left',buttons:1,modifiers:0,clickCount:1,x:20,y:20}});
+  if(mode==='unknown')await playwrightNative(f,c,'send',{method:'Input.dispatchMouseEvent',params:{type:'mousePressed',button:'left',buttons:1,modifiers:0,clickCount:1,x:20,y:20}});
+  else {await playwrightNative(f,c,'send',{method:'Input.dispatchMouseEvent',params:{type:'mouseReleased',button:'left',buttons:0,modifiers:0,clickCount:1,x:20,y:20}});await playwrightNative(f,c,'receipt',{dispatchState:'dispatched',effectState:'unverified'});await playwrightNative(f,c,'close');}
+  f.state.documentId='retirement-successor';f.state.frameRows=[{frameId:0,parentFrameId:-1,documentId:f.state.documentId,url:f.state.frameURL,documentLifecycle:'active',frameType:'outermost_frame'}];
+  if(mode==='sourcePresent')f.state.frameRows.push({frameId:1,parentFrameId:0,documentId:identity.documentId,url:f.state.frameURL,documentLifecycle:'cached',frameType:'sub_frame'});
+  for(const listener of f.state.committedListeners)listener({tabId:7,frameId:0,documentId:f.state.documentId});
+  const before={journal:JSON.stringify(f.storage.mechanizePlaywrightJournalV1),input:f.state.debuggerInputs.length,deliveries:f.state.deliveries};
+  const retire=command('known-source-retire','executor.retire',{attemptId:undefined,locator:undefined,controlLease:{...c.controlLease},...(mode==='fence'?{channelEpoch:'foreign'}:{})});if(mode==='lease')retire.controlLease.id='foreign';
+  await f.receive(retire);const result=f.messages.find(m=>m.requestId===retire.requestId);assert.ok(result,mode);assert.equal(result.retiredAuthorityQuiesced,mode==='valid'?true:undefined,mode);
+  if(mode==='valid'){assert.deepEqual(JSON.parse(JSON.stringify(result.controlLease)),c.controlLease);assert.equal(result.identity.documentId,identity.documentId);assert.equal(f.state.deliveries,before.deliveries);}
+  assert.equal(JSON.stringify(f.storage.mechanizePlaywrightJournalV1),before.journal,mode);assert.equal(f.state.debuggerInputs.length,before.input,mode);
  }
 });

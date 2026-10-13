@@ -16,6 +16,12 @@ globalThis.MechanizePlaywrightWorker = (() => {
       try{return await Promise.race([Promise.resolve().then(()=>hooks.current(binding)),new Promise(resolve=>{timer=setTimeout(()=>resolve(false),Math.max(0,binding.command.deadlineUnixMs-Date.now()));})]);}
       catch{return false;}finally{clearTimeout(timer);}
     };
+    const receiptCurrent=async held=>hooks.port()===held.originalPort&&Date.now()<held.command.deadlineUnixMs&&await (hooks.receiptCurrent?hooks.receiptCurrent(held):current(held));
+    // Revokes all further DOM/CDP commands without prematurely deciding the
+    // original receipt. This slot is bounded by the original execution timer.
+    // Scoped relay close rejects new commands; it does not detach CDP or cancel
+    // an already issued original input ACK in the transport.
+    const finalizationOnly=held=>{held.receiptOnly=true;held.closed=true;held.unsubscribe?.();held.session?.close();};
     const relay=MechanizePlaywrightRelay.create(api,current);
     const canonical=value=>JSON.stringify(value&&typeof value==='object'?Array.isArray(value)?value.map(v=>JSON.parse(canonical(v))):Object.fromEntries(Object.keys(value).sort().map(k=>[k,JSON.parse(canonical(value[k]))])):value);
     const copy=value=>JSON.parse(JSON.stringify(value));
@@ -97,6 +103,26 @@ globalThis.MechanizePlaywrightWorker = (() => {
       if(!sameIdentity(record.identity,command.identity)||['brokerEpoch','channelEpoch','scopeHash'].some(k=>record[k]!==command[k]))throw MechanizeProtocol.error('staleIdentity','Original Playwright receipt identity required');
       return {...(record.receipt||receipt(record,record.phase==='input'?'unknown':'notDispatched','playwrightReceiptPending')),requestId:command.requestId,receiptAvailable:Boolean(record.receipt)};
     }
+    async function retireUnknownTarget(command,proveAbsent) {
+      if(active)throw fail('playwrightBusy');
+      const key=prefix+command.attemptId,record=(await journalSnapshot())[key];
+      if(!record||record.phase!=='done'||record.receipt?.dispatchState!=='unknown'||record.receipt.effectState!=='unknown'||!sameIdentity(record.identity,command.identity)||canonical(record.controlLease)!==canonical(command.controlLease)||record.fingerprintSHA256!==command.fingerprintSHA256||command.fingerprintVersion!==2||record.scopeHash!==command.scopeHash)throw fail('playwrightBindingDenied');
+      const before=canonical(record);await proveAbsent();
+      if(active||canonical((await journalSnapshot())[key])!==before)throw fail('playwrightAuthorityChanged');
+      await proveAbsent();return copy(record);
+    }
+    async function retireKnownSource(command,proveAbsent) {
+      if(active||!command.controlLease)return false;
+      const stable=(a,b)=>a&&b&&['profileChannel','browserInstance','tabId','frameId','documentId'].every(k=>a[k]===b[k]);
+      const snapshot=async()=>Object.values(await journalSnapshot()).filter(record=>stable(record.identity,command.identity));
+      const records=await snapshot();
+      if(!records.length||records.some(record=>record.phase!=='done'||!record.receipt||record.receipt.dispatchState==='unknown'))return false;
+      const own=records.some(record=>sameIdentity(record.identity,command.identity)&&['brokerEpoch','channelEpoch','scopeHash'].every(k=>record[k]===command[k])&&record.controlLease.id===command.controlLease.id&&record.controlLease.generation===command.controlLease.generation&&record.receipt.dispatchState==='dispatched');
+      if(!own)return false;
+      const before=canonical(records);await proveAbsent();
+      if(active||canonical(await snapshot())!==before)throw fail('playwrightAuthorityChanged');
+      await proveAbsent();return true;
+    }
     async function exportReceipts(command,readRenderer) {
       const stableIdentity=(a,b)=>a&&b&&['profileChannel','browserInstance','tabId','frameId','documentId'].every(k=>a[k]===b[k]);
       const canonical=v=>JSON.stringify(v&&typeof v==='object'?Array.isArray(v)?v.map(x=>JSON.parse(canonical(x))):Object.fromEntries(Object.keys(v).sort().map(k=>[k,JSON.parse(canonical(v[k]))])):v);
@@ -106,8 +132,16 @@ globalThis.MechanizePlaywrightWorker = (() => {
       const stamp=canonical(records),rows=[];
       for(const record of records){
         const r=record.receipt;
-        if(record.phase!=='done'||!r||!['dispatched','notDispatched'].includes(r.dispatchState)||!['none','unverified','verified'].includes(r.effectState)||!/^([a-f0-9]{64})$/.test(record.fingerprintSHA256))throw MechanizeProtocol.error('receiptExportUnavailable','Playwright history must be reconciled before retirement');
+        if(record.phase!=='done'||!r||!['dispatched','notDispatched','unknown'].includes(r.dispatchState)||!['none','unverified','verified','unknown'].includes(r.effectState)||!/^([a-f0-9]{64})$/.test(record.fingerprintSHA256))throw MechanizeProtocol.error('receiptExportUnavailable','Exact immutable Playwright audit receipt required');
         rows.push({attemptId:record.attemptId,fingerprintVersion:2,fingerprintSHA256:record.fingerprintSHA256,dispatchState:r.dispatchState,effectState:r.effectState,...(r.error?{errorCode:'unclassified',errorDispatchState:r.dispatchState}:{})});
+      }
+      // A destroyed target has no renderer/recording readiness to report. Its
+      // immutable UNKNOWN rows are audit data, never a NoUnknown manifest.
+      if(rows.some(row=>row.dispatchState==='unknown')&&records.every(record=>record.receipt.dispatchState!=='unknown'||hooks.retiredUnknown?.(record))){
+        const args=command.args,total=rows.length;
+        if(args.offset>total||args.expectedRevision!==undefined&&args.expectedRevision!==total)throw MechanizeProtocol.error('receiptRevisionMismatch','Exact audit revision required');
+        const receipts=rows.slice(args.offset,args.offset+args.limit),nextOffset=args.offset+receipts.length;
+        return {version:2,requestId:command.requestId,identity:{...command.identity},total,revision:total,offset:args.offset,nextOffset,truncated:nextOffset<total,receipts,readiness:null};
       }
       let first,page,offset=0;
       const rendererRows=[];
@@ -172,10 +206,12 @@ globalThis.MechanizePlaywrightWorker = (() => {
           }
           post({...response,result:{opened:true,...(controlBadgeWindow?{controlBadgeWindow}:{})}});return;
         }
-        if(!held||held.closed||held.originalPort!==originalPort||held.relayId!==message.relayId||message.deadlineUnixMs>held.command.deadlineUnixMs||!await current(held))throw fail('playwrightAuthorityChanged');
+        if(!held||held.originalPort!==originalPort||held.relayId!==message.relayId||message.deadlineUnixMs>held.command.deadlineUnixMs)throw fail('playwrightAuthorityChanged');
+        const finalizing=message.type==='playwright.receipt'||message.type==='playwright.close';
+        if(finalizing?!await receiptCurrent(held):held.closed||!await current(held))throw fail('playwrightAuthorityChanged');
         if(held.wireRequests.has(message.requestId)||held.wireRequests.size>=4096)throw fail('playwrightRequestReplay');
         held.wireRequests.add(message.requestId);
-        if(message.type==='playwright.close'){await finish(held);post({...response,result:{closed:true}});return;}
+        if(message.type==='playwright.close'){if(held.record&&!held.record.receipt&&held.possible)finalizationOnly(held);else await finish(held);post({...response,result:{closed:true}});return;}
         if(message.type==='playwright.redact'){
           if(typeof message.value!=='string'||message.value.length>32768)throw fail('playwrightRedactionDenied');
           const value=hooks.redact(message.value);
@@ -183,13 +219,14 @@ globalThis.MechanizePlaywrightWorker = (() => {
           post({...response,result:{value}});return;
         }
         if(message.type==='playwright.receipt'){
-          if(!held.record||held.record.receipt||!['notDispatched','dispatched','unknown'].includes(message.dispatchState)||!['none','unverified','unknown'].includes(message.effectState)||message.dispatchState==='notDispatched'&&held.possible||message.dispatchState==='dispatched'&&(!held.possible||held.uncertain)||message.effectState!==({notDispatched:'none',dispatched:'unverified',unknown:'unknown'})[message.dispatchState]||message.errorCode!==undefined&&(!id(message.errorCode)||!message.errorCode.startsWith('playwright'))||message.inputSemantics!==undefined&&message.inputSemantics!=='Local Playwright over scoped extension CDP')throw fail('playwrightReceiptDenied');
+          if(!held.record||held.record.receipt||!['notDispatched','dispatched','unknown'].includes(message.dispatchState)||!['none','unverified','unknown'].includes(message.effectState)||message.dispatchState==='notDispatched'&&held.possible||message.dispatchState==='dispatched'&&(!held.possible||held.uncertain||!held.inputAcknowledged||held.releaseRequired&&!held.releaseAcknowledged)||message.effectState!==({notDispatched:'none',dispatched:'unverified',unknown:'unknown'})[message.dispatchState]||message.errorCode!==undefined&&(!id(message.errorCode)||!message.errorCode.startsWith('playwright'))||message.inputSemantics!==undefined&&message.inputSemantics!=='Local Playwright over scoped extension CDP')throw fail('playwrightReceiptDenied');
           const result=receipt(held.record,message.dispatchState,message.errorCode);
           if(message.inputSemantics)result.inputSemantics=message.inputSemantics;
           // Acknowledgement follows durable journal completion, never precedes it.
           await write({...held.record,phase:'done',receipt:result});
           held.record={...held.record,phase:'done',receipt:result};
           hooks.unknown(held.command.attemptId,message.dispatchState==='unknown');
+          if(held.receiptOnly)await finish(held);
           post({...response,result:{persisted:true}});return;
         }
         if(held.record?.receipt)throw fail('playwrightReceiptFinal');
@@ -206,18 +243,25 @@ globalThis.MechanizePlaywrightWorker = (() => {
           if(held.uncertain)throw fail('playwrightInputUncertain');
           if(!held.possible){await write({...held.record,phase:'input'});held.record.phase='input';}
           if(!await current(held))throw fail('playwrightAuthorityChanged');
-          held.possible=true;
+          held.possible=true;held.releaseRequired=Boolean(held.releaseRequired||message.method!=='Input.insertText');held.releaseAcknowledged=false;held.released=false;
         }
         let result;
         try {result=await held.session.send(message.method,message.params,message.deadlineUnixMs,actual?()=>{held.inputCrossed=true;}:undefined);}
         catch(error){if(actual){if(!priorPossible&&error?.dispatchState==='notDispatched')held.possible=false;else{held.uncertain=true;hooks.unknown(held.command.attemptId,true);}}throw error;}
-        if(!await current(held))throw fail('playwrightAuthorityChanged');
+        if(actual)held.inputAcknowledged=true;
+        if(release)held.releaseAcknowledged=true;
+        if(!await current(held)){
+          // A completed original input/release may navigate its own document.
+          // Acknowledge only that CDP result; subsequent commands stay denied.
+          if(!(release||actual&&!held.releaseRequired)||!held.record||held.uncertain||!await receiptCurrent(held))throw fail('playwrightAuthorityChanged');
+          finalizationOnly(held);
+        }
         post({...response,result:result||{}});
       } catch(error) {
         const state=held?.possible?'unknown':'notDispatched';
         const code=id(error?.code)&&error.code.startsWith('playwright')?error.code:'playwrightUnavailable';
         let terminal;
-        if(held&&active===held){
+        if(held&&active===held&&!held.receiptOnly){
           await finish(held,code).catch(()=>{if(held.possible)hooks.unknown(held.command.attemptId,true);});
           // Only a read-back of the exact original journal proves completion.
           // Cleanup failures must never replace its authoritative dispatch state.
@@ -230,7 +274,7 @@ globalThis.MechanizePlaywrightWorker = (() => {
       }
     }
     function enqueue(fn){const operation=lane.then(fn);lane=operation.catch(()=>{});return operation;}
-    return {recover,query,exportReceipts,journalSnapshot,receive:(message,originalPort)=>enqueue(()=>handle(message,originalPort)),invalidate(predicate=()=>true){const held=active;if(held&&predicate(held)){held.closed=true;held.session?.close();void enqueue(()=>finish(held));}}};
+    return {recover,query,exportReceipts,journalSnapshot,retireKnownSource:(command,proveAbsent)=>enqueue(()=>retireKnownSource(command,proveAbsent)),retireUnknownTarget:(command,proveAbsent)=>enqueue(()=>retireUnknownTarget(command,proveAbsent)),receive:(message,originalPort)=>enqueue(()=>handle(message,originalPort)),invalidate(predicate=()=>true,retainFinalization=false){const held=active;if(held&&predicate(held)){if(retainFinalization&&held.record&&!held.record.receipt&&held.possible)finalizationOnly(held);else{held.closed=true;held.session?.close();void enqueue(()=>finish(held));}}}};
   }
   return {create};
 })();

@@ -75,6 +75,7 @@ type channel struct {
 	manualTransition               *ManualCredentialTransition
 
 	playwrightLocatorVersion           int
+	playwrightTargetRetirementVersion  int
 	playwrightRelayVersion             int
 	playwright                         *playwrightExecution
 	workerBuild                        int
@@ -128,6 +129,7 @@ type channel struct {
 	attempts                           map[string]Command
 	receipts                           map[string]Reply
 	unknown                            map[string]bool
+	retiredTargets                     map[string]Command
 	visibilityUnknown                  map[string]*visibilityUnknown
 	visibilityPending                  *visibilityPending
 	visibilityUnknownVersion           int
@@ -331,6 +333,10 @@ func (b *Broker) serve(conn net.Conn) {
 		delete(b.connections, conn)
 		for _, c := range b.channels {
 			if c.conn == conn {
+				for id := range c.retiredTargets {
+					c.unknown[id] = true
+				}
+				c.retiredTargets = nil
 				c.consentReconnect = nil
 				c.conn = nil
 				for _, s := range c.controllerSessions {
@@ -429,6 +435,7 @@ func (b *Broker) serve(conn net.Conn) {
 		TabInventoryVersion                int             `json:"tabInventoryVersion"`
 		ExtensionMaintenanceVersion        int             `json:"extensionMaintenanceVersion"`
 		SelectOptionVersion                int             `json:"selectOptionVersion"`
+		PlaywrightTargetRetirementVersion  int             `json:"playwrightTargetRetirementVersion"`
 		OpenOriginVersion                  int             `json:"openOriginVersion"`
 		ProtectionScopeVersion             int             `json:"protectionScopeVersion"`
 		CredentialPublicReadVersion        int             `json:"credentialPublicReadVersion"`
@@ -534,6 +541,7 @@ func (b *Broker) serve(conn net.Conn) {
 	c.tabInventoryVersion = hello.TabInventoryVersion
 	c.extensionMaintenanceVersion = hello.ExtensionMaintenanceVersion
 	c.selectOptionVersion = hello.SelectOptionVersion
+	c.playwrightTargetRetirementVersion = hello.PlaywrightTargetRetirementVersion
 	c.openOriginVersion = hello.OpenOriginVersion
 	c.protectionScopeVersion = hello.ProtectionScopeVersion
 	c.credentialPublicReadVersion = hello.CredentialPublicReadVersion

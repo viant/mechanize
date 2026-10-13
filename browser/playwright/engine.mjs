@@ -79,7 +79,9 @@ export class PlaywrightEngine {
         relay.beginMutation();
         // One call, no engine-level retry. A lost CDP reply closes the relay.
         if(command.action==='element.fill')await element.fill(command.args.value,{timeout:remaining()});
-        else await element.click({timeout:remaining()});
+        // The receipt describes this one input, not navigation/business readiness.
+        // Observe the destination separately under freshly qualified authority.
+        else await element.click({timeout:remaining(),noWaitAfter:true});
         result={dispatchState:'dispatched',effectState:'unverified',inputSemantics:'Local Playwright over scoped extension CDP'};
       }else{
         if(command.args.attribute==='name')throw denied('playwrightReadDenied');

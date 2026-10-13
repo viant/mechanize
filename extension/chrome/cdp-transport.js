@@ -9,7 +9,7 @@ globalThis.MechanizeCDP = (() => {
   function hubFor(api) {
     let hub=hubs.get(api);
     if(hub)return hub;
-    hub={sessions:new Map(),generation:0,epoch:0,stoppedByUser:false};
+    hub={sessions:new Map(),inFlight:new Set(),generation:0,epoch:0,stoppedByUser:false};
     hubs.set(api,hub);
     const {sessions}=hub;
     function retire(session) {
@@ -65,6 +65,9 @@ globalThis.MechanizeCDP = (() => {
   function create(api, permit) {
     if(typeof permit!=='function')throw fail('cdpDenied');
     const hub=hubFor(api),sessions=hub.sessions;
+    // Cancellation retires authority, not the underlying Chrome call. Keep
+    // drain evidence until that exact call settles, even after session removal.
+    function track(promise){const token={};hub.inFlight.add(token);Promise.resolve(promise).then(()=>hub.inFlight.delete(token),()=>hub.inFlight.delete(token));return promise;}
     function wait(promise, session, deadline, state) {
       if (!Number.isSafeInteger(deadline) || deadline <= Date.now()) {
         Promise.resolve(promise).catch(() => {});
@@ -144,14 +147,14 @@ globalThis.MechanizeCDP = (() => {
             // An authority epoch discards all old context metadata. Reset only
             // our observer domain to obtain fresh Chrome events for the new
             // owner; keep the debugger attachment and never manufacture IDs.
-            session.runtimeReset ||= Promise.resolve().then(()=>api.debugger.sendCommand({tabId},'Runtime.disable',{}));
+            session.runtimeReset ||= Promise.resolve().then(()=>track(api.debugger.sendCommand({tabId},'Runtime.disable',{})));
             await wait(session.runtimeReset,session,deadline,'notDispatched');
             if(!current())throw fail('cdpDetached');
             session.contexts.clear();session.runtimeNeedsRefresh=false;session.runtimeReset=null;
           }
           // Once handed to Chrome, timeout/detach does not prove no execution.
           let response;
-          try { if(onDispatch!==undefined){if(typeof onDispatch!=='function')throw fail('cdpDenied');onDispatch();} response = api.debugger.sendCommand(recipient, method, params); }
+          try { if(onDispatch!==undefined){if(typeof onDispatch!=='function')throw fail('cdpDenied');onDispatch();} response = track(api.debugger.sendCommand(recipient, method, params)); }
           catch { throw fail('cdpUnavailable', 'unknown'); }
           const result=await wait(response, session, deadline, 'unknown');
           if(method==='Runtime.enable'&&childSessionId===undefined&&current()){
@@ -170,6 +173,9 @@ globalThis.MechanizeCDP = (() => {
     }
     return {attach};
   }
-  return {create,invalidate};
+  // Read-only drain evidence. Absence of a local session is not target death;
+  // callers must separately prove complete browser tab/target absence.
+  function idle(api){const hub=hubs.get(api);return !hub||!hub.inFlight.size&&[...hub.sessions.values()].every(session=>!session.attaching&&!session.pending.size);}
+  return {create,invalidate,idle};
 })();
 if (typeof module !== 'undefined') module.exports = globalThis.MechanizeCDP;

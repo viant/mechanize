@@ -60,7 +60,7 @@ func TestChromeReconnectProjectionPreservesOriginalDispatchWithoutBusinessPromot
 			scope := chrome.ReconnectBindingScope{ProfileChannel: f.ProfileChannel, BrowserInstance: f.BrowserInstance, ScopeHash: f.ScopeHash}
 			out, e := projectChromeReconnectBindings(p, scope, rows)
 			if mode == "unverified" || mode == "unknown" || mode == "uncommittedOutcome" {
-				if e != nil || len(out) != 1 || out[0].DispatchState != receipt.DispatchState {
+				if e != nil || len(out) != 1 || out[0].DispatchState != receipt.DispatchState || out[0].ControlLease == nil || out[0].ControlLease.ID != *b.RendererLeaseId || out[0].ControlLease.Generation != uint64(*b.RendererLeaseGeneration) {
 					t.Fatal("original dispatch changed", e)
 				}
 				public, _ := json.Marshal(out)

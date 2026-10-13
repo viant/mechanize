@@ -466,6 +466,7 @@ func (b *Broker) guardPrivacyCommand(ctx context.Context, c *channel, command Co
 		return nil
 	}
 	s := c.privacy
+	knownSourceRetirement := command.Action == "executor.retire" && !mutation && knownPressSourceRetirementLocked(c, command.Identity, command.ControlLease, b.epoch)
 	var d Document
 	for _, candidate := range c.documents {
 		identity := candidate.Identity
@@ -482,6 +483,21 @@ func (b *Broker) guardPrivacyCommand(ctx context.Context, c *channel, command Co
 	}
 	b.mu.Unlock()
 	if s == nil {
+		return nil
+	}
+	if knownSourceRetirement {
+		// Revocation posts no page input and never acquires successor DOM rights.
+		// The original actor's current private admission still governs the request.
+		p, e := auth.FromContext(ctx)
+		if e != nil || !privacyActor(ctx, p, s, true) {
+			return errCredentialPrivacy
+		}
+		b.mu.Lock()
+		valid := c.privacy == s && c.conn == s.conn && s.active && s.published && s.identity == command.Identity && knownPressSourceRetirementLocked(c, command.Identity, command.ControlLease, b.epoch)
+		b.mu.Unlock()
+		if !valid {
+			return errCredentialPrivacy
+		}
 		return nil
 	}
 	if command.Action == "browser.navigate" {

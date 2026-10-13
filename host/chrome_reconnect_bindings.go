@@ -79,7 +79,7 @@ func projectChromeReconnectBindings(p auth.Principal, scope chrome.ReconnectBind
 		if e != nil {
 			return nil, e
 		}
-		result = append(result, chrome.ReconnectBinding{Identity: chrome.Identity{ProfileChannel: scope.ProfileChannel, BrowserInstance: scope.BrowserInstance, TabID: *b.TabId, FrameID: *b.FrameId, DocumentID: *b.DocumentId, Generation: uint64(*b.DocumentGeneration)}, Fence: chrome.ReconnectFence{BrokerEpoch: *b.BrokerEpoch, ChannelEpoch: *b.ChannelEpoch, ScopeHash: *b.ScopeHash}, AttemptID: *b.BrowserAttemptId, Fingerprint: *b.FingerprintDigest, DispatchState: state})
+		result = append(result, chrome.ReconnectBinding{Identity: chrome.Identity{ProfileChannel: scope.ProfileChannel, BrowserInstance: scope.BrowserInstance, TabID: *b.TabId, FrameID: *b.FrameId, DocumentID: *b.DocumentId, Generation: uint64(*b.DocumentGeneration)}, Fence: chrome.ReconnectFence{BrokerEpoch: *b.BrokerEpoch, ChannelEpoch: *b.ChannelEpoch, ScopeHash: *b.ScopeHash}, AttemptID: *b.BrowserAttemptId, Fingerprint: *b.FingerprintDigest, DispatchState: state, ControlLease: &chrome.Lease{ID: *b.RendererLeaseId, Generation: uint64(*b.RendererLeaseGeneration)}})
 	}
 	return result, nil
 }

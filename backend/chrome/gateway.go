@@ -293,7 +293,8 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 	}
 	b.mu.Lock()
 	publicPermit := publicReadPermitLocked(ctx, c, command, mutation)
-	scopeQualified := channelScopeQualified(c) && (publicPermit != nil || c.executorQualified && (scopeDisjointLocked(c, command.Identity) || c.privateInspection == nil && c.privateFlow == nil && c.privateCredential == nil && c.privateAdvance == nil))
+	retirementOnly := !mutation && reconnectTargetRetirementLocked(c, command)
+	scopeQualified := channelScopeQualified(c) && (retirementOnly || publicPermit != nil || c.executorQualified && (scopeDisjointLocked(c, command.Identity) || c.privateInspection == nil && c.privateFlow == nil && c.privateCredential == nil && c.privateAdvance == nil))
 	b.mu.Unlock()
 	if !scopeQualified {
 		return Reply{}, browserError("profileUnqualified", "Profile enrollment and executor quiescence are not qualified", "notDispatched")

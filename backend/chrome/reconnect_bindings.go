@@ -31,18 +31,21 @@ type ReconnectBinding struct {
 	AttemptID     string         `json:"attemptId"`
 	Fingerprint   string         `json:"fingerprintSHA256"`
 	DispatchState string         `json:"dispatchState"`
+	ControlLease  *Lease         `json:"controlLease,omitempty"`
 }
 type ReconnectBindingsProvider func(context.Context, auth.Principal, ReconnectBindingScope, func(context.Context) error, func([]ReconnectBinding) error) error
 
 type reconnectBindingExchange struct {
-	requestID string
-	conn      net.Conn
-	finish    chan reconnectBindingProgress
-	ready     bool
-	published bool
-	prepared  chan struct{}
-	cancel    context.CancelFunc
-	deadline  time.Time
+	requestID                string
+	conn                     net.Conn
+	finish                   chan reconnectBindingProgress
+	ready                    bool
+	published                bool
+	prepared                 chan struct{}
+	cancel                   context.CancelFunc
+	deadline                 time.Time
+	retirements              map[string]Command
+	targetRetirementAttempts []string
 }
 type reconnectBindingsRequest struct {
 	Type              string          `json:"type"`
@@ -306,16 +309,33 @@ func (b *Broker) acceptReconnectBindings(c *channel, conn net.Conn, raw []byte) 
 	if kind.Type != "reconnectBindings" {
 		return false
 	}
-	var request reconnectBindingsRequest
-	if !reconnectTopFields(raw, "type", "requestId", "executorChallenge", "brokerEpoch", "channelEpoch", "scopeHash", "deadlineUnixMs", "pending") || decodeReconnectClosed(raw, &request) != nil || !receiptOpaqueID.MatchString(request.ExecutorChallenge) || !setupHash.MatchString(request.RequestID) || request.DeadlineUnixMS <= time.Now().UnixMilli() || request.DeadlineUnixMS > time.Now().Add(10*time.Second).UnixMilli() {
+	var envelope struct {
+		reconnectBindingsRequest
+		TargetRetirementAttempts []string `json:"targetRetirementAttempts,omitempty"`
+	}
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &fields)
+	keys := []string{"type", "requestId", "executorChallenge", "brokerEpoch", "channelEpoch", "scopeHash", "deadlineUnixMs", "pending"}
+	if _, exists := fields["targetRetirementAttempts"]; exists {
+		keys = append(keys, "targetRetirementAttempts")
+	}
+	if !reconnectTopFields(raw, keys...) || decodeReconnectClosed(raw, &envelope) != nil || !receiptOpaqueID.MatchString(envelope.ExecutorChallenge) || !setupHash.MatchString(envelope.RequestID) || envelope.DeadlineUnixMS <= time.Now().UnixMilli() || envelope.DeadlineUnixMS > time.Now().Add(10*time.Second).UnixMilli() || len(envelope.TargetRetirementAttempts) > 512 {
 		return true
 	}
+	requested := map[string]bool{}
+	for _, id := range envelope.TargetRetirementAttempts {
+		if !fingerprintV2ID.MatchString(id) || requested[id] {
+			return true
+		}
+		requested[id] = true
+	}
+	request := envelope.reconnectBindingsRequest
 	fences, digest, e := reconnectBindingLineage(request.Pending, request.ScopeHash)
 	if e != nil {
 		return true
 	}
 	b.mu.Lock()
-	valid := b.reconnectBindings != nil && c.conn == conn && !c.fixtureOnly && c.reconnectBindings == nil && request.ExecutorChallenge == c.executorChallenge && request.BrokerEpoch == b.epoch && request.ChannelEpoch == c.epoch && request.ScopeHash == c.scopeHash && channelScopeQualified(c) && !c.executorQualified
+	valid := b.reconnectBindings != nil && c.conn == conn && !c.fixtureOnly && c.reconnectBindings == nil && (envelope.TargetRetirementAttempts == nil || c.playwrightTargetRetirementVersion == 1) && request.ExecutorChallenge == c.executorChallenge && request.BrokerEpoch == b.epoch && request.ChannelEpoch == c.epoch && request.ScopeHash == c.scopeHash && channelScopeQualified(c) && !c.executorQualified
 	if !valid {
 		b.mu.Unlock()
 		return true
@@ -323,10 +343,12 @@ func (b *Broker) acceptReconnectBindings(c *channel, conn net.Conn, raw []byte) 
 	p := c.grant.Principal
 	ctx, cancel := context.WithDeadline(auth.WithPrincipal(context.Background(), p), time.UnixMilli(request.DeadlineUnixMS))
 	x := &reconnectBindingExchange{requestID: request.RequestID, conn: conn, finish: make(chan reconnectBindingProgress, 1), prepared: make(chan struct{}), cancel: cancel, deadline: time.UnixMilli(request.DeadlineUnixMS)}
+	x.targetRetirementAttempts = append([]string(nil), envelope.TargetRetirementAttempts...)
 	c.reconnectBindings = x
 	scope := ReconnectBindingScope{c.grant.ProfileChannel, c.grant.BrowserInstance, c.scopeHash, digest, fences}
 	evidence := c.processEvidence
 	provider := b.reconnectBindings
+	targetRetirement := c.playwrightTargetRetirementVersion == 1
 	b.mu.Unlock()
 	go func() {
 		defer cancel()
@@ -349,7 +371,7 @@ func (b *Broker) acceptReconnectBindings(c *channel, conn net.Conn, raw []byte) 
 			}
 			b.mu.Lock()
 			defer b.mu.Unlock()
-			if b.closed || b.channels[channelKey(scope.ProfileChannel, scope.BrowserInstance)] != c || c.processEvidence == nil || c.processEvidence != evidence || c.conn != conn || c.reconnectBindings != x || c.executorChallenge != request.ExecutorChallenge || b.epoch != request.BrokerEpoch || c.epoch != request.ChannelEpoch || c.scopeHash != request.ScopeHash || !channelScopeQualified(c) || c.executorQualified != x.published || c.lifecycleInhibited || len(c.pending) > 0 || len(c.unknown) > 0 || c.playwright != nil || c.privateFlow != nil || c.privacy != nil || c.privateInspection != nil || c.privateCredential != nil || c.privateAdvance != nil || c.privacyPending != nil || c.manualPending != nil {
+			if b.closed || b.channels[channelKey(scope.ProfileChannel, scope.BrowserInstance)] != c || c.processEvidence == nil || c.processEvidence != evidence || c.conn != conn || c.reconnectBindings != x || c.executorChallenge != request.ExecutorChallenge || b.epoch != request.BrokerEpoch || c.epoch != request.ChannelEpoch || c.scopeHash != request.ScopeHash || !channelScopeQualified(c) || c.executorQualified != x.published || c.lifecycleInhibited || !reconnectRetirementPendingOnlyLocked(c) || len(c.unknown) > 0 && !targetRetirement || c.playwright != nil || c.privateFlow != nil || c.privacy != nil || c.privateInspection != nil || c.privateCredential != nil || c.privateAdvance != nil || c.privacyPending != nil || c.manualPending != nil {
 				return errReconnectBindings
 			}
 			return nil
@@ -380,6 +402,16 @@ func (b *Broker) acceptReconnectBindings(c *channel, conn net.Conn, raw []byte) 
 			}
 			if len(rows) > 4096 {
 				return errReconnectBindings
+			}
+			// The immutable original lease is metadata for target retirement, never
+			// a fresh input lease. Legacy workers retain their closed row shape.
+			if !targetRetirement {
+				original := rows
+				rows = make([]ReconnectBinding, len(original))
+				copy(rows, original)
+				for i := range rows {
+					rows[i].ControlLease = nil
+				}
 			}
 			encoded, err := json.Marshal(rows)
 			if err != nil {
@@ -413,6 +445,11 @@ func (b *Broker) acceptReconnectBindings(c *channel, conn net.Conn, raw []byte) 
 						}
 						if check(ctx) != nil {
 							return errReconnectBindings
+						}
+						if targetRetirement {
+							if err := b.retireReconnectTargets(ctx, c, x, rows, check); err != nil {
+								return err
+							}
 						}
 						b.mu.Lock()
 						x.ready = true
