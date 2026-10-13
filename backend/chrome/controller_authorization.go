@@ -49,7 +49,7 @@ func (g *Gateway) AuthorizeControllerPolicy(ctx context.Context, p auth.Principa
 	}
 	conn, epoch := channel.conn, channel.epoch
 	b.mu.Unlock()
-	if b.checkChannelProcess(ctx, channel, false) != nil {
+	if b.verifyChannelProcess(ctx, channel, false) != nil {
 		return nil, auth.ErrUnauthorized
 	}
 	b.mu.Lock()

@@ -50,11 +50,15 @@ func processPeerCheck(config Config) (chromePeerCheck, error) {
 	}
 	return verifier.Verify, nil
 }
-func (b *Broker) verifyChannelProcess(ctx context.Context, c *channel) error {
+func (b *Broker) verifyChannelProcess(ctx context.Context, c *channel, revokeInvalid ...bool) error {
 	if execution, ok := ctx.Value(playwrightPrivacyKey{}).(*playwrightExecution); ok && execution != nil && b.verifyPeerIdentity != nil {
 		return b.checkScopedChannelIdentity(ctx, c, execution)
 	}
-	return b.checkChannelProcess(ctx, c, true)
+	revoke := true
+	if len(revokeInvalid) == 1 {
+		revoke = revokeInvalid[0]
+	}
+	return b.checkChannelProcess(ctx, c, revoke)
 }
 
 // No TTL, channel-wide cache or wire claim can enter this lane. Each use is
