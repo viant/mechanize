@@ -43,7 +43,7 @@ func (in *CreateChromeAttemptBindingInput) Init(ctx context.Context) error {
 		return errors.New("actual immutable step unavailable")
 	}
 	step := envelope.Plan.Steps[a.StepIndex]
-	if step.ID != a.StepID || step.Target.Surface.Kind != "web" || (step.Action != "element.press" && step.Action != "element.fill" && step.Action != "browser.navigate" && step.Action != "browser.activate") || data.ChromeRetirementDigest(step) != a.StepDigest {
+	if step.ID != a.StepID || step.Target.Surface.Kind != "web" || (step.Action != "element.press" && step.Action != "element.fill" && step.Action != "element.select" && step.Action != "browser.navigate" && step.Action != "browser.activate") || data.ChromeRetirementDigest(step) != a.StepDigest {
 		return errors.New("binding differs from original immutable web step")
 	}
 	if event == nil || !same(event.Namespace, a.Namespace) || !same(event.RunId, a.RunID) || !same(event.AttemptId, a.DurableAttemptID) || !same(event.Kind, "intent") || !same(event.Id, data.ChromeRetirementDigest([]string{"intent-event", a.DurableAttemptID})) {

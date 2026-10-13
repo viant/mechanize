@@ -19,6 +19,10 @@ func TestOperationStatusTypedFailureReachesController(t *testing.T) {
 	testOperationFailureRoundTrip(t, &model.MechanizeError{Code: "playwrightTargetChanged", Message: "PRIVATE_DIAGNOSTIC_CANARY", DispatchState: "notDispatched"}, "playwrightTargetChanged", "notDispatched")
 }
 
+func TestOperationStatusBindingFailureReachesController(t *testing.T) {
+	testOperationFailureRoundTrip(t, &model.MechanizeError{Code: "bindingUnconfirmed", Stage: "browser", DispatchState: "notDispatched", EffectState: "none", Message: "PRIVATE_DIAGNOSTIC_CANARY"}, "bindingUnconfirmed", "notDispatched")
+}
+
 type nativeOperationFailureFixture struct{ code, state string }
 
 func (e nativeOperationFailureFixture) Error() string {

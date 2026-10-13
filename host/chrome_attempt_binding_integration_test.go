@@ -21,8 +21,27 @@ import (
 	"github.com/viant/mechanize/script"
 )
 
+// This supplies negotiated readiness only; the binding adapter below uses real Datly.
+type bindingReadinessGateway struct{ providerGatewayFixture }
+
+func (f *bindingReadinessGateway) AdmitControlWithStatus(ctx context.Context, p auth.Principal, surface model.Surface) (chrome.ControlAdmission, error) {
+	admission, err := f.providerGatewayFixture.AdmitControlWithStatus(ctx, p, surface)
+	admission.Authority.SelectOptionVersion = 1
+	admission.Authority.AllWebsites = true
+	return admission, err
+}
+
 func TestGeneratedChromeBindingAdapterCommitsBeforeFixtureKnownAbsence(t *testing.T) {
-	for _, action := range []string{"element.press", "browser.navigate", "browser.activate"} {
+	ctx, p, surface := providerActor(t)
+	gateway := &bindingReadinessGateway{providerGatewayFixture: providerGatewayFixture{fingerprintVersion: 2}}
+	provider := newProductionWebControlProvider(gateway, func(context.Context, auth.Principal) error { return nil })
+	ready, err := provider.Qualify(ctx, p, surface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every advertised qualified action must cross the actual generated writer
+	// and exact readback; extending readiness cannot silently miss this boundary.
+	for _, action := range ready.Actions {
 		t.Run(action, func(t *testing.T) { generatedChromeBindingAdapterCase(t, action) })
 	}
 }
@@ -39,11 +58,13 @@ func generatedChromeBindingAdapterCase(t *testing.T, action string) {
 	var descriptor chrome.BoundMutation
 	var committed chrome.BindingCommit
 	var callbackErr error
+	dispatches := 0
 	var err error
 	b, err = durable.New(durable.Options{SourceRoot: root, StorageRoot: storage, LeaseEpoch: func(context.Context, auth.Principal) (int, error) { return 1, nil }, PrepareStepAuthority: func(ctx context.Context, p auth.Principal, _ model.Step) (context.Context, int, error) {
 		ctx, err := data.WithScope(ctx, data.Scope{Namespace: p.Namespace, LeaseEpoch: 1})
 		return ctx, 1, err
 	}}, func(ctx context.Context, p auth.Principal, step model.Step, _ map[string]model.Value) (integration.StepResult, error) {
+		dispatches++
 		dispatchContext = ctx
 		actual, callbackErr = data.RequireCommittedStepIntent(ctx, p)
 		if callbackErr != nil {
@@ -53,8 +74,11 @@ func generatedChromeBindingAdapterCase(t *testing.T, action string) {
 		pinned.Document.Identity = chrome.Identity{ProfileChannel: "profile", BrowserInstance: "browser", TabID: 7, DocumentID: "document", Generation: 1}
 		browserID := data.ChromeAttemptBrowserIDV2(p.Namespace, p.ClientID, actual.AttemptID)
 		command := chrome.Command{Action: step.Action, Identity: pinned.Document.Identity, BrokerEpoch: pinned.BrokerEpoch, ChannelEpoch: pinned.ChannelEpoch, ScopeHash: pinned.ScopeHash, ControlLease: &pinned.Lease, AttemptID: browserID, Locator: &chrome.Locator{Strategy: "id", Value: "save", Exact: true}}
-		if action != "element.press" {
+		if action == "browser.navigate" || action == "browser.activate" {
 			command.Locator = nil
+		}
+		if action == "element.fill" || action == "element.select" {
+			command.Args = map[string]any{"value": "Green"}
 		}
 		if action == "browser.navigate" {
 			command.Args = map[string]any{"url": "https://fixture.test/"}
@@ -86,11 +110,21 @@ func generatedChromeBindingAdapterCase(t *testing.T, action string) {
 		t.Fatal(err)
 	}
 	defer r.Close(ctx, session.SessionID)
-	plan, err := script.Compile(`web.tab(origin:"https://fixture.test").getById("save",exact:true).click()`)
+	source := `web.tab(origin:"https://fixture.test").getById("save",exact:true).click()`
+	switch action {
+	case "element.fill":
+		source = `web.tab(origin:"https://fixture.test").getById("save",exact:true).fill("Green")`
+	case "element.select":
+		source = `web.tab(origin:"https://fixture.test").getById("save",exact:true).select("Green")`
+	case "element.press", "browser.navigate", "browser.activate":
+	default:
+		t.Fatalf("advertised action has no real binding fixture: %s", action)
+	}
+	plan, err := script.Compile(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action != "element.press" {
+	if action == "browser.navigate" || action == "browser.activate" {
 		plan.Steps[0].Action = action
 		plan.Steps[0].Target.Locator = nil
 		plan.Steps[0].Arguments = map[string]model.Value{}
@@ -102,7 +136,7 @@ func generatedChromeBindingAdapterCase(t *testing.T, action string) {
 	plan.Steps[0].Effect.BusinessKey = map[string]model.Value{"case": {Kind: model.StringValue, String: "adapter-case"}}
 	wait, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
-	op, err := r.StartPlan(wait, session.SessionID, *plan, nil)
+	op, err := r.StartPlanWithRequest(wait, session.SessionID, "original-binding-request", *plan, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,6 +145,16 @@ func generatedChromeBindingAdapterCase(t *testing.T, action string) {
 	}
 	if callbackErr != nil || !committed.CommitConfirmed || !committed.ReadbackMatched || committed.BindingID != data.ChromeAttemptBindingID(p.Namespace, p.ClientID, actual.AttemptID) {
 		t.Fatalf("actual binding adapter did not commit and read back: %+v %v", committed, callbackErr)
+	}
+	repeated, err := r.StartPlanWithRequest(wait, session.SessionID, "original-binding-request", *plan, nil)
+	if err != nil || repeated.ID != op.ID || dispatches != 1 {
+		t.Fatal("original request reexecuted", err)
+	}
+	changed := *plan
+	changed.Steps = append([]model.Step(nil), plan.Steps...)
+	changed.Steps[0].TimeoutMs--
+	if _, err := r.StartPlanWithRequest(wait, session.SessionID, "original-binding-request", changed, nil); err == nil || dispatches != 1 {
+		t.Fatal("conflicting original identity reached dispatch")
 	}
 	if _, err = data.RequireCommittedStepIntent(dispatchContext, p); err == nil {
 		t.Fatal("binding dispatch context survived return")

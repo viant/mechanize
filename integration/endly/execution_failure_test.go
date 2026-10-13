@@ -59,6 +59,34 @@ func TestExecutionFailurePreInputConsentDiagnostic(t *testing.T) {
 		}
 	}
 }
+func TestExecutionFailureBindingCommitRequiresTypedNoInputProof(t *testing.T) {
+	proof := &model.MechanizeError{Code: "bindingUnconfirmed", Stage: "browser", DispatchState: "notDispatched", EffectState: "none", Message: "PRIVATE_CANARY"}
+	got := executionFailure(StepResult{}, fmt.Errorf("wrapped: %w", proof))
+	if got == nil || got.Code != proof.Code || got.DispatchState != "notDispatched" || !got.Valid() {
+		t.Fatal("binding commit diagnostic lost")
+	}
+	for _, mutate := range []func(*model.MechanizeError){
+		func(e *model.MechanizeError) { e.Stage = "consent" },
+		func(e *model.MechanizeError) { e.DispatchState = "unknown" },
+		func(e *model.MechanizeError) { e.EffectState = "unknown" },
+	} {
+		invalid := *proof
+		mutate(&invalid)
+		if executionFailure(StepResult{}, &invalid) != nil {
+			t.Fatal("unqualified binding failure became no-input proof")
+		}
+	}
+	if executionFailure(StepResult{}, errors.New(proof.Error())) != nil {
+		t.Fatal("flattened text became binding diagnostic")
+	}
+	for _, state := range []string{"dispatched", "unknown"} {
+		got := executionFailure(StepResult{DispatchState: state}, proof)
+		if got == nil || got.DispatchState != "unknown" {
+			t.Fatal("conflicting receipt lost uncertainty")
+		}
+	}
+}
+
 func TestExecutionFailureOwnedRuntimeBoundary(t *testing.T) {
 	ctx := actor(t, "failure-owner")
 	p, _ := auth.FromContext(ctx)
