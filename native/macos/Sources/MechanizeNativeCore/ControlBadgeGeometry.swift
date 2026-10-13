@@ -45,10 +45,10 @@ public enum ControlBadgeGeometry {
         guard rectangles.allSatisfy({[$0.minX,$0.minY,$0.width,$0.height].allSatisfy({$0.isFinite}) && $0.width>0 && $0.height>0}),trafficLights.allSatisfy({header.contains($0)}) else{return nil}
         let center=trafficLights.map(\.midY).reduce(0,+)/CGFloat(trafficLights.count)
         let zoneEnd=leadingZoneEnd(window:window,trafficLights:trafficLights)
-        for size in compactOnly ? [CGSize(width:22,height:12)] : [CGSize(width:46,height:18),CGSize(width:22,height:12)] {
+        for size in compactOnly ? [CGSize(width:22,height:18),CGSize(width:22,height:12)] : [CGSize(width:46,height:18),CGSize(width:22,height:12)] {
             let preferred=center-size.height/2
             let scanned=stride(from:CGFloat(2),through:44-size.height-2,by:2).filter{abs($0+window.minY-preferred)>1}.map{$0+window.minY}
-            let ys=compactOnly ? scanned+[preferred] : [preferred]+scanned
+            let ys=[preferred]+scanned
             for y in ys where y>=window.minY+2 && y+size.height<=header.maxY-2 {
                 let band=CGRect(x:window.minX+6,y:y,width:zoneEnd-window.minX-6,height:size.height)
                 guard band.width>=size.width else{continue}

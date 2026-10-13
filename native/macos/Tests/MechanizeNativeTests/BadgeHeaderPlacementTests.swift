@@ -11,7 +11,8 @@ final class BadgeHeaderPlacementTests:XCTestCase {
   let oversized=(0..<129).map{_ in opaque}
   for occupied:[CGRect]? in [nil,[],[opaque],oversized] {
    let frame=try XCTUnwrap(ControlBadgeGeometry.presentationHeaderFrame(window:window,trafficLights:lights,occupied:occupied,coverageComplete:false))
-   XCTAssertEqual(frame.size,CGSize(width:22,height:12))
+   XCTAssertEqual(frame.size,CGSize(width:22,height:18))
+   XCTAssertEqual(frame.midY,lights[0].midY)
    XCTAssertTrue(CGRect(x:window.minX,y:window.minY,width:window.width,height:44).contains(frame))
    XCTAssertLessThanOrEqual(frame.maxX,ControlBadgeGeometry.leadingZoneEnd(window:window,trafficLights:lights))
    for light in lights {XCTAssertFalse(frame.intersects(light.insetBy(dx:-2,dy:-2)))}
@@ -21,6 +22,17 @@ final class BadgeHeaderPlacementTests:XCTestCase {
   // complete; they cannot indefinitely suppress a pointer-transparent mark.
   XCTAssertNotNil(ControlBadgeGeometry.presentationHeaderFrame(window:window,trafficLights:lights,occupied:[opaque],coverageComplete:true))
   XCTAssertNil(ControlBadgeGeometry.presentationHeaderFrame(window:window,trafficLights:[],occupied:nil,coverageComplete:false))
+ }
+ func testNarrowTitleRowGapUsesTallMarkAndCrowdedTabsKeepReducedMark() throws {
+  let window=CGRect(x:0,y:26,width:900,height:700)
+  let lights=(0..<3).map{CGRect(x:14+CGFloat($0*20),y:window.minY+18,width:12,height:12)}
+  let project=CGRect(x:94,y:window.minY+6,width:140,height:32)
+  let centered=try XCTUnwrap(ControlBadgeGeometry.presentationHeaderFrame(window:window,trafficLights:lights,occupied:[project],coverageComplete:false))
+  XCTAssertEqual(centered.size,CGSize(width:22,height:18));XCTAssertEqual(centered.midY,lights[0].midY)
+  XCTAssertFalse(centered.intersects(project.insetBy(dx:-2,dy:-2)))
+  let crowded=CGRect(x:76,y:window.minY+8,width:824,height:36)
+  let reduced=try XCTUnwrap(ControlBadgeGeometry.presentationHeaderFrame(window:window,trafficLights:lights,occupied:[crowded],coverageComplete:false))
+  XCTAssertEqual(reduced.size,CGSize(width:22,height:12));XCTAssertFalse(reduced.intersects(crowded.insetBy(dx:-2,dy:-2)))
  }
  func testChromeKnownTabHeaderKeepsMeasuredPlacementWithFallbackAvailable() throws {
   let window=CGRect(x:0,y:26,width:900,height:700)

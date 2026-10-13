@@ -65,16 +65,47 @@ final class CompactBadgeRenderingTests:XCTestCase {
   let path=ProcessInfo.processInfo.environment["MECHANIZE_BADGE_PREVIEW"] ?? "/private/tmp/mechanize-compact-badge-header.png"
   try XCTUnwrap(image.representation(using:.png,properties:[:])).write(to:URL(fileURLWithPath:path),options:.atomic)
  }
+ func testCenteredNarrowMarkRendersReadableActiveAndIdleLetters()throws {
+  _=NSApplication.shared.setActivationPolicy(.accessory)
+  let image=try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:800,pixelsHigh:192,bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bytesPerRow:0,bitsPerPixel:0))
+  let graphics=try XCTUnwrap(NSGraphicsContext(bitmapImageRep:image));NSGraphicsContext.saveGraphicsState()
+  graphics.cgContext.translateBy(x:0,y:192);graphics.cgContext.scaleBy(x:2,y:-2)
+  NSGraphicsContext.current=NSGraphicsContext(cgContext:graphics.cgContext,flipped:true)
+  for row in 0..<2 {
+   let y=CGFloat(row*48),window=CGRect(x:0,y:y,width:400,height:700)
+   NSColor(calibratedWhite:row==0 ? 0.94:0.22,alpha:1).setFill();CGRect(x:0,y:y,width:400,height:48).fill()
+   let lights=(0..<3).map{CGRect(x:14+CGFloat($0*20),y:y+18,width:12,height:12)}
+   for (i,color) in [NSColor.systemRed,NSColor.systemYellow,NSColor.systemGreen].enumerated(){color.setFill();NSBezierPath(ovalIn:lights[i]).fill()}
+   let project=CGRect(x:94,y:y+6,width:180,height:32)
+   NSColor(calibratedWhite:row==0 ? 0.82:0.32,alpha:1).setFill();NSBezierPath(roundedRect:project,xRadius:7,yRadius:7).fill()
+   let placement=try XCTUnwrap(ControlBadgeGeometry.presentationHeaderFrame(window:window,trafficLights:lights,occupied:[project],coverageComplete:false))
+   XCTAssertEqual(placement.size,CGSize(width:22,height:18));XCTAssertEqual(placement.midY,lights[0].midY)
+   NSGraphicsContext.saveGraphicsState();graphics.cgContext.translateBy(x:placement.minX,y:placement.minY)
+   let view=AutomationControlBadgeView(frame:CGRect(origin:.zero,size:placement.size));view.active=row==0;view.draw(view.bounds)
+   NSGraphicsContext.restoreGraphicsState()
+   // Count actual colored glyph pixels inside the ring, excluding traffic lights.
+   var blue=0,red=0
+   let inner=placement.insetBy(dx:2,dy:2)
+   for py in Int(inner.minY*2)..<Int(inner.maxY*2) {for px in Int(inner.minX*2)..<Int(inner.maxX*2) {
+    let c=try XCTUnwrap(image.colorAt(x:px,y:py)?.usingColorSpace(.deviceRGB))
+    if c.blueComponent>0.55&&c.redComponent<0.5&&c.greenComponent<0.7{blue+=1}
+    if c.redComponent>0.6&&c.greenComponent<0.45&&c.blueComponent<0.5{red+=1}
+   }}
+   XCTAssertGreaterThan(blue,18);XCTAssertGreaterThan(red,14)
+  }
+  NSGraphicsContext.restoreGraphicsState()
+  try XCTUnwrap(image.representation(using:.png,properties:[:])).write(to:URL(fileURLWithPath:"/private/tmp/mechanize-centered-narrow-badge-header.png"),options:.atomic)
+ }
  func testCapsuleLayoutKeepsLettersInsideBothMarkSizes() {
-  for size in [CGSize(width:46,height:18),CGSize(width:22,height:12)] {
+  for size in [CGSize(width:46,height:18),CGSize(width:22,height:18),CGSize(width:22,height:12)] {
    let layout=AutomationControlBadgeLayout(size:size),bounds=NSRect(origin:.zero,size:size)
-   XCTAssertEqual(layout.radius,layout.pill.height/2,"full capsule");XCTAssertEqual(layout.compact,size.height<16)
+   XCTAssertEqual(layout.radius,layout.pill.height/2,"full capsule");XCTAssertEqual(layout.compact,size.height<16 || size.width<30)
    XCTAssertTrue(bounds.contains(layout.pill));XCTAssertLessThan(layout.m.maxX,layout.v.minX,"M precedes V")
    let letters=layout.m.union(layout.v)
    XCTAssertGreaterThanOrEqual(letters.minX,2,"leading inset");XCTAssertLessThanOrEqual(letters.maxX,size.width-2,"trailing inset")
    XCTAssertEqual(letters.midX,size.width/2,accuracy:1.5,"horizontally centred")
    XCTAssertLessThanOrEqual(layout.font.capHeight,size.height-2*2,"cap height clears the capsule")
-   XCTAssertEqual(layout.font.pointSize,layout.compact ? 8:12)
+   XCTAssertEqual(layout.font.pointSize,size.height<16 ? 8:(size.width<30 ? 10:12))
   }
  }
  func testCompactGeometryAndPanelDoNotTakeFocusOrInterceptInput() {
