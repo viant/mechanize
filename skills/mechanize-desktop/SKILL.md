@@ -40,18 +40,21 @@ until the server reports the relevant authorization and the result is verified.
    are prioritized within the bounded snapshot; truncation still means the
    observation is incomplete. Do not assume Chrome DOM roles match Playwright’s
    computed accessibility roles—validate the current Mechanize locator.
-4. **Find and validate.** Choose a semantic locator in the observed app/window
+4. **Choose a target.** Choose a semantic locator in the observed app/window
    or tab. Require one match for an action; clarify ambiguity by narrowing the
-   scope or locator. Use `mechanize_script_validate` to parse/type-check DSL
-   without executing it. This check is not an authorization grant and does not
-   prove a backend will execute the plan.
+   scope or locator. Use `mechanize_script_validate` when authoring unfamiliar
+   DSL or a new workflow structure. A typed step using the already-discovered
+   tool schema does not need a separate validation call before every run.
+   Validation checks syntax and types; it does not establish runtime readiness.
 5. **Run.** Keep the owned `sessionId` for subsequent calls.
-   Issue one action for a given tab or window, inspect its result, then choose
-   the next action. Do not issue duplicate calls or parallel preparation/status
+   Inspect an action's returned result before choosing a dependent action.
+   Use a script for a short, fully specified sequence whose targets and arguments
+   are already known; split at navigation or another point requiring fresh UI
+   evidence. Do not issue duplicate calls or parallel preparation/status
    calls against the same private sign-in flow. Independent reads may run in
    parallel when their scopes do not interfere.
    Use `mechanize_step_run` for exactly one
-   execution step or `mechanize_script_run` for a validated script. Supply a
+   execution step or `mechanize_script_run` for a typed script. Supply a
    unique `clientRequestId` for each intended run. For short operations, set
    `waitMs: 5000` to receive completion in this call when ready (default `0`
    returns immediately). For a declared read binding such as `let answer = ...read(...)`,
@@ -140,9 +143,10 @@ For the closed envelope grammar, inspect the server's advertised schema and
 validate before execution. Adapter names in a plan do not enroll or qualify them.
 
 The current parser/compiler accepts shared macOS and Chrome scopes, semantic
-locators, reads, fills, clicks, and bounded assertions. Validate any proposed
-syntax with `mechanize_script_validate`; do not add host-language code, shell
-commands, or guessed methods.
+locators, reads, fills, clicks, and bounded assertions. Validate unfamiliar
+syntax with `mechanize_script_validate`, then reuse that structure with fresh
+targets and arguments. Do not add host-language code, shell commands, or guessed
+methods.
 
 For web locators, `read` accepts `text`, `value`, `name`, or `checked`.
 Use `.read("text")` for an element's text; DOM property names such as
