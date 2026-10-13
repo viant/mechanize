@@ -4,6 +4,33 @@ import MechanizeNativeCore
 @testable import MechanizeNative
 
 final class BadgeHeaderPlacementTests:XCTestCase {
+ func testIncompleteIDEHeaderMetadataKeepsCompactTrafficLightAnchor() throws {
+  let window=CGRect(x:10,y:46,width:1292,height:734)
+  let lights=(0..<3).map{CGRect(x:window.minX+14+CGFloat($0*20),y:window.minY+18,width:12,height:12)}
+  let opaque=CGRect(x:window.minX,y:window.minY,width:window.width,height:44)
+  let oversized=(0..<129).map{_ in opaque}
+  for occupied:[CGRect]? in [nil,[],[opaque],oversized] {
+   let frame=try XCTUnwrap(ControlBadgeGeometry.presentationHeaderFrame(window:window,trafficLights:lights,occupied:occupied,coverageComplete:false))
+   XCTAssertEqual(frame.size,CGSize(width:22,height:12))
+   XCTAssertTrue(CGRect(x:window.minX,y:window.minY,width:window.width,height:44).contains(frame))
+   XCTAssertLessThanOrEqual(frame.maxX,ControlBadgeGeometry.leadingZoneEnd(window:window,trafficLights:lights))
+   for light in lights {XCTAssertFalse(frame.intersects(light.insetBy(dx:-2,dy:-2)))}
+   XCTAssertEqual(ControlBadgeGeometry.frame(window:window,headerCenter:frame.midY-window.minY,leading:frame.minX-window.minX,size:frame.size),frame)
+  }
+  // Opaque AX containers are optional coverage metadata even when reported as
+  // complete; they cannot indefinitely suppress a pointer-transparent mark.
+  XCTAssertNotNil(ControlBadgeGeometry.presentationHeaderFrame(window:window,trafficLights:lights,occupied:[opaque],coverageComplete:true))
+  XCTAssertNil(ControlBadgeGeometry.presentationHeaderFrame(window:window,trafficLights:[],occupied:nil,coverageComplete:false))
+ }
+ func testChromeKnownTabHeaderKeepsMeasuredPlacementWithFallbackAvailable() throws {
+  let window=CGRect(x:0,y:26,width:900,height:700)
+  let lights=(0..<3).map{CGRect(x:window.minX+14+CGFloat($0*20),y:window.minY+18,width:12,height:12)}
+  let strip=CGRect(x:window.minX+76,y:window.minY+8,width:window.width-76,height:36)
+  let frame=try XCTUnwrap(ControlBadgeGeometry.presentationHeaderFrame(window:window,trafficLights:lights,occupied:[strip],coverageComplete:true))
+  XCTAssertEqual(frame,ControlBadgeGeometry.freeHeaderFrame(window:window,trafficLights:lights,occupied:[strip]))
+  XCTAssertFalse(frame.intersects(strip));for light in lights{XCTAssertFalse(frame.intersects(light))}
+ }
+
  func testFullMarkStaysInLeadingZoneBesideTrafficLightsAndNeverWandersAfterTabs() {
   let window=CGRect(x:-900,y:40,width:900,height:700)
   let lights=(0..<3).map{CGRect(x:window.minX+14+CGFloat($0*20),y:window.minY+18,width:12,height:12)}

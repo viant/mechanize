@@ -23,22 +23,32 @@ public enum ControlBadgeGeometry {
         min(window.maxX-6,(trafficLights.map(\.maxX).max() ?? window.minX)+leadingZoneSlack)
     }
 
+    /// Decorative fallback uses only verified window/traffic-light geometry when
+    /// ordinary AX header metadata is incomplete or opaque. It stays compact,
+    /// in the leading header zone and clear of the measured traffic-light areas.
+    public static func presentationHeaderFrame(window:CGRect,trafficLights:[CGRect],occupied:[CGRect]?,coverageComplete:Bool)->CGRect? {
+        if coverageComplete,let occupied,let measured=freeHeaderFrame(window:window,trafficLights:trafficLights,occupied:occupied){return measured}
+        if let occupied,let measured=freeHeaderFrame(window:window,trafficLights:trafficLights,occupied:occupied,compactOnly:true){return measured}
+        return freeHeaderFrame(window:window,trafficLights:trafficLights,occupied:[],compactOnly:true)
+    }
+
     /// Complete geometry-only header census. Never place a window indicator on
     /// traffic lights, tabs or another occupied control. Prefer the full 46x18
     /// MV capsule in the leading zone beside the traffic lights; if that zone is
     /// crowded, fall back to the reduced 22x12 capsule in the same leading zone
     /// (typically above or below the lights). Free space further right is never
     /// used. Both sizes are rendered by the same capsule layout.
-    public static func freeHeaderFrame(window:CGRect,trafficLights:[CGRect],occupied:[CGRect])->CGRect? {
+    public static func freeHeaderFrame(window:CGRect,trafficLights:[CGRect],occupied:[CGRect],compactOnly:Bool=false)->CGRect? {
         guard frame(window:window) != nil,!trafficLights.isEmpty,trafficLights.count<=3,occupied.count<=128 else{return nil}
         let header=CGRect(x:window.minX,y:window.minY,width:window.width,height:44)
         let rectangles=trafficLights+occupied
         guard rectangles.allSatisfy({[$0.minX,$0.minY,$0.width,$0.height].allSatisfy({$0.isFinite}) && $0.width>0 && $0.height>0}),trafficLights.allSatisfy({header.contains($0)}) else{return nil}
         let center=trafficLights.map(\.midY).reduce(0,+)/CGFloat(trafficLights.count)
         let zoneEnd=leadingZoneEnd(window:window,trafficLights:trafficLights)
-        for size in [CGSize(width:46,height:18),CGSize(width:22,height:12)] {
+        for size in compactOnly ? [CGSize(width:22,height:12)] : [CGSize(width:46,height:18),CGSize(width:22,height:12)] {
             let preferred=center-size.height/2
-            let ys=[preferred]+stride(from:CGFloat(2),through:44-size.height-2,by:2).filter{abs($0+window.minY-preferred)>1}.map{$0+window.minY}
+            let scanned=stride(from:CGFloat(2),through:44-size.height-2,by:2).filter{abs($0+window.minY-preferred)>1}.map{$0+window.minY}
+            let ys=compactOnly ? scanned+[preferred] : [preferred]+scanned
             for y in ys where y>=window.minY+2 && y+size.height<=header.maxY-2 {
                 let band=CGRect(x:window.minX+6,y:y,width:zoneEnd-window.minX-6,height:size.height)
                 guard band.width>=size.width else{continue}

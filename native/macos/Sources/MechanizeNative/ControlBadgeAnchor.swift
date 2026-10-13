@@ -40,22 +40,29 @@ struct ControlBadgeAnchor: Equatable {
             guard let value=read(window,name),CFGetTypeID(value)==AXUIElementGetTypeID(),let frame=ownedBounds(value as! AXUIElement),header.contains(frame) else{return nil}
             lights.append(frame)
         }
-        guard let children=read(window,kAXChildrenAttribute) as? [AXUIElement] else{return nil}
-        var queue=children.map{($0,0)},occupied:[CGRect]=[],seen=0
+        var occupied:[CGRect]=[]
+        func placement(_ coverageComplete:Bool)->ControlBadgeAnchor? {
+            guard let frame=ControlBadgeGeometry.presentationHeaderFrame(window:bounds,trafficLights:lights,occupied:occupied,coverageComplete:coverageComplete) else{return nil}
+            return ControlBadgeAnchor(headerCenter:frame.midY-bounds.minY,leading:frame.minX-bounds.minX,size:frame.size)
+        }
+        func incomplete()->ControlBadgeAnchor? {
+            return placement(false)
+        }
+        guard let children=read(window,kAXChildrenAttribute) as? [AXUIElement] else{return incomplete()}
+        var queue=children.map{($0,0)},seen=0
         while !queue.isEmpty {
-            guard seen<128,ProcessInfo.processInfo.systemUptime<deadline else{return nil}
+            guard seen<128,ProcessInfo.processInfo.systemUptime<deadline else{return incomplete()}
             let (element,depth)=queue.removeFirst();seen+=1
-            guard let frame=ownedBounds(element) else{return nil}
+            guard let frame=ownedBounds(element) else{return incomplete()}
             if !frame.intersects(header){continue}
-            guard let role=read(element,kAXRoleAttribute) as? String else{return nil}
+            guard let role=read(element,kAXRoleAttribute) as? String else{return incomplete()}
             if role=="AXWebArea" {occupied.append(frame);continue}
             if ["AXGroup","AXToolbar","AXTabGroup","AXSplitGroup","AXScrollArea"].contains(role),depth<6 {
-                guard let nested=read(element,kAXChildrenAttribute) as? [AXUIElement],nested.count+queue.count+seen<=128 else{return nil}
+                guard let nested=read(element,kAXChildrenAttribute) as? [AXUIElement],nested.count+queue.count+seen<=128 else{return incomplete()}
                 if !nested.isEmpty {queue.append(contentsOf:nested.map{($0,depth+1)});continue}
             }
             occupied.append(frame)
         }
-        guard ProcessInfo.processInfo.systemUptime<deadline,let placement=ControlBadgeGeometry.freeHeaderFrame(window:bounds,trafficLights:lights,occupied:occupied) else{return nil}
-        return ControlBadgeAnchor(headerCenter:placement.midY-bounds.minY,leading:placement.minX-bounds.minX,size:placement.size)
+        return placement(ProcessInfo.processInfo.systemUptime<deadline)
     }
 }
