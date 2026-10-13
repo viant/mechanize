@@ -57,7 +57,8 @@ public enum WindowTextSequence {
                 try preflight()
                 try send(chunk) { attempted = true }
             }
-            try preflight()
+            // Each send has confirmed its key-up/release. A later focus read
+            // cannot change that delivery receipt; callers verify UI separately.
             return WindowTextSequenceResult(dispatchState: "dispatched", failure: nil)
         } catch {
             return WindowTextSequenceResult(dispatchState: attempted ? "unknown" : "notDispatched",

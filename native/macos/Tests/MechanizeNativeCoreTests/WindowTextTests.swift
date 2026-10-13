@@ -17,7 +17,7 @@ final class WindowTextTests: XCTestCase {
     }
     func testInterruptedSequenceNeverRetriesOrSendsRemainder() {
         let chunks: [[UInt16]] = [[97],[98],[99]]
-        for failAfter in 0...3 {
+        for failAfter in 0..<3 {
             var sent = 0
             let result = WindowTextSequence.perform(chunks, preflight: {
                 if sent == failAfter { throw NativeFailure("cancelled","Cancelled") }
@@ -30,5 +30,15 @@ final class WindowTextTests: XCTestCase {
             willPost(); sent += 1; throw NativeFailure("releaseUnknown","Unconfirmed release")
         })
         XCTAssertEqual(sent, 1); XCTAssertEqual(failure.dispatchState, "unknown")
+    }
+    func testCompletedReleasedTextDoesNotRequirePostDeliveryFocusObservation() {
+        let chunks: [[UInt16]] = [[97],[98],[99]]
+        var sent = 0, checks = 0
+        let result = WindowTextSequence.perform(chunks, preflight: {
+            checks += 1
+            if sent == chunks.count { throw NativeFailure("foregroundRefreshUnavailable","Observation unavailable") }
+        }, send: { _, willPost in willPost(); sent += 1 })
+        XCTAssertEqual(sent,3); XCTAssertEqual(checks,3)
+        XCTAssertEqual(result.dispatchState,"dispatched"); XCTAssertNil(result.failure)
     }
 }
