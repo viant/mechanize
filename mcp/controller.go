@@ -244,7 +244,7 @@ func controllerRejected(dispatch string, codes ...string) *schema.CallToolResult
 	code := "controllerToolRejected"
 	if len(codes) > 0 {
 		switch codes[0] {
-		case "permissionRequired", "permissionExpired", "permissionDenied", "secureDocumentRequired", "staleGeneration", "staleAuthority", "unknownEffect", "targetNotFound", "ambiguousTarget", "invalidArguments", "sessionRequired", "sessionNotOwned", "invalidScopeKind", "invalidConsentScope", "unsupportedMode", "invalidSurface", "invalidScope", "browserInventoryUnavailable", "privateDOMUnavailable":
+		case "permissionRequired", "permissionExpired", "permissionDenied", "secureDocumentRequired", "staleGeneration", "staleAuthority", "unknownEffect", "targetNotFound", "ambiguousTarget", "invalidArguments", "sessionRequired", "sessionNotOwned", "invalidScopeKind", "invalidConsentScope", "unsupportedMode", "invalidSurface", "invalidScope", "browserInventoryUnavailable", "privateDOMUnavailable", "publicReadIdentityChanged", "publicReadInventoryUnavailable", "publicReadBusy", "publicReadLimit", "publicReadUnavailable":
 			code = codes[0]
 		}
 	}
@@ -257,6 +257,18 @@ func controllerRejected(dispatch string, codes ...string) *schema.CallToolResult
 	}
 	if code == "invalidScope" {
 		message = "Use an exact discovered scope. Native window observation requires surface.processId and surface.processStartToken plus a discovered window title. For screenshots, discover windows with mechanize_capture_windows and capture the returned window instead."
+	}
+	switch code {
+	case "publicReadIdentityChanged":
+		message = "Public document identity changed during read qualification; select the current tab and observe again."
+	case "publicReadInventoryUnavailable":
+		message = "Current browser tab or frame metadata is unavailable for this read."
+	case "publicReadBusy":
+		message = "A current browser exchange prevents this read; wait for its receipt."
+	case "publicReadLimit":
+		message = "Public document read proof capacity is exhausted."
+	case "publicReadUnavailable":
+		message = "Public document read proof is unavailable; inspect current browser connection metadata."
 	}
 	body := map[string]any{"code": code, "message": message, "dispatchState": dispatch}
 	raw, _ := json.Marshal(body)
