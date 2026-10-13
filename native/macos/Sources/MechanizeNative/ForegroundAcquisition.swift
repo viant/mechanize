@@ -100,6 +100,30 @@ struct AXSemanticForegroundRecipient {
   guard CFEqual(before,after) else{throw NativeFailure("foregroundAXFocusChanged","Application focused AX window changed during recipient proof; business input was not dispatched")}
   return CFEqual(window,after)
  }
+ // Named reference keyboard delivery has an exact AX recipient, unlike a
+ // window-ID shortcut or pointer action. AppKit search popups need not have a
+ // supported pixel layer; require their owned AX window and already-focused
+ // element instead. This proof never focuses a field or reads its contents.
+ func keyboardFocused(_ budget:Budget,runtime:ScopedNativeRootRuntime = .system)throws->Bool {
+  guard window != nil else{throw NativeFailure("foregroundAXWindowUnavailable","Keyboard recipient requires an exact owned AX window")}
+  guard try focused(budget,runtime:runtime) else{return false}
+  func readFocusedElement()throws->AXUIElement {
+   let raw=try read(application,kAXFocusedUIElementAttribute,budget,runtime)
+   guard raw.0 == .success,let value=raw.1,CFGetTypeID(value)==AXUIElementGetTypeID() else{throw NativeFailure("foregroundAXFocusUnavailable","Application focused AX element unavailable; business input was not dispatched")}
+   let current=value as! AXUIElement;try owned(current,budget,runtime);return current
+  }
+  func targetFocused()throws->Bool {
+   let raw=try read(element,kAXFocusedAttribute,budget,runtime)
+   guard raw.0 == .success,let value=raw.1 as? Bool else{throw NativeFailure("foregroundAXFocusUnavailable","Exact target focus attribute unavailable; business input was not dispatched")}
+   return value
+  }
+  let before=try readFocusedElement(),beforeFocused=try targetFocused()
+  try validate(budget,runtime:runtime)
+  let after=try readFocusedElement(),afterFocused=try targetFocused()
+  guard CFEqual(before,after),beforeFocused==afterFocused else{throw NativeFailure("foregroundAXElementFocusChanged","Exact keyboard element focus changed during recipient proof; business input was not dispatched")}
+  guard beforeFocused,CFEqual(after,element) else{return false}
+  return try focused(budget,runtime:runtime)
+ }
 }
 
 struct NativeForegroundTarget {
@@ -109,6 +133,7 @@ struct NativeForegroundTarget {
  let reference:Reference?
  var pointerDelivery=false
  var semanticRecipient:AXSemanticForegroundRecipient?=nil
+ var keyboardRecipient=false
  private static func bounds(_ window:AXUIElement,pid:pid_t,budget:Budget)throws->CGRect {
   try budget.check();AXUIElementSetMessagingTimeout(window,min(0.05,budget.remainingSeconds))
   guard let rect=AutomationPointer.windowBounds(element:window,pid:pid) else{throw NativeFailure("foregroundGeometryUnavailable","Exact owned window geometry unavailable")};try budget.check();return rect
@@ -117,12 +142,12 @@ struct NativeForegroundTarget {
   try budget.check();guard applicationLoginUID(pid)==getuid(),applicationProcessStartToken(pid)==birth,NSRunningApplication(processIdentifier:pid)?.bundleIdentifier==bundle,
    let rows=WindowSessionKeyRuntime.system.windows(),rows.count<=1000 else{throw NativeFailure("staleReference","Exact process/window metadata unavailable")};try budget.check();return rows
  }
- static func from(_ ref:Reference,budget:Budget,semanticOnly:Bool=false)throws->NativeForegroundTarget{
+ static func from(_ ref:Reference,budget:Budget,semanticOnly:Bool=false,keyboardOnly:Bool=false)throws->NativeForegroundTarget{
   try ref.validateProcess();try budget.check()
-  if semanticOnly {
+  if semanticOnly || keyboardOnly {
    try ref.validateInputScope(budget)
-   let proof=try AXSemanticForegroundRecipient.bind(element:ref.element,application:AXUIElementCreateApplication(ref.pid),pid:ref.pid,uid:getuid(),birth:ref.startToken,bundle:ref.bundleID,menuRoot:ref.scopedRoot?.scope == .menuBar,budget:budget)
-   return NativeForegroundTarget(pid:ref.pid,birth:ref.startToken,bundle:ref.bundleID,windowID:nil,window:proof.window,reference:ref,semanticRecipient:proof)
+   let proof=try AXSemanticForegroundRecipient.bind(element:ref.element,application:AXUIElementCreateApplication(ref.pid),pid:ref.pid,uid:getuid(),birth:ref.startToken,bundle:ref.bundleID,menuRoot:semanticOnly && ref.scopedRoot?.scope == .menuBar,budget:budget)
+   return NativeForegroundTarget(pid:ref.pid,birth:ref.startToken,bundle:ref.bundleID,windowID:nil,window:proof.window,reference:ref,semanticRecipient:proof,keyboardRecipient:keyboardOnly)
   }
   AXUIElementSetMessagingTimeout(ref.element,min(0.05,budget.remainingSeconds))
   var raw:CFTypeRef?,role:CFTypeRef?
@@ -206,7 +231,10 @@ struct NativeForegroundTarget {
   rows.first{$0.pid==pid&&$0.visible&&$0.alpha>0&&(!pointerDelivery || supportedSessionInputWindowLayer($0.layer))}?.id==windowID
  }
  func windowReady(_ budget:Budget)throws->Bool {
-  if let semanticRecipient{return try semanticRecipient.focused(budget)}
+  if let semanticRecipient {
+   if keyboardRecipient{return try semanticRecipient.keyboardFocused(budget)}
+   return try semanticRecipient.focused(budget)
+  }
   guard let windowID else{return true};let rows=try Self.ownedRows(pid:pid,birth:birth,bundle:bundle,budget:budget)
   return Self.physicalWindowReady(rows,pid:pid,windowID:windowID,pointerDelivery:pointerDelivery)
  }
@@ -231,6 +259,9 @@ struct NativeForegroundTarget {
 enum NativeForegroundRoutes {
  // These methods dispatch only AX actions/setters. Event delivery is excluded.
  static let semantic:Set<String>=["elements.focus","elements.press","elements.showMenu","elements.submit","elements.setValue","elements.replaceText"]
+ // Only named, reference-addressed keys use AX keyboard recipient proof.
+ // Raw inputs and physical window/text/mouse routes retain CG qualification.
+ static let focusedKeyboard:Set<String>=["elements.pressKey","elements.pressSessionKey"]
  static let reference:Set<String>=["elements.focus","elements.press","elements.showMenu","elements.submit","elements.setValue","elements.replaceText","elements.pressKey","elements.pressSessionKey","input.key","input.text","input.pointer","windows.setPosition"]
  static let physical:Set<String>=["windows.pressSessionKey","windows.typeText"]
  static func requiresAcquisition(_ method:String)->Bool{reference.contains(method)||physical.contains(method)||method=="windows.clickFrame"}
@@ -251,7 +282,7 @@ extension Helper {
    if let raw=params["verifyReplacement"] {guard CFGetTypeID(raw as CFTypeRef)==CFBooleanGetTypeID() else{throw NativeFailure("invalidValue","Boolean verification required")}}
    if let raw=params["modifiers"] {guard let values=raw as? [String],values.count<=4,Set(values).count==values.count,values.allSatisfy({["command","shift","option","control"].contains($0)}) else{throw NativeFailure("invalidModifier","Closed named modifiers required")}}
    guard required.isSubset(of:Set(params.keys)),Set(params.keys).isSubset(of:required.union(optional)),let id=params["elementRef"] as? String,let ref=refs[id],ref.generation==generation,params["generation"] as? Int==generation,params["expectedApp"] as? String==ref.bundleID,DispatchTime.now().uptimeNanoseconds-ref.observedAt<5_000_000_000 else{throw NativeFailure("staleReference","Fresh exact native reference required before foreground preparation")}
-   return try NativeForegroundTarget.from(ref,budget:budget,semanticOnly:NativeForegroundRoutes.semantic.contains(method))
+   return try NativeForegroundTarget.from(ref,budget:budget,semanticOnly:NativeForegroundRoutes.semantic.contains(method),keyboardOnly:NativeForegroundRoutes.focusedKeyboard.contains(method))
   }
   if NativeForegroundRoutes.physical.contains(method){
    let fields:Set<String>=method=="windows.pressSessionKey" ? ["expectedApp","pid","processStartToken","windowId","key"]:["expectedApp","pid","processStartToken","windowId","text","focusRole","focusIdentifier","focusName"]
