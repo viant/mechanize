@@ -207,8 +207,22 @@ func (m *NativeControlManager) AdmitScope(ctx context.Context, requested auth.Pr
 			return NativeControlAdmission{}, session.ErrContended
 		}
 		if m.held.inhibited {
-			return NativeControlAdmission{}, ErrNativeControlCleanupUnknown
+			inspect := m.options.Inspect
+			if inspect == nil {
+				inspect = session.InspectProcess
+			}
+			identity, alive, inspectErr := inspect(m.held.identity.PID)
+			if inspectErr != nil || alive && identity.StartToken == m.held.identity.StartToken || m.options.ReleasedInputProof == nil {
+				return NativeControlAdmission{}, errors.Join(ErrNativeControlCleanupUnknown, inspectErr)
+			}
+			// Retry only physical cleanup of the original dead generation. The
+			// original action receipt remains unknown and is never replayed.
+			if _, err = m.closeLocked(bounded); err != nil {
+				return NativeControlAdmission{}, err
+			}
 		}
+	}
+	if m.held != nil {
 		if !m.held.scope.Equal(scope) {
 			return NativeControlAdmission{}, errors.New("held native scope differs; revoke before explicit transfer")
 		}
@@ -352,6 +366,26 @@ func (m *NativeControlManager) qualify(ctx context.Context, p auth.Principal, he
 }
 func (m *NativeControlManager) stop(held *nativeControlHeld) func(context.Context) (session.CleanupReport, error) {
 	return func(ctx context.Context) (session.CleanupReport, error) {
+		if m.options.ReleasedInputProof != nil {
+			inspect := m.options.Inspect
+			if inspect == nil {
+				inspect = session.InspectProcess
+			}
+			identity, alive, inspectErr := inspect(held.identity.PID)
+			if inspectErr == nil && (!alive || identity.StartToken != held.identity.StartToken) {
+				report := session.CleanupReport{InputInhibited: true, HelperStopped: true, UnknownInputs: true, BusinessOutcomeUnknown: true}
+				if err := m.options.ReleasedInputProof(ctx, held.principal); err != nil {
+					return report, errors.Join(err, ErrNativeControlCleanupUnknown)
+				}
+				if err := ctx.Err(); err != nil {
+					return report, err
+				}
+				report.UnknownInputs = false
+				// Supervisor.Close independently rechecks the exact helper's death
+				// before persisting this proof and releasing its existing fence.
+				return report, nil
+			}
+		}
 		report, err := held.helper.Stop(ctx)
 		err = errors.Join(err, ctx.Err())
 		if err != nil || !report.InputInhibited || !report.HelperStopped || report.UnknownInputs {
