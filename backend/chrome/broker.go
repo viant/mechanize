@@ -937,6 +937,9 @@ func (b *Broker) Close() error {
 	}
 	b.mu.Unlock()
 	err := b.listener.Close()
+	if closeErr := b.playwright.Close(); err == nil {
+		err = closeErr
+	}
 	b.wg.Wait()
 	return err
 }
