@@ -260,7 +260,7 @@ test('setup metadata failure exposes a fixed accessible state without response c
 });
 
 test('native startup diagnostics have fixed descriptions and preserve cause over generic exit',async()=>{
- const codes={configUnavailable:/configuration/,processTrustUnavailable:/Chrome process/,launchScopeUnavailable:/launch scope/,
+ const codes={brokerPeerUnavailable:/identify the local connector/,brokerPeerAuditUnavailable:/read the local connector/,brokerProcessUnqualified:/rejected the local connector/,brokerHelloUnavailable:/valid connection handshake/,brokerHelloRejected:/rejected the connection handshake/,brokerEnrollmentRefused:/saved connector enrollment/,brokerChannelBusy:/active connector/,brokerScopeUnqualified:/saved browser scope/,brokerHandshakeUnavailable:/complete the broker handshake/,configUnavailable:/configuration/,processTrustUnavailable:/Chrome process/,launchScopeUnavailable:/launch scope/,
  socketUnavailable:/broker connection/,brokerUnavailable:/broker is unavailable/,brokerTrustUnavailable:/signing identity/,
  enrollmentCredentialUnavailable:/enrollment credential/,helloIdentityMismatch:/identity does not match/,nativeHostStartupUnavailable:/unrecognized startup/};
  for(const [attentionCode,expected] of Object.entries(codes)){

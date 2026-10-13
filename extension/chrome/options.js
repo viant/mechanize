@@ -140,6 +140,15 @@ function connectionFailure(code) {
     ancestryChanged: "The connector’s process ancestry changed during verification. Review the current Chrome connection in Mechanize.",
     launchScopeUnavailable: "The local connector could not verify Chrome’s launch scope. Review Chrome enrollment in Mechanize.",
     socketUnavailable: "The local connector could not open the broker connection. Check that Mechanize’s broker is running.",
+    brokerPeerUnavailable: "The broker could not identify the local connector process.",
+    brokerPeerAuditUnavailable: "The broker could not read the local connector process identity.",
+    brokerProcessUnqualified: "The broker rejected the local connector process identity.",
+    brokerHelloUnavailable: "The broker did not receive a valid connection handshake.",
+    brokerHelloRejected: "The broker rejected the connection handshake.",
+    brokerEnrollmentRefused: "The broker did not accept the saved connector enrollment.",
+    brokerChannelBusy: "The browser channel already has an active connector.",
+    brokerScopeUnqualified: "The broker could not qualify the saved browser scope.",
+    brokerHandshakeUnavailable: "The local connector could not complete the broker handshake.",
     brokerUnavailable: "Mechanize’s broker is unavailable. Check the local broker in Mechanize.",
     brokerTrustUnavailable: "The local connector could not verify the broker’s signing identity. Repair the matched local installation in Mechanize.",
     enrollmentCredentialUnavailable: "The local connector’s enrollment credential is unavailable. Repair connector enrollment in Mechanize.",
@@ -151,7 +160,7 @@ function connectionFailure(code) {
 let nativeStatusChanges = 0;
 let connectionAttempts = 0;
 let websiteScopeMismatch = false, nativeStartupFailure = null;
-const startupFailureCodes = new Set(["configUnavailable","processTrustUnavailable","runningImageMismatch","nativeHostSignatureUnavailable","chromeSignatureUnavailable","nativeHostProcessUnavailable","nativeHostUIDUnavailable","nativeHostDynamicSignatureUnavailable","chromeImagePathMismatch","chromeAncestryUnavailable","chromeParentUnavailable","ancestryChanged","launchScopeUnavailable","socketUnavailable","brokerUnavailable","brokerTrustUnavailable","enrollmentCredentialUnavailable","helloIdentityMismatch","nativeHostStartupUnavailable"]);
+const startupFailureCodes = new Set(["brokerPeerUnavailable","brokerPeerAuditUnavailable","brokerProcessUnqualified","brokerHelloUnavailable","brokerHelloRejected","brokerEnrollmentRefused","brokerChannelBusy","brokerScopeUnqualified","brokerHandshakeUnavailable","configUnavailable","processTrustUnavailable","runningImageMismatch","nativeHostSignatureUnavailable","chromeSignatureUnavailable","nativeHostProcessUnavailable","nativeHostUIDUnavailable","nativeHostDynamicSignatureUnavailable","chromeImagePathMismatch","chromeAncestryUnavailable","chromeParentUnavailable","ancestryChanged","launchScopeUnavailable","socketUnavailable","brokerUnavailable","brokerTrustUnavailable","enrollmentCredentialUnavailable","helloIdentityMismatch","nativeHostStartupUnavailable"]);
 function rememberedConnectionFailure(code) {
   if (!nativeStartupFailure && typeof code === "string" && startupFailureCodes.has(code)) nativeStartupFailure = code;
   return connectionFailure(nativeStartupFailure || code);
