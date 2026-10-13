@@ -90,8 +90,14 @@ func testOperationFailureRoundTrip(t *testing.T, provided error, wantCode, wantS
 	for _, out := range []*schema.CallToolResult{projected, raw} {
 		body := controllerBody(t, out)
 		failure, ok := body["executionFailure"].(map[string]any)
-		if !ok || failure["code"] != wantCode || failure["dispatchState"] != wantState || len(failure) != 2 {
+		if !ok || failure["code"] != wantCode || failure["dispatchState"] != wantState || len(failure) != expectedFailureFields(provided) {
 			t.Fatalf("closed failure missing: %+v", body)
+		}
+		if expectedFailureFields(provided) == 3 {
+			stats, ok := failure["playwright"].(map[string]any)
+			if !ok || stats["peerMs"] != float64(30) || stats["lastMethod"] != "Runtime.callFunctionOn" || stats["phase"] != wantCode {
+				t.Fatal("closed timing/phase lost")
+			}
 		}
 		if body["operationId"] != operation || body["sessionId"] != session || body["verificationState"] == "verified" {
 			t.Fatal("operation correlation/business status changed")
@@ -107,4 +113,23 @@ func testOperationFailureRoundTrip(t *testing.T, provided error, wantCode, wantS
 	if err == nil && (denied.IsError == nil || !*denied.IsError) {
 		t.Fatal("foreign client read failure")
 	}
+}
+
+func expectedFailureFields(err error) int {
+	if _, ok := err.(interface {
+		PlaywrightExecutionDiagnostic() automation.PlaywrightDiagnostic
+	}); ok {
+		return 3
+	}
+	return 2
+}
+
+type playwrightOperationFailureFixture struct{ *model.MechanizeError }
+
+func (e playwrightOperationFailureFixture) Unwrap() error { return e.MechanizeError }
+func (e playwrightOperationFailureFixture) PlaywrightExecutionDiagnostic() automation.PlaywrightDiagnostic {
+	return automation.PlaywrightDiagnostic{Phase: e.Code, Callbacks: 7, PeerChecks: 2, PeerMs: 30, IdentityChecks: 12, ElapsedMs: 80, LastCallback: "relay.send", LastMethod: "Runtime.callFunctionOn"}
+}
+func TestOperationStatusPlaywrightTimingReachesController(t *testing.T) {
+	testOperationFailureRoundTrip(t, playwrightOperationFailureFixture{&model.MechanizeError{Code: "playwrightDeadline", Stage: "browser", DispatchState: "notDispatched", EffectState: "none", Message: "PRIVATE_DIAGNOSTIC_CANARY"}}, "playwrightDeadline", "notDispatched")
 }

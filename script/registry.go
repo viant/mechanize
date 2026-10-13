@@ -129,9 +129,15 @@ func (Registry) CheckCapabilities(plan *model.Plan, supported map[string]bool) e
 			if target.Locator == nil {
 				continue
 			}
-			strategy := map[string]string{"role": "roleLocator", "id": "idLocator", "name": "nameLocator", "text": "textLocator", "label": "labelRelationships", "testId": "testIdLocator"}[target.Locator.Strategy]
+			strategy := LocatorCapability(target.Locator.Strategy)
 			if !supported[s.Target.Surface.Kind+":"+strategy] {
-				return fmt.Errorf("step %s requires capability %s:%s", s.ID, s.Target.Surface.Kind, strategy)
+				alternatives := []string{}
+				for _, locator := range []string{"role", "id", "testId", "label", "name", "text"} {
+					if supported[s.Target.Surface.Kind+":"+LocatorCapability(locator)] {
+						alternatives = append(alternatives, locator)
+					}
+				}
+				return &CapabilityUnavailableError{Action: s.Action, Surface: s.Target.Surface.Kind, Capability: strategy, Locator: target.Locator.Strategy, Alternatives: alternatives}
 			}
 		}
 	}

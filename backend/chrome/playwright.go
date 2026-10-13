@@ -16,6 +16,7 @@ import (
 	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/auth/nativepeer"
 	"github.com/viant/mechanize/backend/chrome/playwrightipc"
+	integration "github.com/viant/mechanize/integration/endly"
 	"github.com/viant/mechanize/internal/chromeframe"
 	"github.com/viant/mechanize/model"
 )
@@ -497,7 +498,7 @@ func (b *Broker) callPlaywright(ctx context.Context, c *channel, command Command
 		}
 		b.mu.Unlock()
 		if receipt.Error != nil {
-			return *receipt, receipt.Error
+			return *receipt, e.diagnosticFailure(receipt.Error)
 		}
 		return *receipt, nil
 	}
@@ -529,7 +530,7 @@ func (b *Broker) callPlaywright(ctx context.Context, c *channel, command Command
 		delete(c.unknown, command.AttemptID)
 		b.mu.Unlock()
 	}
-	return reply, reply.Error
+	return reply, e.diagnosticFailure(reply.Error)
 }
 func closedPlaywright(raw []byte, out any) error {
 	d := json.NewDecoder(bytes.NewReader(raw))
@@ -548,6 +549,30 @@ func safePlaywrightError(code string) string {
 		return known
 	}
 	return "playwrightUnavailable"
+}
+
+type playwrightFailureDiagnostic struct {
+	cause      error
+	diagnostic integration.PlaywrightDiagnostic
+}
+
+func (e *playwrightFailureDiagnostic) Error() string { return e.cause.Error() }
+func (e *playwrightFailureDiagnostic) Unwrap() error { return e.cause }
+func (e *playwrightFailureDiagnostic) PlaywrightExecutionDiagnostic() integration.PlaywrightDiagnostic {
+	return e.diagnostic
+}
+func (e *playwrightExecution) diagnosticFailure(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	var detail *model.MechanizeError
+	if !errors.As(cause, &detail) || detail == nil {
+		return cause
+	}
+	e.mu.Lock()
+	value := integration.PlaywrightDiagnostic{Phase: safePlaywrightError(detail.Code), Callbacks: e.callbackCount, PeerChecks: e.verifyCount, PeerMs: e.verifyMS, IdentityChecks: e.identityChecks, ElapsedMs: time.Since(e.started).Milliseconds(), LastCallback: closedPlaywrightCallback(e.lastCallback), LastMethod: closedPlaywrightMethod(e.lastMethod)}
+	e.mu.Unlock()
+	return &playwrightFailureDiagnostic{cause: cause, diagnostic: value}
 }
 
 func playwrightReply(c Command, state, effect, code string, value *string) Reply {

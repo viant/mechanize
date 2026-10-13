@@ -303,6 +303,7 @@ func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step
 	} else if result.DispatchState == "notDispatched" {
 		state = "absent"
 	}
+	result.ExecutionFailure = integration.CaptureExecutionFailure(result, dispatchErr)
 	evidence, err := json.Marshal(result)
 	if err != nil {
 		return result, errors.Join(dispatchErr, err)

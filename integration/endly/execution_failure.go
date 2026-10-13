@@ -11,8 +11,9 @@ import (
 // errors into text. It is live operational metadata, not business verification,
 // a reconstructed receipt, or permission to retry an input.
 type ExecutionFailure struct {
-	Code          string `json:"code"`
-	DispatchState string `json:"dispatchState"`
+	Playwright    *PlaywrightDiagnostic `json:"playwright,omitempty"`
+	Code          string                `json:"code"`
+	DispatchState string                `json:"dispatchState"`
 }
 
 // Native adapters implement this only for correlated, qualified helper replies.
@@ -55,13 +56,21 @@ func executionFailure(result StepResult, err error) *ExecutionFailure {
 	if !executionDispatchState(state) || reported != "" && reported != state {
 		state = "unknown"
 	}
-	return &ExecutionFailure{Code: code, DispatchState: state}
+	captured := &ExecutionFailure{Code: code, DispatchState: state}
+	var diagnostic playwrightDiagnosticFailure
+	if errors.As(err, &diagnostic) {
+		value := diagnostic.PlaywrightExecutionDiagnostic()
+		if value.valid(code) {
+			captured.Playwright = &value
+		}
+	}
+	return captured
 }
 
 // Valid is also used at the controller projection boundary; unknown provider
 // strings cannot become a public diagnostic through a loosely typed response.
 func (f ExecutionFailure) Valid() bool {
-	return executionFailureCode(f.Code) && executionDispatchState(f.DispatchState)
+	return executionFailureCode(f.Code) && executionDispatchState(f.DispatchState) && (f.Playwright == nil || f.Playwright.valid(f.Code))
 }
 func executionDispatchState(s string) bool {
 	return s == "notDispatched" || s == "dispatched" || s == "unknown"
@@ -102,8 +111,18 @@ func (r *Runtime) ExecutionFailure(ctx context.Context, session, operation strin
 				return nil, nil
 			}
 			copied := *p.executionFailure
+			if copied.Playwright != nil {
+				value := *copied.Playwright
+				copied.Playwright = &value
+			}
 			return &copied, nil
 		}
 	}
 	return nil, errors.New("owned execution failure metadata unavailable")
+}
+
+// CaptureExecutionFailure preserves only the same closed typed executor evidence
+// for durable outcome publication. Serialized metadata alone cannot confer input.
+func CaptureExecutionFailure(result StepResult, err error) *ExecutionFailure {
+	return executionFailure(result, err)
 }

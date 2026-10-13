@@ -21,6 +21,7 @@ import (
 )
 
 type StepResult struct {
+	ExecutionFailure  *ExecutionFailure  `json:"executionFailure,omitempty"`
 	Timing            *StepTiming        `json:"timing,omitempty"`
 	Value             *model.Value       `json:"value,omitempty"`
 	Observation       *model.Observation `json:"observation,omitempty"`
