@@ -25,9 +25,9 @@ type webControlProviderGateway interface {
 	Close() error
 }
 type providerAuthority struct {
-	authority                   chrome.ControlAuthority
-	owned, published, uncertain bool
-	reader                      *webPostconditionRead
+	authority                            chrome.ControlAuthority
+	owned, published, uncertain, retired bool
+	reader                               *webPostconditionRead
 }
 
 // productionWebControl uses broker-authenticated channel/endpoint evidence.
@@ -68,11 +68,11 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 	convert := func(a chrome.ControlAuthority) WebControlAuthority {
 		return WebControlAuthority{TrustScope: a.TrustScope, Owner: a.Owner, ExtensionOrigin: a.ExtensionOrigin, Document: a.Document, NativeHost: a.Evidence.NativeHost, BrowserParent: a.Evidence.ChromeParent, BrokerEpoch: a.BrokerEpoch, ChannelEpoch: a.ChannelEpoch, ScopeHash: a.ScopeHash, ID: a.Lease.ID, Generation: a.Lease.Generation}
 	}
-	lookup := func(a WebControlAuthority) (chrome.ControlAuthority, error) {
+	lookup := func(a WebControlAuthority, retirement bool) (chrome.ControlAuthority, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		entry, ok := entries[a.ID]
-		if !ok || entry.uncertain || !entry.published || convert(entry.authority) != a {
+		if !ok || !entry.owned || (!retirement && (entry.uncertain || entry.retired || !entry.published)) || convert(entry.authority) != a {
 			return chrome.ControlAuthority{}, ErrWebControlUnqualified
 		}
 		return entry.authority, nil
@@ -86,6 +86,41 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 		entries[a.Lease.ID] = entry
 		mu.Unlock()
 		return errors.Join(cause, ErrWebControlCleanupUnknown)
+	}
+	retireAuthority := func(ctx context.Context, p auth.Principal, a WebControlAuthority) (WebControlCleanup, error) {
+		stored, err := lookup(a, true)
+		if err != nil {
+			return WebControlCleanup{UnknownExecutors: true}, err
+		}
+		if stored.Owner != p.Namespace || stored.ClientID != p.ClientID {
+			return WebControlCleanup{UnknownExecutors: true}, auth.ErrUnauthorized
+		}
+		mu.Lock()
+		completed := entries[a.ID].retired
+		mu.Unlock()
+		if completed {
+			return WebControlCleanup{AuthorityRetired: true, RetiredAuthorityQuiesced: true}, nil
+		}
+		retired, err := gateway.RetireControl(ctx, p, stored)
+		if retired && err == nil {
+			mu.Lock()
+			// A concurrent owner may already have consumed completion. Never
+			// resurrect it or overwrite a replacement authority after a late ACK.
+			if entry, exists := entries[a.ID]; exists && convert(entry.authority) == a {
+				entry.retired = true
+				entries[a.ID] = entry
+			}
+			mu.Unlock()
+		}
+		return WebControlCleanup{AuthorityRetired: retired && err == nil, RetiredAuthorityQuiesced: retired && err == nil, UnknownExecutors: !retired || err != nil}, err
+	}
+	consumeRetirement := func(p auth.Principal, a WebControlAuthority) {
+		mu.Lock()
+		defer mu.Unlock()
+		entry, exists := entries[a.ID]
+		if exists && entry.retired && entry.authority.Owner == p.Namespace && entry.authority.ClientID == p.ClientID && convert(entry.authority) == a {
+			delete(entries, a.ID)
+		}
 	}
 	readiness := func(a chrome.ControlAuthority, reader *webPostconditionRead) WebControlReadiness {
 		actions := []string{"element.press", "element.fill", "browser.activate"}
@@ -110,6 +145,25 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 				defer func() { <-admissionLane }()
 			case <-ctx.Done():
 				return WebControlReadiness{}, ctx.Err()
+			}
+			// Retry only revocation of retained unpublished admissions before acquiring.
+			mu.Lock()
+			var retained []chrome.ControlAuthority
+			for _, entry := range entries {
+				if entry.owned && entry.uncertain && entry.authority.Owner == p.Namespace && entry.authority.ClientID == p.ClientID {
+					retained = append(retained, entry.authority)
+				}
+			}
+			mu.Unlock()
+			recoveryCtx, stopRecovery := context.WithTimeout(ctx, 2*time.Second)
+			defer stopRecovery()
+			for _, original := range retained {
+				cleanup, err := retireAuthority(recoveryCtx, p, convert(original))
+				err = errors.Join(err, recoveryCtx.Err())
+				if err != nil || !cleanup.AuthorityRetired {
+					return WebControlReadiness{}, errors.Join(err, ErrWebControlCleanupUnknown)
+				}
+				consumeRetirement(p, convert(original))
 			}
 			admission, err := gateway.AdmitControlWithStatus(ctx, p, surface)
 			a := admission.Authority
@@ -156,13 +210,14 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 					err     error
 				}
 				done := make(chan result, 1)
-				go func() { retired, err := gateway.RetireControl(cleanupCtx, p, a); done <- result{retired, err} }()
+				go func() {
+					cleanup, err := retireAuthority(cleanupCtx, p, convert(a))
+					done <- result{cleanup.AuthorityRetired, err}
+				}()
 				select {
 				case outcome := <-done:
 					if outcome.err == nil && outcome.retired && cleanupCtx.Err() == nil {
-						mu.Lock()
-						delete(entries, a.Lease.ID)
-						mu.Unlock()
+						consumeRetirement(p, convert(a))
 						return WebControlReadiness{}, pinErr
 					}
 					return WebControlReadiness{}, uncertain(a, errors.Join(pinErr, outcome.err))
@@ -179,14 +234,14 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 			return result, nil
 		},
 		VerifyChannel: func(ctx context.Context, p auth.Principal, a WebControlAuthority) error {
-			stored, err := lookup(a)
+			stored, err := lookup(a, false)
 			if err != nil {
 				return err
 			}
 			return gateway.VerifyControl(ctx, p, stored)
 		},
 		ExecutePinned: func(ctx context.Context, p auth.Principal, step model.Step, values map[string]model.Value, a WebControlAuthority) (automation.StepResult, error) {
-			stored, err := lookup(a)
+			stored, err := lookup(a, false)
 			if err != nil {
 				return automation.StepResult{DispatchState: "notDispatched"}, err
 			}
@@ -198,19 +253,8 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 			}
 			return gateway.ExecuteControl(ctx, p, step, values, stored)
 		},
-		Retire: func(ctx context.Context, p auth.Principal, a WebControlAuthority) (WebControlCleanup, error) {
-			stored, err := lookup(a)
-			if err != nil {
-				return WebControlCleanup{UnknownExecutors: true}, err
-			}
-			retired, err := gateway.RetireControl(ctx, p, stored)
-			if retired && err == nil {
-				mu.Lock()
-				delete(entries, a.ID)
-				mu.Unlock()
-			}
-			return WebControlCleanup{AuthorityRetired: retired && err == nil, RetiredAuthorityQuiesced: retired && err == nil, UnknownExecutors: !retired || err != nil}, err
-		},
+		Retire:         retireAuthority,
+		RetireConsumed: consumeRetirement,
 		Close: func(ctx context.Context) error {
 			select {
 			case admissionLane <- struct{}{}:
@@ -219,7 +263,10 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 				return ctx.Err()
 			}
 			mu.Lock()
-			retained := len(entries) != 0
+			retained := false
+			for _, entry := range entries {
+				retained = retained || !entry.retired
+			}
 			mu.Unlock()
 			if retained {
 				return ErrWebControlCleanupUnknown

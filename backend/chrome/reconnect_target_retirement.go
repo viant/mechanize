@@ -19,12 +19,29 @@ func reconnectTargetRetirementLocked(c *channel, command Command) bool {
 	return ok && original.Identity == command.Identity && original.ControlLease != nil && *original.ControlLease == *command.ControlLease && command.FingerprintVersion == 2 && command.FingerprintSHA256 == original.FingerprintSHA256
 }
 
+// targetRetirementProvenLocked accepts only retained, exact original audit tuples.
+// The caller verifies the current authenticated channel process before using it.
+func targetRetirementProvenLocked(c *channel, a ControlAuthority) bool {
+	if c == nil || c.grant.Principal.Namespace != a.Owner || c.conn == nil || !c.executorQualified || len(c.pending) != 0 || domUnknownBlockedLocked(c) {
+		return false
+	}
+	for id, retired := range c.retiredTargets {
+		original, exists := c.attempts[id]
+		receipt, known := c.receipts[id]
+		if !exists || !known || retired.AttemptID != id || original.AttemptID != id || retired.Identity != a.Document.Identity || original.Identity != retired.Identity || retired.ControlLease == nil || original.ControlLease == nil || *retired.ControlLease != a.Lease || *original.ControlLease != a.Lease || retired.BrokerEpoch != a.BrokerEpoch || original.BrokerEpoch != retired.BrokerEpoch || retired.ChannelEpoch != a.ChannelEpoch || original.ChannelEpoch != retired.ChannelEpoch || retired.ScopeHash != a.ScopeHash || original.ScopeHash != retired.ScopeHash || c.scopeHash != a.ScopeHash || retired.FingerprintVersion != 2 || original.FingerprintVersion != 2 || !fingerprintV2Hash.MatchString(retired.FingerprintSHA256) || original.FingerprintSHA256 != retired.FingerprintSHA256 || receipt.AttemptID != id || receipt.Identity != retired.Identity || receipt.ControlLease == nil || *receipt.ControlLease != a.Lease || receipt.FingerprintVersion != 2 || receipt.FingerprintSHA256 != retired.FingerprintSHA256 || receipt.DispatchState != "unknown" || receipt.EffectState != "unknown" {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // A reconnect ACK can revoke the original executor hazard even if that helper
 // connection has ended. It supplies no replacement authority; normal admission
 // below must still authorize and qualify the new document independently.
 func (g *Gateway) consumeTargetRetirement(p auth.Principal) {
 	g.controlMu.Lock()
-	if g.control == nil || g.control.Owner != p.Namespace {
+	if g.control == nil || g.control.Owner != p.Namespace || g.control.ClientID != p.ClientID {
 		g.controlMu.Unlock()
 		return
 	}
@@ -35,15 +52,7 @@ func (g *Gateway) consumeTargetRetirement(p auth.Principal) {
 		return
 	}
 	g.broker.mu.Lock()
-	retired := false
-	if c.conn != nil && c.executorQualified && len(c.pending) == 0 && !domUnknownBlockedLocked(c) {
-		for _, command := range c.retiredTargets {
-			if command.Identity == original.Document.Identity && command.ControlLease != nil && *command.ControlLease == original.Lease {
-				retired = true
-				break
-			}
-		}
-	}
+	retired := targetRetirementProvenLocked(c, original)
 	g.broker.mu.Unlock()
 	if !retired {
 		return

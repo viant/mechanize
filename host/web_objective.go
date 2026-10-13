@@ -82,7 +82,7 @@ func (h *Host) heldWebPostconditionRead(ctx context.Context, p auth.Principal, o
 	}
 	manager := intent.manager
 	manager.mu.Lock()
-	ready := intent.readReady && intent.dispatched && !manager.closed && manager.options.Owner.Err() == nil && !manager.inhibited[webChannelKey(intent.authority)]
+	ready := intent.readReady && intent.dispatched && !manager.closed && manager.options.Owner.Err() == nil && !intent.cleanupPending
 	reader := intent.postconditionRead
 	manager.mu.Unlock()
 	if !ready || reader == nil || manager.options.authorizeRead == nil {

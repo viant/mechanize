@@ -151,3 +151,57 @@ func TestReconnectUnknownTargetRetirementPreservesAuditAndRejectsChangedACK(t *t
 		})
 	}
 }
+
+func TestRetireControlConsumesExactTargetDeathWithoutReplayingUnknown(t *testing.T) {
+	for _, mode := range []string{"valid", "wrongClient", "wrongLease", "wrongEpoch", "wrongFingerprint", "otherHazard"} {
+		t.Run(mode, func(t *testing.T) {
+			g, p, ctx, c, _ := setupFixture(t)
+			id := strings.Repeat("d", 64)
+			lease := Lease{ID: "original-lease", Generation: 3}
+			a := ControlAuthority{Owner: p.Namespace, ClientID: p.ClientID, BrokerEpoch: "old-broker", ChannelEpoch: "old-channel", ScopeHash: c.scopeHash, Lease: lease, Document: Document{Identity: Identity{ProfileChannel: c.grant.ProfileChannel, BrowserInstance: c.grant.BrowserInstance, TabID: 7, DocumentID: "dead-source", Generation: 1}}}
+			command := Command{Identity: a.Document.Identity, AttemptID: id, BrokerEpoch: a.BrokerEpoch, ChannelEpoch: a.ChannelEpoch, ScopeHash: a.ScopeHash, ControlLease: &lease, FingerprintVersion: 2, FingerprintSHA256: strings.Repeat("e", 64)}
+			receipt := Reply{Identity: command.Identity, AttemptID: id, ControlLease: &lease, FingerprintVersion: 2, FingerprintSHA256: command.FingerprintSHA256, DispatchState: "unknown", EffectState: "unknown"}
+			g.broker.mu.Lock()
+			c.executorQualified = true
+			c.attempts[id] = command
+			c.receipts[id] = receipt
+			c.retiredTargets = map[string]Command{id: command}
+			if mode == "otherHazard" {
+				c.unknown["other"] = true
+			}
+			if mode == "wrongFingerprint" {
+				wrong := command
+				wrong.FingerprintSHA256 = strings.Repeat("f", 64)
+				c.retiredTargets[id] = wrong
+			}
+			g.broker.mu.Unlock()
+			if mode == "wrongClient" {
+				a.ClientID = "foreign"
+			}
+			if mode == "wrongLease" {
+				a.Lease.Generation++
+			}
+			if mode == "wrongEpoch" {
+				a.ChannelEpoch = "different"
+			}
+			retired, err := g.RetireControl(ctx, p, a)
+			if mode == "valid" {
+				if err != nil || !retired {
+					t.Fatal("exact death proof rejected", err)
+				}
+			} else if err == nil || retired {
+				t.Fatal("foreign/changed hazard proof accepted")
+			}
+			g.broker.mu.Lock()
+			got := c.receipts[id]
+			attempts := len(c.attempts)
+			pending := len(c.pending)
+			g.broker.mu.Unlock()
+			before, _ := json.Marshal(receipt)
+			after, _ := json.Marshal(got)
+			if string(before) != string(after) || attempts != 1 || pending != 0 {
+				t.Fatal("cleanup changed UNKNOWN audit or sent input")
+			}
+		})
+	}
+}

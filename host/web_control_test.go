@@ -866,3 +866,110 @@ func TestWebControlDestinationLeaseMustKeepOriginalGrantAndReleaseOnError(t *tes
 		})
 	}
 }
+
+func TestWebRetirementRecoveryPreservesReceiptAndReleasesLeaseOnce(t *testing.T) {
+	for _, state := range []string{"dispatched", "notDispatched", "unknown"} {
+		t.Run(state, func(t *testing.T) {
+			f := newWebControlFixture(t)
+			consumed := 0
+			f.manager.options.RetireConsumed = func(actor auth.Principal, a WebControlAuthority) {
+				if actor.ClientID != f.principal.ClientID || a != f.ready.Authority {
+					t.Error("foreign completion consumed")
+				}
+				consumed++
+			}
+			f.cleanup = WebControlCleanup{UnknownExecutors: true}
+			f.dispatchedResult = automation.StepResult{DispatchState: state}
+			if state == "notDispatched" {
+				f.dispatchErr = &model.MechanizeError{Code: "fixtureAbsent", DispatchState: state}
+			}
+			withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
+				prepared := prepareWeb(t, f, ctx, p, step)
+				result, err := f.manager.Execute(prepared, p, step, nil)
+				if !errors.Is(err, ErrWebControlCleanupUnknown) || result.DispatchState != state || f.releases != 0 {
+					t.Fatal("original receipt/hold lost", result, err)
+				}
+				intent := prepared.Value(webControlIntentKey{}).(*webControlIntent)
+				foreign := p
+				foreign.ClientID = "foreign"
+				if err := f.manager.reconcileRetirements(auth.WithPrincipal(context.Background(), foreign), foreign); err != nil || intent.lease == nil {
+					t.Fatal("foreign recovery consumed owned lease")
+				}
+				f.cleanup = WebControlCleanup{AuthorityRetired: true, RetiredAuthorityQuiesced: true}
+				entered, resume := make(chan struct{}), make(chan struct{})
+				f.manager.options.Retire = func(c context.Context, actor auth.Principal, a WebControlAuthority) (WebControlCleanup, error) {
+					if a != intent.authority || actor.ClientID != p.ClientID {
+						t.Error("retry replaced original actor/authority")
+					}
+					close(entered)
+					<-resume
+					return f.cleanup, nil
+				}
+				done := make(chan error, 1)
+				fresh := auth.WithPrincipal(context.Background(), p)
+				go func() { done <- f.manager.reconcileRetirements(fresh, p) }()
+				<-entered
+				if err := f.manager.reconcileRetirements(fresh, p); !errors.Is(err, ErrWebControlCleanupUnknown) {
+					t.Fatal("concurrent retry admitted", err)
+				}
+				close(resume)
+				if err := <-done; err != nil {
+					t.Fatal(err)
+				}
+				if err := f.manager.reconcileRetirements(fresh, p); err != nil {
+					t.Fatal(err)
+				}
+				if f.releases != 1 || consumed != 1 || f.dispatches != 1 || result.DispatchState != state || intent.lease != nil || !intent.consumed {
+					t.Fatal("recovery replayed input or duplicated lease release")
+				}
+				if _, err := f.manager.Execute(prepared, p, step, nil); !errors.Is(err, ErrWebControlIntent) {
+					t.Fatal("retired intent replayed", err)
+				}
+			})
+		})
+	}
+}
+
+func TestWebCloseReleasesRecoveredLeaseOnce(t *testing.T) {
+	f := newWebControlFixture(t)
+	f.cleanup = WebControlCleanup{UnknownExecutors: true}
+	withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
+		prepared := prepareWeb(t, f, ctx, p, step)
+		if _, err := f.manager.Execute(prepared, p, step, nil); !errors.Is(err, ErrWebControlCleanupUnknown) {
+			t.Fatal(err)
+		}
+		f.cleanup = WebControlCleanup{AuthorityRetired: true, RetiredAuthorityQuiesced: true}
+		if err := f.manager.Close(auth.WithPrincipal(context.Background(), p)); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.manager.Close(auth.WithPrincipal(context.Background(), p)); err != nil {
+			t.Fatal(err)
+		}
+		if f.releases != 1 || f.dispatches != 1 {
+			t.Fatal("Close replayed or duplicated release")
+		}
+	})
+}
+
+func TestWebRetirementRecoveryHasOneOverallDeadline(t *testing.T) {
+	f := newWebControlFixture(t)
+	for i := 0; i < 3; i++ {
+		a := f.ready.Authority
+		a.ID = fmt.Sprint(i)
+		f.manager.prepared[&webControlIntent{principal: f.principal, authority: a, cleanupPending: true}] = struct{}{}
+	}
+	f.manager.options.Retire = func(ctx context.Context, _ auth.Principal, _ WebControlAuthority) (WebControlCleanup, error) {
+		<-ctx.Done()
+		return WebControlCleanup{UnknownExecutors: true}, ctx.Err()
+	}
+	started := time.Now()
+	err := f.manager.reconcileRetirements(auth.WithPrincipal(context.Background(), f.principal), f.principal)
+	if !errors.Is(err, ErrWebControlCleanupUnknown) || time.Since(started) > 3*time.Second {
+		t.Fatal("recovery multiplied retained-intent deadlines", err)
+	}
+	for intent := range f.manager.prepared {
+		if intent.executing || !intent.cleanupPending {
+			t.Fatal("timeout lost lifecycle hold")
+		}
+	}
+}

@@ -100,13 +100,14 @@ type WebControlOptions struct {
 	// The provider must carry the stable durable Endly attempt, never generic retry.
 	ExecutePinned func(context.Context, auth.Principal, model.Step, map[string]model.Value, WebControlAuthority) (automation.StepResult, error)
 	Retire        func(context.Context, auth.Principal, WebControlAuthority) (WebControlCleanup, error)
-	Close         func(context.Context) error
+	// RetireConsumed releases provider completion evidence after its owner accepted cleanup.
+	RetireConsumed func(auth.Principal, WebControlAuthority)
+	Close          func(context.Context) error
 }
 type WebControlManager struct {
 	options        WebControlOptions
 	mu             sync.Mutex
 	closed         bool
-	inhibited      map[string]bool
 	prepared       map[*webControlIntent]struct{}
 	active         sync.WaitGroup
 	drained        chan struct{}
@@ -127,6 +128,8 @@ type webControlIntent struct {
 	dispatched        bool
 	executing         bool
 	consumed          bool
+	cleanupPending    bool
+	lease             *consent.Lease
 }
 type webControlIntentKey struct{}
 
@@ -134,7 +137,7 @@ func NewWebControlManager(options WebControlOptions) (*WebControlManager, error)
 	if options.Owner == nil || options.Enrolled == nil || options.Qualify == nil || options.VerifyChannel == nil || options.Authorize == nil || options.ExecutePinned == nil || options.Retire == nil || options.Close == nil {
 		return nil, ErrWebControlUnqualified
 	}
-	return &WebControlManager{options: options, inhibited: map[string]bool{}, prepared: map[*webControlIntent]struct{}{}, closeLane: make(chan struct{}, 1)}, nil
+	return &WebControlManager{options: options, prepared: map[*webControlIntent]struct{}{}, closeLane: make(chan struct{}, 1)}, nil
 }
 func webControlActor(ctx context.Context, p auth.Principal) (auth.Principal, error) {
 	actual, err := auth.FromContext(ctx)
@@ -179,9 +182,6 @@ func webMutationStep(step model.Step) error {
 }
 func webOrigin(origin string) bool {
 	return chrome.OrdinaryWebsiteOrigin(origin)
-}
-func webChannelKey(a WebControlAuthority) string {
-	return a.Owner + "\x00" + a.Document.ProfileChannel + "\x00" + a.Document.BrowserInstance
 }
 
 func webScopeQualified(ready WebControlReadiness) bool {
@@ -275,12 +275,6 @@ func (m *WebControlManager) qualify(ctx context.Context, p auth.Principal, surfa
 	if !enrolled {
 		return WebControlReadiness{}, auth.ErrUnauthorized
 	}
-	m.mu.Lock()
-	inhibited := m.inhibited[webChannelKey(a)]
-	m.mu.Unlock()
-	if inhibited {
-		return WebControlReadiness{}, ErrWebControlCleanupUnknown
-	}
 	if err = m.options.VerifyChannel(bounded, p, a); err != nil {
 		return WebControlReadiness{}, err
 	}
@@ -347,7 +341,12 @@ func (m *WebControlManager) Prepare(ctx context.Context, p auth.Principal, step 
 		return ctx, 0, ErrWebControlIntent
 	}
 	stage = "qualify"
-	ready, err := m.qualify(ctx, actual, step.Target.Surface)
+	qualificationCtx, stopQualification := context.WithTimeout(ctx, 3*time.Second)
+	defer stopQualification()
+	if err = m.reconcileRetirements(qualificationCtx, actual); err != nil {
+		return ctx, 0, err
+	}
+	ready, err := m.qualify(qualificationCtx, actual, step.Target.Surface)
 	if err != nil {
 		return ctx, 0, err
 	}
@@ -377,7 +376,7 @@ func (m *WebControlManager) Prepare(ctx context.Context, p auth.Principal, step 
 		return ctx, 0, ErrWebControlUnqualified
 	}
 	stage = "publish"
-	intent := &webControlIntent{ownerContext: context.WithoutCancel(ctx), manager: m, principal: actual, binding: binding, metadata: meta, stepHash: hash, authority: ready.Authority, postconditionRead: ready.postconditionRead}
+	intent := &webControlIntent{ownerContext: auth.WithConsentBinding(auth.WithPrincipal(context.Background(), actual), binding), manager: m, principal: actual, binding: binding, metadata: meta, stepHash: hash, authority: ready.Authority, postconditionRead: ready.postconditionRead}
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -413,7 +412,7 @@ func (m *WebControlManager) Execute(ctx context.Context, p auth.Principal, step 
 		return result, ErrWebControlIntent
 	}
 	m.mu.Lock()
-	unavailable := m.closed || intent.dispatched || intent.consumed || intent.executing || m.inhibited[webChannelKey(intent.authority)]
+	unavailable := m.closed || intent.dispatched || intent.consumed || intent.executing || intent.cleanupPending
 	if !unavailable {
 		intent.executing = true
 	}
@@ -507,7 +506,7 @@ func (m *WebControlManager) Execute(ctx context.Context, p auth.Principal, step 
 		return result, err
 	}
 	m.mu.Lock()
-	if m.closed || m.options.Owner.Err() != nil || intent.dispatched || m.inhibited[webChannelKey(intent.authority)] {
+	if m.closed || m.options.Owner.Err() != nil || intent.dispatched || intent.cleanupPending {
 		m.mu.Unlock()
 		lease.Release()
 		return result, ErrWebControlIntent
@@ -528,12 +527,13 @@ func (m *WebControlManager) Execute(ctx context.Context, p auth.Principal, step 
 		return result, err
 	}
 	m.mu.Lock()
-	if m.closed || m.options.Owner.Err() != nil || intent.consumed || intent.dispatched || m.inhibited[webChannelKey(intent.authority)] {
+	if m.closed || m.options.Owner.Err() != nil || intent.consumed || intent.dispatched || intent.cleanupPending {
 		m.mu.Unlock()
 		lease.Release()
 		return result, ErrWebControlIntent
 	}
 	intent.dispatched = true
+	intent.lease = lease
 	m.mu.Unlock()
 	result, dispatchErr := m.options.ExecutePinned(dispatchCtx, actual, step, values, intent.authority)
 	// Renderer receipts do not establish a business postcondition.
@@ -565,14 +565,16 @@ func (m *WebControlManager) Execute(ctx context.Context, p auth.Principal, step 
 			intent.stopCancellation()
 		}
 		delete(m.prepared, intent)
+		intent.lease = nil
 		m.mu.Unlock()
+		m.consumeRetirement(actual, intent.authority)
 		lease.Release()
 		return result, dispatchErr
 	}
 	m.mu.Lock()
-	m.inhibited[webChannelKey(intent.authority)] = true
+	intent.cleanupPending = true
 	m.mu.Unlock()
-	// Executor retirement uncertainty retains the admitted lease and channel hold.
+	// Executor retirement uncertainty retains the admitted lease and owned intent.
 	// It does not revoke the human's saved consent policy.
 	return result, errors.Join(dispatchErr, cleanupErr, ErrWebControlCleanupUnknown)
 }
@@ -604,10 +606,20 @@ func (m *WebControlManager) retireOwnedAuthority(ctx context.Context, p auth.Pri
 	cleanupErr = errors.Join(cleanupErr, cleanupCtx.Err())
 	cancel()
 	if cleanupErr == nil && cleanup.AuthorityRetired && (cleanup.ExecutorsQuiesced || cleanup.RetiredAuthorityQuiesced) && !cleanup.UnknownExecutors {
+		m.consumeRetirement(p, authority)
 		return cause
 	}
 	m.mu.Lock()
-	m.inhibited[webChannelKey(authority)] = true
+	found := false
+	for intent := range m.prepared {
+		if intent.authority == authority {
+			intent.cleanupPending = true
+			found = true
+		}
+	}
+	if !found {
+		m.prepared[&webControlIntent{manager: m, principal: p, authority: authority, consumed: true, cleanupPending: true, ownerContext: auth.WithPrincipal(context.Background(), p)}] = struct{}{}
+	}
 	m.mu.Unlock()
 	return errors.Join(cause, cleanupErr, ErrWebControlCleanupUnknown)
 }
@@ -638,6 +650,64 @@ func (m *WebControlManager) beginWork() bool {
 	}
 	m.active.Add(1)
 	return true
+}
+
+func (m *WebControlManager) consumeRetirement(p auth.Principal, a WebControlAuthority) {
+	if m.options.RetireConsumed != nil {
+		m.options.RetireConsumed(p, a)
+	}
+}
+
+// reconcileRetirements retries revocation only, using immutable owned metadata.
+// Fresh caller context supplies cancellation; no committed transaction context is retained.
+func (m *WebControlManager) reconcileRetirements(ctx context.Context, p auth.Principal) error {
+	bounded, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	m.mu.Lock()
+	var pending []*webControlIntent
+	for intent := range m.prepared {
+		if !intent.cleanupPending || intent.principal.Namespace != p.Namespace || intent.principal.ClientID != p.ClientID {
+			continue
+		}
+		if intent.executing {
+			m.mu.Unlock()
+			return ErrWebControlCleanupUnknown
+		}
+		pending = append(pending, intent)
+	}
+	for _, intent := range pending {
+		intent.executing = true
+	}
+	m.mu.Unlock()
+	var failures []error
+	for _, intent := range pending {
+		cleanup, err := m.retire(bounded, p, intent.authority)
+		err = errors.Join(err, bounded.Err())
+		m.mu.Lock()
+		intent.executing = false
+		var lease *consent.Lease
+		accepted := false
+		if err == nil && cleanup.AuthorityRetired && (cleanup.ExecutorsQuiesced || cleanup.RetiredAuthorityQuiesced) && !cleanup.UnknownExecutors {
+			accepted = true
+			intent.cleanupPending = false
+			intent.consumed = true
+			if intent.stopCancellation != nil {
+				intent.stopCancellation()
+			}
+			delete(m.prepared, intent)
+			lease, intent.lease = intent.lease, nil
+		} else {
+			failures = append(failures, errors.Join(err, ErrWebControlCleanupUnknown))
+		}
+		m.mu.Unlock()
+		if accepted {
+			m.consumeRetirement(p, intent.authority)
+		}
+		if lease != nil {
+			lease.Release()
+		}
+	}
+	return errors.Join(failures...)
 }
 
 // A broken provider cannot turn a bounded retirement timeout into cleanup proof.
@@ -782,11 +852,12 @@ func (m *WebControlManager) Close(ctx context.Context) error {
 		proofCtx, cancel := context.WithTimeout(intent.ownerContext, 2*time.Second)
 		stop := context.AfterFunc(ctx, cancel)
 		cleanup, e := m.retire(proofCtx, intent.principal, intent.authority)
+		e = errors.Join(e, proofCtx.Err())
 		stop()
 		cancel()
 		if e != nil || !cleanup.AuthorityRetired || !(cleanup.ExecutorsQuiesced || cleanup.RetiredAuthorityQuiesced) || cleanup.UnknownExecutors {
 			m.mu.Lock()
-			m.inhibited[webChannelKey(intent.authority)] = true
+			intent.cleanupPending = true
 			m.mu.Unlock()
 			failures = append(failures, errors.Join(e, ErrWebControlCleanupUnknown))
 			continue
@@ -797,7 +868,13 @@ func (m *WebControlManager) Close(ctx context.Context) error {
 			intent.stopCancellation()
 		}
 		delete(m.prepared, intent)
+		lease := intent.lease
+		intent.lease = nil
 		m.mu.Unlock()
+		m.consumeRetirement(intent.principal, intent.authority)
+		if lease != nil {
+			lease.Release()
+		}
 	}
 	if len(failures) > 0 {
 		return errors.Join(failures...)

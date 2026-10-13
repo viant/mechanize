@@ -377,6 +377,33 @@ func (g *Gateway) executeControl(ctx context.Context, p auth.Principal, step mod
 // RetireControl revokes dispatch at the broker before asking the exact endpoint
 // to revoke that lease. This is not executor.quiesce (whole-document shutdown).
 func (g *Gateway) RetireControl(ctx context.Context, p auth.Principal, a ControlAuthority) (bool, error) {
+	if err := authorize(ctx, p, true); err != nil {
+		return false, err
+	}
+	actual, err := auth.FromContext(ctx)
+	if err != nil || actual.ClientID != p.ClientID || a.Owner != p.Namespace || a.ClientID != p.ClientID {
+		return false, auth.ErrUnauthorized
+	}
+	c := g.controlChannel(a)
+	if c == nil {
+		return false, auth.ErrUnauthorized
+	}
+	if err := g.broker.verifyChannelProcess(ctx, c); err != nil {
+		return false, err
+	}
+	g.broker.mu.Lock()
+	proven := !g.broker.closed && ctx.Err() == nil && targetRetirementProvenLocked(c, a)
+	g.broker.mu.Unlock()
+	if proven {
+		g.controlMu.Lock()
+		if g.control != nil && sameControl(*g.control, a) {
+			g.control = nil
+			g.controlRetiring = false
+			g.navigationRetired = nil
+		}
+		g.controlMu.Unlock()
+		return true, nil
+	}
 	g.controlMu.Lock()
 	if g.control == nil || !sameControl(*g.control, a) {
 		g.controlMu.Unlock()
@@ -385,13 +412,6 @@ func (g *Gateway) RetireControl(ctx context.Context, p auth.Principal, a Control
 	g.controlRetiring = true
 	navigationRetired := g.navigationRetired != nil && sameControl(*g.navigationRetired, a)
 	g.controlMu.Unlock()
-	c := g.controlChannel(a)
-	if c == nil {
-		return false, auth.ErrUnauthorized
-	}
-	if err := g.broker.verifyChannelProcess(ctx, c); err != nil {
-		return false, err
-	}
 	g.broker.mu.Lock()
 	knownSourceRetirement := knownPressSourceRetirementLocked(c, a.Document.Identity, &a.Lease, g.broker.epoch)
 	g.broker.mu.Unlock()

@@ -40,7 +40,7 @@ func (f *providerGatewayFixture) AdmitControlWithStatus(_ context.Context, p aut
 	created := f.held == nil
 	if created {
 		f.next++
-		f.held = &chrome.ControlAuthority{MutationFingerprintVersion: f.fingerprintVersion, Owner: p.Namespace, ClientID: p.ClientID, Document: chrome.Document{MutationFingerprintVersion: f.fingerprintVersion, Identity: chrome.Identity{ProfileChannel: "fixture", BrowserInstance: "browser", TabID: 7, DocumentID: "doc", Generation: 1}, Origin: s.Origin}, Lease: chrome.Lease{ID: "lease", Generation: uint64(f.next)}}
+		f.held = &chrome.ControlAuthority{MutationFingerprintVersion: f.fingerprintVersion, Owner: p.Namespace, ClientID: p.ClientID, Document: chrome.Document{MutationFingerprintVersion: f.fingerprintVersion, Identity: chrome.Identity{ProfileChannel: "fixture", BrowserInstance: "browser", TabID: 7, DocumentID: "doc", Generation: 1}, Origin: s.Origin}, Lease: chrome.Lease{ID: fmt.Sprintf("lease-%d", f.next), Generation: uint64(f.next)}}
 	}
 	outcome := chrome.ControlAdmission{Authority: *f.held, Created: created, Confirmed: !f.acquireAmbiguous}
 	return outcome, f.acquireErr
@@ -168,8 +168,9 @@ func TestProductionProviderRetainsAmbiguousAcquireAndCleanup(t *testing.T) {
 			f.acquireErr = nil
 			f.pinErr = nil
 			f.retireErr = nil
-			if _, err := provider.Qualify(ctx, p, s); !errors.Is(err, ErrWebControlCleanupUnknown) {
-				t.Fatal("retained uncertainty automatically became readiness")
+			retirements := f.retireCalls
+			if _, err := provider.Qualify(ctx, p, s); err != nil || f.retireCalls != retirements+1 {
+				t.Fatal("retained uncertainty was not exactly retired before fresh admission", err)
 			}
 		})
 	}
@@ -279,5 +280,190 @@ func TestProductionProviderCloseRefusesRetainedAuthority(t *testing.T) {
 	}
 	if e = provider.Close(ctx); e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestProductionProviderUncertainAuthorityAllowsOnlyOwnedRetirement(t *testing.T) {
+	ctx, p, s := providerActor(t)
+	f := &providerGatewayFixture{acquireAmbiguous: true, acquireErr: errors.New("ACK lost")}
+	provider := newProductionWebControlProvider(f)
+	if _, err := provider.Qualify(ctx, p, s); !errors.Is(err, ErrWebControlCleanupUnknown) {
+		t.Fatal(err)
+	}
+	// The retained authority's exact host-facing tuple is immutable.
+	a := WebControlAuthority{Owner: p.Namespace, Document: f.held.Document, ID: f.held.Lease.ID, Generation: f.held.Lease.Generation}
+	if _, err := provider.ExecutePinned(ctx, p, model.Step{}, nil, a); err == nil {
+		t.Fatal("uncertain authority executed")
+	}
+	foreign := p
+	foreign.ClientID = "foreign"
+	if _, err := provider.Retire(auth.WithPrincipal(context.Background(), foreign), foreign, a); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatal("foreign actor retired owned authority", err)
+	}
+	cleanup, err := provider.Retire(ctx, p, a)
+	if err != nil || !cleanup.AuthorityRetired || f.held != nil || f.retireCalls != 1 {
+		t.Fatal("owned unpublished authority could not retire", cleanup, err)
+	}
+}
+
+type lateRetirementGateway struct {
+	providerGatewayFixture
+	resume chan struct{}
+}
+
+func (f *lateRetirementGateway) RetireControl(_ context.Context, p auth.Principal, a chrome.ControlAuthority) (bool, error) {
+	<-f.resume
+	return f.providerGatewayFixture.RetireControl(context.Background(), p, a)
+}
+func TestProductionProviderLateRetirementCompletionIsIdempotent(t *testing.T) {
+	ctx, p, s := providerActor(t)
+	f := &lateRetirementGateway{resume: make(chan struct{})}
+	provider := newProductionWebControlProvider(f)
+	ready, err := provider.Qualify(ctx, p, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan struct{})
+	manager := &WebControlManager{options: WebControlOptions{Retire: func(c context.Context, p auth.Principal, a WebControlAuthority) (WebControlCleanup, error) {
+		result, err := provider.Retire(c, p, a)
+		close(finished)
+		return result, err
+	}}}
+	bounded, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+	cleanup, err := manager.retire(bounded, p, ready.Authority)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) || !cleanup.UnknownExecutors {
+		t.Fatal("timeout falsely established cleanup", cleanup, err)
+	}
+	close(f.resume)
+	<-finished
+	for i := 0; i < 2; i++ {
+		cleanup, err = provider.Retire(ctx, p, ready.Authority)
+		if err != nil || !cleanup.AuthorityRetired || !cleanup.RetiredAuthorityQuiesced {
+			t.Fatal("late completion lost proof", cleanup, err)
+		}
+	}
+	if f.retireCalls != 1 {
+		t.Fatal("completed retirement called gateway again")
+	}
+	foreign := p
+	foreign.ClientID = "foreign"
+	provider.RetireConsumed(foreign, ready.Authority)
+	if _, err := provider.Retire(ctx, p, ready.Authority); err != nil {
+		t.Fatal("foreign consumption discarded completion proof", err)
+	}
+	provider.RetireConsumed(p, ready.Authority)
+	if _, err := provider.Retire(ctx, p, ready.Authority); !errors.Is(err, ErrWebControlUnqualified) {
+		t.Fatal("accepted completion entry retained", err)
+	}
+	if _, err := provider.ExecutePinned(ctx, p, model.Step{}, nil, ready.Authority); err == nil {
+		t.Fatal("terminal retirement became input authority")
+	}
+	if err := provider.Close(ctx); err != nil {
+		t.Fatal("terminal entry blocked provider close", err)
+	}
+}
+
+func TestProductionProviderConsumesSequentialCompletionEntries(t *testing.T) {
+	ctx, p, s := providerActor(t)
+	f := &providerGatewayFixture{}
+	provider := newProductionWebControlProvider(f)
+	var completed []WebControlAuthority
+	for i := 0; i < 128; i++ {
+		ready, err := provider.Qualify(ctx, p, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cleanup, err := provider.Retire(ctx, p, ready.Authority)
+		if err != nil || !cleanup.AuthorityRetired {
+			t.Fatal("retirement failed", err)
+		}
+		provider.RetireConsumed(p, ready.Authority)
+		completed = append(completed, ready.Authority)
+	}
+	// Every unique completed authority must be absent from the existing entry map.
+	for _, a := range completed {
+		if _, err := provider.Retire(ctx, p, a); !errors.Is(err, ErrWebControlUnqualified) {
+			t.Fatal("consumed authority accumulated", err)
+		}
+	}
+	if f.retireCalls != 128 {
+		t.Fatal("consumption replayed retirement")
+	}
+	if err := provider.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type overlappingRetirementGateway struct {
+	providerGatewayFixture
+	entered chan int
+	gates   [2]chan struct{}
+}
+
+func (f *overlappingRetirementGateway) RetireControl(context.Context, auth.Principal, chrome.ControlAuthority) (bool, error) {
+	f.mu.Lock()
+	index := f.retireCalls
+	f.retireCalls++
+	f.mu.Unlock()
+	f.entered <- index
+	<-f.gates[index]
+	return true, nil
+}
+func TestProductionProviderLateConcurrentACKCannotResurrectConsumedEntry(t *testing.T) {
+	ctx, p, s := providerActor(t)
+	f := &overlappingRetirementGateway{entered: make(chan int, 2), gates: [2]chan struct{}{make(chan struct{}), make(chan struct{})}}
+	provider := newProductionWebControlProvider(f)
+	ready, err := provider.Qualify(ctx, p, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, second := make(chan error, 1), make(chan error, 1)
+	go func() { _, err := provider.Retire(ctx, p, ready.Authority); first <- err }()
+	<-f.entered
+	go func() { _, err := provider.Retire(ctx, p, ready.Authority); second <- err }()
+	<-f.entered
+	close(f.gates[0])
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	provider.RetireConsumed(p, ready.Authority)
+	close(f.gates[1])
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Retire(ctx, p, ready.Authority); !errors.Is(err, ErrWebControlUnqualified) {
+		t.Fatal("late ACK resurrected consumed authority", err)
+	}
+}
+
+type deadlineSuccessfulRetirementGateway struct{ providerGatewayFixture }
+
+func (f *deadlineSuccessfulRetirementGateway) RetireControl(ctx context.Context, p auth.Principal, a chrome.ControlAuthority) (bool, error) {
+	<-ctx.Done()
+	return f.providerGatewayFixture.RetireControl(context.Background(), p, a)
+}
+func TestProductionProviderUnpublishedLateCompletionRecoversWithoutStaleAuthority(t *testing.T) {
+	ctx, p, s := providerActor(t)
+	f := &deadlineSuccessfulRetirementGateway{providerGatewayFixture: providerGatewayFixture{acquireAmbiguous: true, acquireErr: errors.New("acquire ACK lost")}}
+	provider := newProductionWebControlProvider(f)
+	if _, err := provider.Qualify(ctx, p, s); !errors.Is(err, ErrWebControlCleanupUnknown) {
+		t.Fatal(err)
+	}
+	original := WebControlAuthority{Owner: p.Namespace, Document: f.held.Document, ID: f.held.Lease.ID, Generation: f.held.Lease.Generation}
+	f.acquireAmbiguous = false
+	f.acquireErr = nil
+	expired, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+	_, err := provider.Qualify(expired, p, s)
+	cancel()
+	if !errors.Is(err, ErrWebControlCleanupUnknown) || !errors.Is(err, context.DeadlineExceeded) || f.held != nil {
+		t.Fatal("late unpublished ACK lost uncertainty/completion", err)
+	}
+	ready, err := provider.Qualify(ctx, p, s)
+	if err != nil || ready.Authority.ID == original.ID || f.retireCalls != 1 {
+		t.Fatal("unpublished completion retried stale gateway authority", err)
+	}
+	if _, err := provider.Retire(ctx, p, original); !errors.Is(err, ErrWebControlUnqualified) {
+		t.Fatal("accepted unpublished completion entry accumulated", err)
 	}
 }
