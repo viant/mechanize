@@ -9,7 +9,29 @@ import (
 	"github.com/viant/mechanize/vault"
 )
 
+// Keep the original preparation failure separate from its attempted cleanup.
+// The wrapper exposes only a static message; trusted diagnostics map each side
+// into closed metadata and never include joined error text.
+type webPreparationCleanupFailure struct{ primary, cleanup error }
+
+func (e *webPreparationCleanupFailure) Error() string { return "Web preparation cleanup unconfirmed" }
+func (e *webPreparationCleanupFailure) Unwrap() []error {
+	return []error{e.primary, e.cleanup, ErrWebControlCleanupUnknown}
+}
+func newWebPreparationCleanupFailure(primary, cleanup error) error {
+	return &webPreparationCleanupFailure{primary: primary, cleanup: cleanup}
+}
+func webPreparationCleanupStatus(err error) string {
+	if errors.Is(err, ErrWebControlCleanupUnknown) {
+		return "unconfirmed"
+	}
+	return ""
+}
 func webPreparationCause(err error) string {
+	var failure *webPreparationCleanupFailure
+	if errors.As(err, &failure) && failure != nil {
+		return webPreparationCause(failure.primary)
+	}
 	switch {
 	case errors.Is(err, ErrWebControlCleanupUnknown):
 		return "cleanupUnconfirmed"

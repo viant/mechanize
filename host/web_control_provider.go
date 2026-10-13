@@ -77,7 +77,7 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 		}
 		return entry.authority, nil
 	}
-	uncertain := func(a chrome.ControlAuthority, cause error) error {
+	uncertain := func(a chrome.ControlAuthority, cause, cleanup error) error {
 		mu.Lock()
 		entry := entries[a.Lease.ID]
 		entry.authority = a
@@ -85,7 +85,7 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 		entry.uncertain = true
 		entries[a.Lease.ID] = entry
 		mu.Unlock()
-		return errors.Join(cause, ErrWebControlCleanupUnknown)
+		return newWebPreparationCleanupFailure(cause, cleanup)
 	}
 	retireAuthority := func(ctx context.Context, p auth.Principal, a WebControlAuthority) (WebControlCleanup, error) {
 		stored, err := lookup(a, true)
@@ -120,6 +120,29 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 		entry, exists := entries[a.ID]
 		if exists && entry.retired && entry.authority.Owner == p.Namespace && entry.authority.ClientID == p.ClientID && convert(entry.authority) == a {
 			delete(entries, a.ID)
+		}
+	}
+	retireUnpublished := func(ctx context.Context, p auth.Principal, a chrome.ControlAuthority, cause error) error {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		type result struct {
+			retired bool
+			err     error
+		}
+		done := make(chan result, 1)
+		go func() {
+			cleanup, err := retireAuthority(cleanupCtx, p, convert(a))
+			done <- result{cleanup.AuthorityRetired, err}
+		}()
+		select {
+		case outcome := <-done:
+			if outcome.err == nil && outcome.retired && cleanupCtx.Err() == nil {
+				consumeRetirement(p, convert(a))
+				return cause
+			}
+			return uncertain(a, cause, errors.Join(outcome.err, cleanupCtx.Err()))
+		case <-cleanupCtx.Done():
+			return uncertain(a, cause, cleanupCtx.Err())
 		}
 	}
 	readiness := func(a chrome.ControlAuthority, reader *webPostconditionRead) WebControlReadiness {
@@ -172,7 +195,12 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 			mu.Unlock()
 			if err != nil || !admission.Confirmed {
 				if admission.Created && a.Lease.ID != "" {
-					return WebControlReadiness{}, uncertain(a, errors.Join(err, fmt.Errorf("%w: provider.admission", ErrWebControlUnqualified)))
+					// This acquisition is ours even if post-ACK verification
+					// failed. Try its existing exact retirement path now.
+					mu.Lock()
+					entries[a.Lease.ID] = providerAuthority{authority: a, owned: true}
+					mu.Unlock()
+					return WebControlReadiness{}, retireUnpublished(ctx, p, a, errors.Join(err, fmt.Errorf("%w: provider.admission", ErrWebControlUnqualified)))
 				}
 				// A failed requalification does not own or revoke another prepared step.
 				return WebControlReadiness{}, errors.Join(err, fmt.Errorf("%w: provider.admission", ErrWebControlUnqualified))
@@ -203,27 +231,7 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 				pinErr = fmt.Errorf("%w: provider.fingerprintNegotiation", ErrWebControlUnqualified)
 			}
 			if pinErr != nil {
-				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-				defer cancel()
-				type result struct {
-					retired bool
-					err     error
-				}
-				done := make(chan result, 1)
-				go func() {
-					cleanup, err := retireAuthority(cleanupCtx, p, convert(a))
-					done <- result{cleanup.AuthorityRetired, err}
-				}()
-				select {
-				case outcome := <-done:
-					if outcome.err == nil && outcome.retired && cleanupCtx.Err() == nil {
-						consumeRetirement(p, convert(a))
-						return WebControlReadiness{}, pinErr
-					}
-					return WebControlReadiness{}, uncertain(a, errors.Join(pinErr, outcome.err))
-				case <-cleanupCtx.Done():
-					return WebControlReadiness{}, uncertain(a, errors.Join(pinErr, cleanupCtx.Err()))
-				}
+				return WebControlReadiness{}, retireUnpublished(ctx, p, a, pinErr)
 			}
 			reader := pinnedWebPostconditionReadGateway(gateway, pin)
 			mu.Lock()

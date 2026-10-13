@@ -15,6 +15,7 @@ import (
 )
 
 type providerGatewayFixture struct {
+	afterAcquire                  func(*chrome.ControlAuthority)
 	mu                            sync.Mutex
 	held                          *chrome.ControlAuthority
 	next                          int
@@ -43,6 +44,15 @@ func (f *providerGatewayFixture) AdmitControlWithStatus(_ context.Context, p aut
 		f.held = &chrome.ControlAuthority{MutationFingerprintVersion: f.fingerprintVersion, Owner: p.Namespace, ClientID: p.ClientID, Document: chrome.Document{MutationFingerprintVersion: f.fingerprintVersion, Identity: chrome.Identity{ProfileChannel: "fixture", BrowserInstance: "browser", TabID: 7, DocumentID: "doc", Generation: 1}, Origin: s.Origin}, Lease: chrome.Lease{ID: fmt.Sprintf("lease-%d", f.next), Generation: uint64(f.next)}}
 	}
 	outcome := chrome.ControlAdmission{Authority: *f.held, Created: created, Confirmed: !f.acquireAmbiguous}
+	if f.afterAcquire != nil {
+		// The acquire ACK contains the immutable admitted snapshot. A subsequent
+		// independent metadata update occurs before the gateway revalidates it.
+		f.afterAcquire(f.held)
+		if f.held.Document != outcome.Authority.Document {
+			outcome.Confirmed = false
+			return outcome, &model.MechanizeError{Code: "staleAuthority", Message: "Fixture metadata changed after acknowledged acquisition", DispatchState: "notDispatched"}
+		}
+	}
 	return outcome, f.acquireErr
 }
 func (f *providerGatewayFixture) PinControlRead(context.Context, auth.Principal, chrome.ControlAuthority) (chrome.ReadBinding, error) {
@@ -153,6 +163,7 @@ func TestProductionProviderRetainsAmbiguousAcquireAndCleanup(t *testing.T) {
 			if name == "acquire" {
 				f.acquireAmbiguous = true
 				f.acquireErr = errors.New("acquire acknowledgement lost")
+				f.retireErr = errors.New("exact retirement unconfirmed")
 			} else {
 				f.pinErr = errors.New("pin failed")
 				f.retireErr = errors.New("retirement unconfirmed")
@@ -161,8 +172,8 @@ func TestProductionProviderRetainsAmbiguousAcquireAndCleanup(t *testing.T) {
 			if _, err := provider.Qualify(ctx, p, s); !errors.Is(err, ErrWebControlCleanupUnknown) || f.held == nil {
 				t.Fatalf("uncertainty discarded %v", err)
 			}
-			if name == "acquire" && (f.pinCalls != 0 || f.retireCalls != 0) {
-				t.Fatal("ambiguous acquire claimed safe cleanup")
+			if name == "acquire" && (f.pinCalls != 0 || f.retireCalls != 1) {
+				t.Fatal("ambiguous acquire skipped exact cleanup or pinned authority")
 			}
 			f.acquireAmbiguous = false
 			f.acquireErr = nil
@@ -175,6 +186,56 @@ func TestProductionProviderRetainsAmbiguousAcquireAndCleanup(t *testing.T) {
 		})
 	}
 }
+
+// Acquisition installed its lease, but a routine renderer update changed the
+// authority before the gateway's post-ACK verification. No business input ran.
+func TestProductionProviderPostAcquireChangeRetiresExactUnpublishedLease(t *testing.T) {
+	for _, change := range []string{"generation", "title"} {
+		t.Run(change, func(t *testing.T) {
+			ctx, p, surface := providerActor(t)
+			fixture := &providerGatewayFixture{fingerprintVersion: 2, afterAcquire: func(current *chrome.ControlAuthority) {
+				if change == "generation" {
+					current.Document.Generation++
+				} else {
+					current.Document.Title = "Updated fixture title"
+				}
+			}}
+			dispatched := 0
+			provider := newProductionWebControlProvider(fixture, func(context.Context, auth.Principal, model.Step, map[string]model.Value, chrome.ControlAuthority) (automation.StepResult, error) {
+				dispatched++
+				return automation.StepResult{}, nil
+			})
+			ready, err := provider.Qualify(ctx, p, surface)
+			var changed *model.MechanizeError
+			if !errors.As(err, &changed) || changed.Code != "staleAuthority" || errors.Is(err, ErrWebControlCleanupUnknown) || ready.Authority.ID != "" {
+				t.Fatalf("post-acquisition failure lost original reason or claimed readiness: %+v %v", ready, err)
+			}
+			if fixture.retireCalls != 1 || fixture.held != nil || fixture.pinCalls != 0 || fixture.acquireCalls != 1 || dispatched != 0 {
+				t.Fatal("failed unpublished admission was not immediately retired without input")
+			}
+			fixture.afterAcquire = nil
+			fixture.acquireAmbiguous = false
+			fixture.acquireErr = nil
+			if _, err = provider.Qualify(ctx, p, surface); err != nil || fixture.acquireCalls != 2 || fixture.retireCalls != 1 || dispatched != 0 {
+				t.Fatal("explicit fresh qualification stranded or replayed input", err)
+			}
+		})
+	}
+}
+
+func TestProductionProviderPostAcquireFailureKeepsPrimaryCauseWhenCleanupFails(t *testing.T) {
+	ctx, p, surface := providerActor(t)
+	fixture := &providerGatewayFixture{fingerprintVersion: 2, afterAcquire: func(current *chrome.ControlAuthority) { current.Document.Generation++ }, retireErr: context.DeadlineExceeded}
+	provider := newProductionWebControlProvider(fixture)
+	ready, err := provider.Qualify(ctx, p, surface)
+	if ready.Authority.ID != "" || !errors.Is(err, ErrWebControlCleanupUnknown) || !errors.Is(err, context.DeadlineExceeded) || webPreparationCause(err) != "leaseChanged" || webPreparationCleanupStatus(err) != "unconfirmed" {
+		t.Fatalf("original authority change was replaced by cleanup failure: %+v %v", ready, err)
+	}
+	if fixture.retireCalls != 1 || fixture.held == nil || fixture.pinCalls != 0 || fixture.acquireCalls != 1 {
+		t.Fatal("failed exact cleanup lost retained ownership or reacquired")
+	}
+}
+
 func TestProductionProviderPinFailureRetirementTimeoutIsUnknown(t *testing.T) {
 	ctx, p, s := providerActor(t)
 	f := &providerGatewayFixture{pinErr: errors.New("pin failed"), waitRetire: true}
@@ -285,7 +346,7 @@ func TestProductionProviderCloseRefusesRetainedAuthority(t *testing.T) {
 
 func TestProductionProviderUncertainAuthorityAllowsOnlyOwnedRetirement(t *testing.T) {
 	ctx, p, s := providerActor(t)
-	f := &providerGatewayFixture{acquireAmbiguous: true, acquireErr: errors.New("ACK lost")}
+	f := &providerGatewayFixture{acquireAmbiguous: true, acquireErr: errors.New("ACK lost"), retireErr: errors.New("retire ACK lost")}
 	provider := newProductionWebControlProvider(f)
 	if _, err := provider.Qualify(ctx, p, s); !errors.Is(err, ErrWebControlCleanupUnknown) {
 		t.Fatal(err)
@@ -300,8 +361,9 @@ func TestProductionProviderUncertainAuthorityAllowsOnlyOwnedRetirement(t *testin
 	if _, err := provider.Retire(auth.WithPrincipal(context.Background(), foreign), foreign, a); !errors.Is(err, auth.ErrUnauthorized) {
 		t.Fatal("foreign actor retired owned authority", err)
 	}
+	f.retireErr = nil
 	cleanup, err := provider.Retire(ctx, p, a)
-	if err != nil || !cleanup.AuthorityRetired || f.held != nil || f.retireCalls != 1 {
+	if err != nil || !cleanup.AuthorityRetired || f.held != nil || f.retireCalls != 2 {
 		t.Fatal("owned unpublished authority could not retire", cleanup, err)
 	}
 }
@@ -437,15 +499,25 @@ func TestProductionProviderLateConcurrentACKCannotResurrectConsumedEntry(t *test
 	}
 }
 
-type deadlineSuccessfulRetirementGateway struct{ providerGatewayFixture }
+type deadlineSuccessfulRetirementGateway struct {
+	providerGatewayFixture
+	refuseFirst bool
+}
 
 func (f *deadlineSuccessfulRetirementGateway) RetireControl(ctx context.Context, p auth.Principal, a chrome.ControlAuthority) (bool, error) {
+	if f.refuseFirst {
+		f.refuseFirst = false
+		f.mu.Lock()
+		f.retireCalls++
+		f.mu.Unlock()
+		return false, errors.New("first exact cleanup unconfirmed")
+	}
 	<-ctx.Done()
 	return f.providerGatewayFixture.RetireControl(context.Background(), p, a)
 }
 func TestProductionProviderUnpublishedLateCompletionRecoversWithoutStaleAuthority(t *testing.T) {
 	ctx, p, s := providerActor(t)
-	f := &deadlineSuccessfulRetirementGateway{providerGatewayFixture: providerGatewayFixture{acquireAmbiguous: true, acquireErr: errors.New("acquire ACK lost")}}
+	f := &deadlineSuccessfulRetirementGateway{providerGatewayFixture: providerGatewayFixture{acquireAmbiguous: true, acquireErr: errors.New("acquire ACK lost")}, refuseFirst: true}
 	provider := newProductionWebControlProvider(f)
 	if _, err := provider.Qualify(ctx, p, s); !errors.Is(err, ErrWebControlCleanupUnknown) {
 		t.Fatal(err)
@@ -460,7 +532,7 @@ func TestProductionProviderUnpublishedLateCompletionRecoversWithoutStaleAuthorit
 		t.Fatal("late unpublished ACK lost uncertainty/completion", err)
 	}
 	ready, err := provider.Qualify(ctx, p, s)
-	if err != nil || ready.Authority.ID == original.ID || f.retireCalls != 1 {
+	if err != nil || ready.Authority.ID == original.ID || f.retireCalls != 2 {
 		t.Fatal("unpublished completion retried stale gateway authority", err)
 	}
 	if _, err := provider.Retire(ctx, p, original); !errors.Is(err, ErrWebControlUnqualified) {

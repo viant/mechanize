@@ -56,3 +56,21 @@ func TestPreparationDiagnosticsRequirePreIntentResultAndClosedFields(t *testing.
 		t.Fatal("preparation metadata lent to another failure")
 	}
 }
+
+func TestPreparationCleanupIsOptionalClosedAndIndependentOfOriginalCause(t *testing.T) {
+	original := errors.New("PRIVATE_CANARY original and cleanup details")
+	failure := NewStepPreparationFailureWithCleanup("qualify", "leaseChanged", "unconfirmed", original)
+	captured := CaptureStepPreparationFailure(failure)
+	if captured == nil || !captured.Valid() || captured.Preparation.Cause != "leaseChanged" || captured.Preparation.Cleanup != "unconfirmed" || !errors.Is(failure, original) || strings.Contains(failure.Error(), "PRIVATE_CANARY") {
+		t.Fatal("closed primary/cleanup diagnostic lost")
+	}
+	for _, cleanup := range []string{"PRIVATE_CANARY", "confirmed", "unknown"} {
+		if CaptureStepPreparationFailure(NewStepPreparationFailureWithCleanup("qualify", "leaseChanged", cleanup, original)) != nil {
+			t.Fatal("unbounded cleanup accepted")
+		}
+	}
+	backward := CaptureStepPreparationFailure(NewStepPreparationFailure("qualify", "leaseChanged", original))
+	if backward == nil || backward.Preparation.Cleanup != "" {
+		t.Fatal("existing constructor changed")
+	}
+}

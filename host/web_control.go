@@ -318,7 +318,7 @@ func (m *WebControlManager) Prepare(ctx context.Context, p auth.Principal, step 
 	stage := "executor"
 	defer func() {
 		if returnErr != nil {
-			returnErr = automation.NewStepPreparationFailure(stage, webPreparationCause(returnErr), returnErr)
+			returnErr = automation.NewStepPreparationFailureWithCleanup(stage, webPreparationCause(returnErr), webPreparationCleanupStatus(returnErr), returnErr)
 		}
 	}()
 	if !m.beginWork() {
@@ -621,7 +621,7 @@ func (m *WebControlManager) retireOwnedAuthority(ctx context.Context, p auth.Pri
 		m.prepared[&webControlIntent{manager: m, principal: p, authority: authority, consumed: true, cleanupPending: true, ownerContext: auth.WithPrincipal(context.Background(), p)}] = struct{}{}
 	}
 	m.mu.Unlock()
-	return errors.Join(cause, cleanupErr, ErrWebControlCleanupUnknown)
+	return newWebPreparationCleanupFailure(cause, cleanupErr)
 }
 func (m *WebControlManager) cancelPrepared(intent *webControlIntent) {
 	m.mu.Lock()
