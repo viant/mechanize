@@ -38,6 +38,27 @@ func TestExecutionFailureTypedClosedProjection(t *testing.T) {
 		})
 	}
 }
+
+func TestExecutionFailurePreInputConsentDiagnostic(t *testing.T) {
+	for _, code := range []string{"permissionRequired", "permissionExpired", "permissionDenied"} {
+		failure := &model.MechanizeError{Code: code, Stage: "consent", DispatchState: "notDispatched", EffectState: "none", Message: "PRIVATE_CANARY"}
+		got := executionFailure(StepResult{}, failure)
+		if got == nil || got.Code != code || got.DispatchState != "notDispatched" || !got.Valid() {
+			t.Fatal("closed pre-input consent failure lost")
+		}
+		for _, mutate := range []func(*model.MechanizeError){
+			func(e *model.MechanizeError) { e.Stage = "native" },
+			func(e *model.MechanizeError) { e.DispatchState = "unknown" },
+			func(e *model.MechanizeError) { e.EffectState = "unknown" },
+		} {
+			invalid := *failure
+			mutate(&invalid)
+			if executionFailure(StepResult{}, &invalid) != nil {
+				t.Fatal("unqualified permission claim became consent diagnostic")
+			}
+		}
+	}
+}
 func TestExecutionFailureOwnedRuntimeBoundary(t *testing.T) {
 	ctx := actor(t, "failure-owner")
 	p, _ := auth.FromContext(ctx)

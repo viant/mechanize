@@ -109,15 +109,19 @@ func (h *Host) prepareStepExecutor(ctx context.Context, p auth.Principal, step m
 		if h.webControl == nil {
 			return nil, 0, ErrWebControlUnqualified
 		}
-		// Reusable trust must be pinned before the durable web intent. Lookup
-		// selects an existing human grant; Execute still reauthorizes it.
+		// Existing controller policy or reusable trust must be pinned before the
+		// durable web intent. Execute still reauthorizes that same grant.
 		binding, ok := auth.ConsentBindingFromContext(ctx)
 		if ok && binding.GrantID == "" && binding.Purpose != "" && h.consent != nil {
 			scope, err := h.operationConsentScope(p, step.Target.Surface)
 			if err != nil {
 				return ctx, 0, err
 			}
-			grant, err := h.consent.FindPermanentGrant(ctx, p, consent.Operation{SessionID: binding.SessionID, Scope: scope, Mode: consent.Control, Purpose: binding.Purpose})
+			operation := consent.Operation{SessionID: binding.SessionID, Scope: scope, Mode: consent.Control, Purpose: binding.Purpose}
+			grant, err := h.consent.ResolveControllerPolicyGrant(ctx, p, operation)
+			if err == nil && grant == nil {
+				grant, err = h.consent.FindPermanentGrant(ctx, p, operation)
+			}
 			if err != nil {
 				return ctx, 0, err
 			}
