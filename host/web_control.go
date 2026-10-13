@@ -98,10 +98,9 @@ type WebControlOptions struct {
 	// ExecutePinned must atomically revalidate this SAME authority immediately
 	// before transport write. It must not reselect a tab or substitute a generation.
 	// The provider must carry the stable durable Endly attempt, never generic retry.
-	ExecutePinned        func(context.Context, auth.Principal, model.Step, map[string]model.Value, WebControlAuthority) (automation.StepResult, error)
-	Retire               func(context.Context, auth.Principal, WebControlAuthority) (WebControlCleanup, error)
-	RecordCleanupUnknown func(context.Context, auth.Principal, WebControlAuthority) error
-	Close                func(context.Context) error
+	ExecutePinned func(context.Context, auth.Principal, model.Step, map[string]model.Value, WebControlAuthority) (automation.StepResult, error)
+	Retire        func(context.Context, auth.Principal, WebControlAuthority) (WebControlCleanup, error)
+	Close         func(context.Context) error
 }
 type WebControlManager struct {
 	options        WebControlOptions
@@ -132,7 +131,7 @@ type webControlIntent struct {
 type webControlIntentKey struct{}
 
 func NewWebControlManager(options WebControlOptions) (*WebControlManager, error) {
-	if options.Owner == nil || options.Enrolled == nil || options.Qualify == nil || options.VerifyChannel == nil || options.Authorize == nil || options.ExecutePinned == nil || options.Retire == nil || options.RecordCleanupUnknown == nil || options.Close == nil {
+	if options.Owner == nil || options.Enrolled == nil || options.Qualify == nil || options.VerifyChannel == nil || options.Authorize == nil || options.ExecutePinned == nil || options.Retire == nil || options.Close == nil {
 		return nil, ErrWebControlUnqualified
 	}
 	return &WebControlManager{options: options, inhibited: map[string]bool{}, prepared: map[*webControlIntent]struct{}{}, closeLane: make(chan struct{}, 1)}, nil
@@ -573,13 +572,9 @@ func (m *WebControlManager) Execute(ctx context.Context, p auth.Principal, step 
 	m.mu.Lock()
 	m.inhibited[webChannelKey(intent.authority)] = true
 	m.mu.Unlock()
-	// Persist uncertainty through the injected generated-use-case callback. The
-	// admitted consent lease stays registered until real executor reconciliation.
-	recordCtx, recordCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	recordErr := m.options.RecordCleanupUnknown(recordCtx, actual, intent.authority)
-	recordErr = errors.Join(recordErr, recordCtx.Err())
-	recordCancel()
-	return result, errors.Join(dispatchErr, cleanupErr, recordErr, ErrWebControlCleanupUnknown)
+	// Executor retirement uncertainty retains the admitted lease and channel hold.
+	// It does not revoke the human's saved consent policy.
+	return result, errors.Join(dispatchErr, cleanupErr, ErrWebControlCleanupUnknown)
 }
 
 // abandonIntent does not infer quiescence from an error or deadline. The exact
@@ -614,10 +609,7 @@ func (m *WebControlManager) retireOwnedAuthority(ctx context.Context, p auth.Pri
 	m.mu.Lock()
 	m.inhibited[webChannelKey(authority)] = true
 	m.mu.Unlock()
-	recordCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer stop()
-	recordErr := m.options.RecordCleanupUnknown(recordCtx, p, authority)
-	return errors.Join(cause, cleanupErr, recordErr, recordCtx.Err(), ErrWebControlCleanupUnknown)
+	return errors.Join(cause, cleanupErr, ErrWebControlCleanupUnknown)
 }
 func (m *WebControlManager) cancelPrepared(intent *webControlIntent) {
 	m.mu.Lock()

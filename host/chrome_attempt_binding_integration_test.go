@@ -34,7 +34,7 @@ func (f *bindingReadinessGateway) AdmitControlWithStatus(ctx context.Context, p 
 func TestGeneratedChromeBindingAdapterCommitsBeforeFixtureKnownAbsence(t *testing.T) {
 	ctx, p, surface := providerActor(t)
 	gateway := &bindingReadinessGateway{providerGatewayFixture: providerGatewayFixture{fingerprintVersion: 2}}
-	provider := newProductionWebControlProvider(gateway, func(context.Context, auth.Principal) error { return nil })
+	provider := newProductionWebControlProvider(gateway)
 	ready, err := provider.Qualify(ctx, p, surface)
 	if err != nil {
 		t.Fatal(err)

@@ -24,8 +24,8 @@ func TestHostAbandonsFailedRequalificationThroughRealGateway(t *testing.T) {
 			g, ctx, _, surface, makeStale, retained, stats := chrome.ControlRequalificationFixtureForTest(t)
 			ctx = auth.WithConsentBinding(ctx, auth.ConsentBinding{GrantID: "fixture-grant", SessionID: "fixture-session", Purpose: "synthetic control cleanup"})
 			profile := host.WebControlProfile{ProfileChannel: "p1", BrowserInstance: "b1", ExtensionOrigin: "chrome-extension://" + strings.Repeat("a", 32) + "/", Origins: []string{surface.Origin}}
-			records, dispatches, retirements := 0, 0, 0
-			options := host.WebControlProviderForIntegration(g, func(context.Context, auth.Principal) error { records++; return nil })
+			dispatches, retirements := 0, 0
+			options := host.WebControlProviderForIntegration(g)
 			options.Owner = context.Background()
 			options.Enrolled = func(context.Context, auth.Principal) (host.WebControlScope, error) {
 				return host.WebControlScope{Profiles: []host.WebControlProfile{profile}}, nil
@@ -70,7 +70,7 @@ func TestHostAbandonsFailedRequalificationThroughRealGateway(t *testing.T) {
 					expectedDispatches = 0
 				}
 				acquires, inputs := stats()
-				if (e != nil) != stale || result.DispatchState != expectedState || retirements != 1 || dispatches != expectedDispatches || records != 0 || acquires != 1 || inputs != int64(expectedDispatches) {
+				if (e != nil) != stale || result.DispatchState != expectedState || retirements != 1 || dispatches != expectedDispatches || acquires != 1 || inputs != int64(expectedDispatches) {
 					t.Error("original pin was re-admitted or cleanup/dispatch failed", e, acquires, inputs)
 				}
 				_, fresh, e := manager.Prepare(c, p, step)
@@ -104,7 +104,7 @@ func TestHostAbandonsFailedRequalificationThroughRealGateway(t *testing.T) {
 			if stale {
 				expectedDispatches = 0
 			}
-			if retirements != 2 || dispatches != expectedDispatches || records != 0 || !retained() {
+			if retirements != 2 || dispatches != expectedDispatches || !retained() {
 				t.Fatal("fixture did not exercise guarded cleanup")
 			}
 		})

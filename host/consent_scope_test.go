@@ -68,6 +68,16 @@ func TestConsentBrokerRetainsTrustedScopeAndRejectsForeignNamespace(t *testing.T
 }
 
 func TestRealConsentLeasePreservesWebRendererAuthorityAndRevocation(t *testing.T) {
+	testRealConsentLeaseWebCleanup(t, "")
+}
+
+func TestWebCleanupFailurePreservesPermanentPolicyAndTransportReceipt(t *testing.T) {
+	for _, state := range []string{"dispatched", "notDispatched"} {
+		t.Run(state, func(t *testing.T) { testRealConsentLeaseWebCleanup(t, state) })
+	}
+}
+
+func testRealConsentLeaseWebCleanup(t *testing.T, dispatchState string) {
 	f := newWebControlFixture(t)
 	f.principal.ClientName = "Scope fixture client"
 	f.principal.Scopes = append(f.principal.Scopes, "consent:admin")
@@ -82,7 +92,11 @@ func TestRealConsentLeasePreservesWebRendererAuthorityAndRevocation(t *testing.T
 	defer server.Shutdown(context.Background())
 	binding, _ := auth.ConsentBindingFromContext(f.ctx)
 	h := &Host{users: map[string]User{f.principal.Namespace: {Subject: f.principal.Subject, DesktopAccess: true}}}
+	consentWrites := 0
 	h.consent, err = NewConsentBroker(ConsentBrokerOptions{Invoke: func(ctx context.Context, _ auth.Principal, r exec.ComponentRequest) (any, error) {
+		if r.Target.Route.Method != "GET" {
+			consentWrites++
+		}
 		return server.InvokeComponent(ctx, r)
 	}, Enrolled: h.enrolled, SessionOwned: func(_ context.Context, p auth.Principal, id string) error {
 		if p.Namespace != f.principal.Namespace || id != binding.SessionID {
@@ -123,6 +137,24 @@ func TestRealConsentLeasePreservesWebRendererAuthorityAndRevocation(t *testing.T
 	unbound := binding
 	unbound.GrantID = ""
 	f.ctx = auth.WithConsentBinding(f.ctx, unbound)
+	var unrelated *consent.Lease
+	var before consent.Snapshot
+	writesBefore := consentWrites
+	if dispatchState != "" {
+		// Another admitted operation on this same permanent grant must remain live.
+		unrelated, err = h.AuthorizeOperation(auth.WithConsentBinding(f.ctx, binding), f.principal, f.step.Target.Surface, true, consent.Control)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unrelated.Release()
+		before, err = h.consent.GetSnapshot(human, f.principal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writesBefore = consentWrites
+		f.cleanup = WebControlCleanup{UnknownExecutors: true}
+		f.retireErr = errors.New("fixture retirement ACK lost")
+	}
 	withWebExecution(t, f, func(ctx context.Context, p auth.Principal, step model.Step) {
 		prepared, epoch, err := h.prepareStepExecutor(ctx, p, step)
 		if err != nil || epoch != int(f.ready.Authority.Generation) {
@@ -148,15 +180,36 @@ func TestRealConsentLeasePreservesWebRendererAuthorityAndRevocation(t *testing.T
 				t.Error("consent lease changed admitted renderer/actor/metadata/binding")
 			}
 			f.dispatches++
+			if dispatchState == "notDispatched" {
+				return automation.StepResult{DispatchState: dispatchState}, &model.MechanizeError{Code: "fixtureAbsent", DispatchState: dispatchState}
+			}
 			return automation.StepResult{DispatchState: "dispatched"}, nil
 		}
 		result, err := f.manager.Execute(prepared, p, step, nil)
-		if err != nil || result.DispatchState != "dispatched" {
-			t.Errorf("real consent blocked inert pinned dispatch: %+v %v", result, err)
+		if dispatchState == "" {
+			if err != nil || result.DispatchState != "dispatched" {
+				t.Errorf("real consent blocked inert pinned dispatch: %+v %v", result, err)
+			}
+		} else if !errors.Is(err, ErrWebControlCleanupUnknown) || result.DispatchState != dispatchState || result.VerificationState != "unknown" {
+			t.Errorf("cleanup failure changed original transport receipt: %+v %v", result, err)
 		}
 	})
 	if f.dispatches != 1 {
 		t.Fatal("wrong dispatch count", f.dispatches)
+	}
+	if dispatchState != "" {
+		after, err := h.consent.GetSnapshot(human, f.principal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		beforeJSON, _ := json.Marshal(before)
+		afterJSON, _ := json.Marshal(after)
+		if string(beforeJSON) != string(afterJSON) || consentWrites != writesBefore {
+			t.Fatal("executor cleanup changed saved grant or performed a policy/revision write")
+		}
+		if unrelated.Context.Err() != nil {
+			t.Fatal("executor cleanup cancelled another operation on the grant")
+		}
 	}
 	scoped, _ := data.WithScope(f.ctx, data.Scope{Namespace: f.principal.Namespace, LeaseEpoch: 7})
 	active, err := h.AuthorizeOperation(scoped, f.principal, f.step.Target.Surface, true, consent.Control)

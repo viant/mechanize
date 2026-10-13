@@ -32,7 +32,7 @@ type providerAuthority struct {
 
 // productionWebControl uses broker-authenticated channel/endpoint evidence.
 func (h *Host) productionWebControl() *WebControlOptions {
-	return newProductionWebControlProvider(h.chrome, func(ctx context.Context, p auth.Principal) error { return h.markControlCleanupUnknown(ctx, p) },
+	return newProductionWebControlProvider(h.chrome,
 		func(ctx context.Context, p auth.Principal, step model.Step, values map[string]model.Value, a chrome.ControlAuthority) (automation.StepResult, error) {
 			denied := automation.StepResult{DispatchState: "notDispatched", VerificationState: "unknown"}
 			intent, err := data.RequireCommittedStepIntent(ctx, p)
@@ -59,7 +59,7 @@ func (h *Host) productionWebControl() *WebControlOptions {
 
 type boundWebExecutor func(context.Context, auth.Principal, model.Step, map[string]model.Value, chrome.ControlAuthority) (automation.StepResult, error)
 
-func newProductionWebControlProvider(gateway webControlProviderGateway, recordUnknown func(context.Context, auth.Principal) error, bound ...boundWebExecutor) *WebControlOptions {
+func newProductionWebControlProvider(gateway webControlProviderGateway, bound ...boundWebExecutor) *WebControlOptions {
 	var mu sync.Mutex
 	entries := map[string]providerAuthority{}
 	// Only admission/pin/publication owns this lane. Retirement and stop callbacks
@@ -77,7 +77,7 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, recordUn
 		}
 		return entry.authority, nil
 	}
-	uncertain := func(ctx context.Context, p auth.Principal, a chrome.ControlAuthority, cause error) error {
+	uncertain := func(a chrome.ControlAuthority, cause error) error {
 		mu.Lock()
 		entry := entries[a.Lease.ID]
 		entry.authority = a
@@ -85,9 +85,7 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, recordUn
 		entry.uncertain = true
 		entries[a.Lease.ID] = entry
 		mu.Unlock()
-		bounded, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		defer cancel()
-		return errors.Join(cause, recordUnknown(bounded, p), ErrWebControlCleanupUnknown)
+		return errors.Join(cause, ErrWebControlCleanupUnknown)
 	}
 	readiness := func(a chrome.ControlAuthority, reader *webPostconditionRead) WebControlReadiness {
 		actions := []string{"element.press", "element.fill", "browser.activate"}
@@ -120,7 +118,7 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, recordUn
 			mu.Unlock()
 			if err != nil || !admission.Confirmed {
 				if admission.Created && a.Lease.ID != "" {
-					return WebControlReadiness{}, uncertain(ctx, p, a, errors.Join(err, fmt.Errorf("%w: provider.admission", ErrWebControlUnqualified)))
+					return WebControlReadiness{}, uncertain(a, errors.Join(err, fmt.Errorf("%w: provider.admission", ErrWebControlUnqualified)))
 				}
 				// A failed requalification does not own or revoke another prepared step.
 				return WebControlReadiness{}, errors.Join(err, fmt.Errorf("%w: provider.admission", ErrWebControlUnqualified))
@@ -167,9 +165,9 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, recordUn
 						mu.Unlock()
 						return WebControlReadiness{}, pinErr
 					}
-					return WebControlReadiness{}, uncertain(ctx, p, a, errors.Join(pinErr, outcome.err))
+					return WebControlReadiness{}, uncertain(a, errors.Join(pinErr, outcome.err))
 				case <-cleanupCtx.Done():
-					return WebControlReadiness{}, uncertain(ctx, p, a, errors.Join(pinErr, cleanupCtx.Err()))
+					return WebControlReadiness{}, uncertain(a, errors.Join(pinErr, cleanupCtx.Err()))
 				}
 			}
 			reader := pinnedWebPostconditionReadGateway(gateway, pin)
@@ -213,7 +211,6 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, recordUn
 			}
 			return WebControlCleanup{AuthorityRetired: retired && err == nil, RetiredAuthorityQuiesced: retired && err == nil, UnknownExecutors: !retired || err != nil}, err
 		},
-		RecordCleanupUnknown: func(ctx context.Context, p auth.Principal, a WebControlAuthority) error { return recordUnknown(ctx, p) },
 		Close: func(ctx context.Context) error {
 			select {
 			case admissionLane <- struct{}{}:

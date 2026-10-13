@@ -98,12 +98,11 @@ func TestProductionProviderRetiresOnlyNewUnpublishedPinFailure(t *testing.T) {
 	ctx, p, s := providerActor(t)
 	pinErr := errors.New("pin unavailable")
 	f := &providerGatewayFixture{pinErr: pinErr}
-	records := 0
-	provider := newProductionWebControlProvider(f, func(context.Context, auth.Principal) error { records++; return nil })
+	provider := newProductionWebControlProvider(f)
 	if _, err := provider.Qualify(ctx, p, s); !errors.Is(err, pinErr) || errors.Is(err, ErrWebControlCleanupUnknown) {
 		t.Fatalf("confirmed exact retirement not preserved %v", err)
 	}
-	if f.held != nil || f.retireCalls != 1 || f.pinCalls != 1 || records != 0 {
+	if f.held != nil || f.retireCalls != 1 || f.pinCalls != 1 {
 		t.Fatal("new failed pin stranded renderer authority")
 	}
 	// Confirmed cleanup permits a new admission rather than a map-only reset.
@@ -115,7 +114,7 @@ func TestProductionProviderRetiresOnlyNewUnpublishedPinFailure(t *testing.T) {
 func TestProductionProviderKeepsPublishedPinOnRequalification(t *testing.T) {
 	ctx, p, s := providerActor(t)
 	f := &providerGatewayFixture{}
-	provider := newProductionWebControlProvider(f, func(context.Context, auth.Principal) error { return nil })
+	provider := newProductionWebControlProvider(f)
 	first, err := provider.Qualify(ctx, p, s)
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +140,7 @@ func TestProductionProviderDoesNotOwnUntrackedReusedAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := newProductionWebControlProvider(f, func(context.Context, auth.Principal) error { t.Fatal("foreign owner cleanup recorded"); return nil })
+	provider := newProductionWebControlProvider(f)
 	if _, err := provider.Qualify(ctx, p, s); err == nil || f.pinCalls != 0 || f.retireCalls != 0 || f.held == nil || f.held.Lease != original.Authority.Lease {
 		t.Fatal("provider retired or borrowed someone else's admitted lease")
 	}
@@ -158,9 +157,8 @@ func TestProductionProviderRetainsAmbiguousAcquireAndCleanup(t *testing.T) {
 				f.pinErr = errors.New("pin failed")
 				f.retireErr = errors.New("retirement unconfirmed")
 			}
-			records := 0
-			provider := newProductionWebControlProvider(f, func(context.Context, auth.Principal) error { records++; return nil })
-			if _, err := provider.Qualify(ctx, p, s); !errors.Is(err, ErrWebControlCleanupUnknown) || records != 1 || f.held == nil {
+			provider := newProductionWebControlProvider(f)
+			if _, err := provider.Qualify(ctx, p, s); !errors.Is(err, ErrWebControlCleanupUnknown) || f.held == nil {
 				t.Fatalf("uncertainty discarded %v", err)
 			}
 			if name == "acquire" && (f.pinCalls != 0 || f.retireCalls != 0) {
@@ -179,11 +177,10 @@ func TestProductionProviderRetainsAmbiguousAcquireAndCleanup(t *testing.T) {
 func TestProductionProviderPinFailureRetirementTimeoutIsUnknown(t *testing.T) {
 	ctx, p, s := providerActor(t)
 	f := &providerGatewayFixture{pinErr: errors.New("pin failed"), waitRetire: true}
-	records := 0
-	provider := newProductionWebControlProvider(f, func(context.Context, auth.Principal) error { records++; return nil })
+	provider := newProductionWebControlProvider(f)
 	started := time.Now()
 	_, err := provider.Qualify(ctx, p, s)
-	if !errors.Is(err, ErrWebControlCleanupUnknown) || !errors.Is(err, context.DeadlineExceeded) || records != 1 || f.held == nil || time.Since(started) > 3*time.Second {
+	if !errors.Is(err, ErrWebControlCleanupUnknown) || !errors.Is(err, context.DeadlineExceeded) || f.held == nil || time.Since(started) > 3*time.Second {
 		t.Fatalf("timeout claimed cleanup or blocked indefinitely: %v", err)
 	}
 }
@@ -194,7 +191,7 @@ func TestProductionBoundProviderRequiresV2AndNeverUsesLegacyDispatch(t *testing.
 			ctx, p, s := providerActor(t)
 			f := &providerGatewayFixture{fingerprintVersion: version}
 			called := 0
-			provider := newProductionWebControlProvider(f, func(context.Context, auth.Principal) error { return nil }, func(_ context.Context, actual auth.Principal, _ model.Step, _ map[string]model.Value, a chrome.ControlAuthority) (automation.StepResult, error) {
+			provider := newProductionWebControlProvider(f, func(_ context.Context, actual auth.Principal, _ model.Step, _ map[string]model.Value, a chrome.ControlAuthority) (automation.StepResult, error) {
 				called++
 				if actual.ClientID != p.ClientID || a.MutationFingerprintVersion != 2 || a.Document.MutationFingerprintVersion != 2 {
 					t.Fatal("wrong pinned v2 authority")
@@ -224,16 +221,12 @@ func TestProductionProviderKnownNoInstallAdmissionDoesNotBecomeDispatchUncertain
 	ctx, p, s := providerActor(t)
 	rejected := &model.MechanizeError{Code: "staleGeneration", Message: "Renderer generation changed", DispatchState: "notDispatched"}
 	f := &providerGatewayFixture{acquireNotInstalled: true, acquireErr: rejected}
-	records := 0
-	provider := newProductionWebControlProvider(f, func(context.Context, auth.Principal) error {
-		records++
-		return errors.New("verified bound active dispatch required")
-	})
+	provider := newProductionWebControlProvider(f)
 	ready, err := provider.Qualify(ctx, p, s)
 	if !errors.Is(err, rejected) || !errors.Is(err, ErrWebControlUnqualified) || errors.Is(err, ErrWebControlCleanupUnknown) || ready.Authority.ID != "" {
 		t.Fatalf("known rejected acquisition became dispatch uncertainty/readiness: %+v %v", ready, err)
 	}
-	if records != 0 || f.pinCalls != 0 || f.retireCalls != 0 || f.acquireCalls != 1 || f.held != nil || f.next != 0 {
+	if f.pinCalls != 0 || f.retireCalls != 0 || f.acquireCalls != 1 || f.held != nil || f.next != 0 {
 		t.Fatal("known no-install admission recorded uncertainty, pinned, retired, or replayed")
 	}
 	// A subsequent explicit qualification may install a fresh authority; the
@@ -241,7 +234,7 @@ func TestProductionProviderKnownNoInstallAdmissionDoesNotBecomeDispatchUncertain
 	f.acquireNotInstalled = false
 	f.acquireErr = nil
 	ready, err = provider.Qualify(ctx, p, s)
-	if err != nil || ready.Authority.ID == "" || f.held == nil || f.acquireCalls != 2 || f.next != 1 || f.pinCalls != 1 || f.retireCalls != 0 || records != 0 {
+	if err != nil || ready.Authority.ID == "" || f.held == nil || f.acquireCalls != 2 || f.next != 1 || f.pinCalls != 1 || f.retireCalls != 0 {
 		t.Fatalf("fresh qualification blocked by no-install rejection: %+v %v", ready, err)
 	}
 	if err = provider.VerifyChannel(ctx, p, ready.Authority); err != nil {
@@ -252,7 +245,7 @@ func TestProductionProviderKnownNoInstallAdmissionDoesNotBecomeDispatchUncertain
 func TestProductionProviderMarksOnlyFirstPublicationNewlyAcquired(t *testing.T) {
 	ctx, p, s := providerActor(t)
 	f := &providerGatewayFixture{}
-	provider := newProductionWebControlProvider(f, func(context.Context, auth.Principal) error { return nil })
+	provider := newProductionWebControlProvider(f)
 	first, e := provider.Qualify(ctx, p, s)
 	if e != nil || !first.NewlyAcquired {
 		t.Fatal("fresh ownership missing", e)
@@ -273,7 +266,7 @@ func TestProductionProviderMarksOnlyFirstPublicationNewlyAcquired(t *testing.T) 
 func TestProductionProviderCloseRefusesRetainedAuthority(t *testing.T) {
 	ctx, p, s := providerActor(t)
 	f := &providerGatewayFixture{}
-	provider := newProductionWebControlProvider(f, func(context.Context, auth.Principal) error { return nil })
+	provider := newProductionWebControlProvider(f)
 	ready, e := provider.Qualify(ctx, p, s)
 	if e != nil {
 		t.Fatal(e)

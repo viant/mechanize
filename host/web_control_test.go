@@ -22,18 +22,18 @@ import (
 )
 
 type webControlFixture struct {
-	manager                                                                      *WebControlManager
-	owner                                                                        context.Context
-	cancel                                                                       context.CancelFunc
-	principal                                                                    auth.Principal
-	ctx                                                                          context.Context
-	step                                                                         model.Step
-	ready                                                                        WebControlReadiness
-	enrollment                                                                   WebControlScope
-	dispatches, qualifications, verifications, authorizations, releases, records int
-	verifyErr, consentErr, dispatchErr, retireErr                                error
-	cleanup                                                                      WebControlCleanup
-	dispatchedResult                                                             automation.StepResult
+	manager                                                             *WebControlManager
+	owner                                                               context.Context
+	cancel                                                              context.CancelFunc
+	principal                                                           auth.Principal
+	ctx                                                                 context.Context
+	step                                                                model.Step
+	ready                                                               WebControlReadiness
+	enrollment                                                          WebControlScope
+	dispatches, qualifications, verifications, authorizations, releases int
+	verifyErr, consentErr, dispatchErr, retireErr                       error
+	cleanup                                                             WebControlCleanup
+	dispatchedResult                                                    automation.StepResult
 }
 
 func newWebControlFixture(t *testing.T) *webControlFixture {
@@ -90,8 +90,7 @@ func newWebControlFixture(t *testing.T) *webControlFixture {
 		Retire: func(context.Context, auth.Principal, WebControlAuthority) (WebControlCleanup, error) {
 			return f.cleanup, f.retireErr
 		},
-		RecordCleanupUnknown: func(context.Context, auth.Principal, WebControlAuthority) error { f.records++; return nil },
-		Close:                func(context.Context) error { return nil },
+		Close: func(context.Context) error { return nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -287,14 +286,14 @@ func TestWebControlPerStepConsentAndUnknownRetirementBarrier(t *testing.T) {
 			}
 		})
 	})
-	t.Run("unknown retire persisted", func(t *testing.T) {
+	t.Run("unknown retire retained", func(t *testing.T) {
 		f := newWebControlFixture(t)
 		f.cleanup.UnknownExecutors = true
 		withWebExecution(t, f, func(ctx context.Context, p auth.Principal, s model.Step) {
 			ctx = prepareWeb(t, f, ctx, p, s)
 			result, err := f.manager.Execute(ctx, p, s, nil)
-			if !errors.Is(err, ErrWebControlCleanupUnknown) || result.VerificationState != "unknown" || f.records != 1 || f.releases != 0 {
-				t.Errorf("false cleanup proof: %+v %v records=%d releases=%d", result, err, f.records, f.releases)
+			if !errors.Is(err, ErrWebControlCleanupUnknown) || result.VerificationState != "unknown" || f.releases != 0 {
+				t.Errorf("false cleanup proof: %+v %v releases=%d", result, err, f.releases)
 			}
 			if _, _, err = f.manager.Prepare(ctx, p, s); !errors.Is(err, ErrWebControlCleanupUnknown) {
 				t.Error("unknown renderer cleanup did not inhibit next intent")
@@ -353,8 +352,8 @@ func TestWebControlCancellationPreservesConfirmedTransportAbsence(t *testing.T) 
 				if confirmed {
 					want = "notDispatched"
 				}
-				if err == nil || result.DispatchState != want || result.VerificationState != "unknown" || f.releases != 1 || f.records != 0 {
-					t.Errorf("cancellation lost transport evidence: result=%+v err=%v releases=%d records=%d", result, err, f.releases, f.records)
+				if err == nil || result.DispatchState != want || result.VerificationState != "unknown" || f.releases != 1 {
+					t.Errorf("cancellation lost transport evidence: result=%+v err=%v releases=%d", result, err, f.releases)
 				}
 			})
 		})
@@ -405,8 +404,8 @@ func TestWebControlExactAuthorityRetirementEvidenceIsDistinctFromDocumentShutdow
 	withWebExecution(t, f2, func(ctx context.Context, p auth.Principal, step model.Step) {
 		prepared := prepareWeb(t, f2, ctx, p, step)
 		_, err := f2.manager.Execute(prepared, p, step, nil)
-		if !errors.Is(err, ErrWebControlCleanupUnknown) || f2.releases != 0 || f2.records != 1 {
-			t.Errorf("unknown lease retirement falsely released consent: err=%v releases=%d records=%d", err, f2.releases, f2.records)
+		if !errors.Is(err, ErrWebControlCleanupUnknown) || f2.releases != 0 {
+			t.Errorf("unknown lease retirement falsely released consent: err=%v releases=%d", err, f2.releases)
 		}
 	})
 }
@@ -442,7 +441,7 @@ func TestWebControlFailedPinnedRevalidationRetiresOnlyOriginalIntent(t *testing.
 					t.Fatal("failed pre-input qualification lost state", e)
 				}
 				if mode == "foreignIntent" {
-					if retired != 0 || f.records != 0 {
+					if retired != 0 {
 						t.Fatal("foreign intent retired authority")
 					}
 					return
@@ -451,12 +450,12 @@ func TestWebControlFailedPinnedRevalidationRetiresOnlyOriginalIntent(t *testing.
 					t.Fatal("own pin not retired exactly once")
 				}
 				if mode != "retired" {
-					if !errors.Is(e, ErrWebControlCleanupUnknown) || f.records != 1 {
+					if !errors.Is(e, ErrWebControlCleanupUnknown) {
 						t.Fatal("uncertain cleanup unblocked", e)
 					}
 					return
 				}
-				if !errors.Is(e, rejected) || f.records != 0 {
+				if !errors.Is(e, rejected) {
 					t.Fatal("known rejection became uncertainty", e)
 				}
 				if _, e = f.manager.Execute(prepared, p, step, nil); !errors.Is(e, ErrWebControlIntent) || retired != 1 {
@@ -551,7 +550,7 @@ func TestWebControlAllOwnedPreDispatchFailuresAbandonOriginalPin(t *testing.T) {
 					}
 				}
 				result, e := f.manager.Execute(prepared, p, step, values)
-				if e == nil || result.DispatchState != "notDispatched" || f.dispatches != 0 || retired != 1 || f.records != 0 || !intent.consumed || intent.dispatched || intent.executing {
+				if e == nil || result.DispatchState != "notDispatched" || f.dispatches != 0 || retired != 1 || !intent.consumed || intent.dispatched || intent.executing {
 					t.Fatal("own pre-dispatch pin stranded or classified dispatched", mode, e, retired)
 				}
 			})
@@ -824,7 +823,7 @@ func TestWebControlConfirmedDispatchSurvivesLateCancellationWithoutEffectVerific
 			return automation.StepResult{DispatchState: "dispatched", VerificationState: "verified"}, nil
 		}
 		result, e := f.manager.Execute(prepared, p, step, nil)
-		if e != nil || result.DispatchState != "dispatched" || result.VerificationState != "unknown" || result.Postcondition != nil || f.records != 0 {
+		if e != nil || result.DispatchState != "dispatched" || result.VerificationState != "unknown" || result.Postcondition != nil {
 			t.Fatal("known dispatch receipt lost or business effect inferred", result, e)
 		}
 	})
