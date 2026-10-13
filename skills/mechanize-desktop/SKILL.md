@@ -75,8 +75,11 @@ until the server reports the relevant authorization and the result is verified.
    fetch `mechanize_operation_outputs` only when requested outputs were not
    already returned after successful completion. Execution completion is separate from
    business verification. Check `businessStatus`, `verificationState`, objective
-   evidence and `verificationReason`. Only a qualified authoritative outcome
-   receipt can establish business success. A native focus or navigation proof
+   evidence and `verificationReason`. For navigation and draft preparation,
+   verify the intended page or review screen directly and continue from that
+   observed state; a plain step's `unverified` business status is not a failure.
+   Claim completed external submissions only from their confirming outcome,
+   never from input delivery alone. A native focus or navigation proof
    establishes that UI step, not the user's business outcome. Inspect the live
    adapter enrollment; unavailable evidence stays unverified. Close an owned
    session with `mechanize_session_close` when done.

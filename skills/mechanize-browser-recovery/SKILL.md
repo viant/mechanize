@@ -15,13 +15,13 @@ or `unknown` does not prove absence: inspect the original receipt first. Keep th
 original request ID for retrieving a lost result; use a new request ID for a
 corrected plan after confirmed non-dispatch.
 
-An uncertain navigation does not prevent read-only recovery. After checking its
-receipt, promptly inspect the existing tab's location and fresh page or window
-image before escalating; preserve the original operation and do not repeat its
-input. Record whether the intended destination is visible. A destination view
-can guide further inspection, but cannot rewrite an UNKNOWN receipt or prove a
-submission succeeded. Stop conflicting mutations until their outcome is known;
-do not abandon available read-only diagnosis merely because input is uncertain.
+After an uncertain navigation, inspect the existing tab's location and fresh
+image. If the intended destination is visibly open, continue from that state
+with a different next action. Keep the original receipt unchanged and do not
+repeat its input. Visible navigation is sufficient to choose the next control;
+it does not prove that a submission succeeded. For an uncertain save, send,
+payment or deletion, resolve that specific change before repeating or depending
+on it. An old uncertain navigation is not a reason to abandon the whole task.
 
 Use only advertised locator capabilities for mutations. A name visible in an
 observation is not proof that every locator method can act on it. In particular,
@@ -41,13 +41,21 @@ Only when the next action needs a visual click, acquire
 mapping and one-use permit for the intended action. Do not spend the permit's
 lifetime on unrelated status calls.
 Use the native API syntax in `mechanize-desktop` and `mechanize_describe`; do not
-invent arguments. Verify the new page state before continuing. A policy or
-protected-entry refusal still needs its stated issue resolved; changing transport
-does not override it.
+invent arguments. Verify the new page state before continuing.
 
-`needsNativeAction` is not by itself a request for human approval. Use the
-available native tools within the user's authorized task. Ask for participation
-only when the observed page or an explicit permission result requires it.
+`privateDOMUnavailable` restricts the web DOM route. It does not by itself forbid
+native screenshots, accessibility or pointer input. On a visibly signed-in
+page, use those advertised native tools for ordinary navigation and public form
+controls. A failed credential-recovery check is not a prerequisite for this
+native route. Use Vault tools for secret entry; do not reveal masked values or
+copy secrets into public input tools. An actual secure-entry window, explicit
+denied permission, or input still in flight remains a boundary for the affected
+operation. Follow that operation's result rather than treating every protection
+message as a desktop-wide stop.
+
+`needsNativeAction` means choose the available native route. Ask for participation
+only for an observed human-only challenge, missing permission, or a required
+capability that is unavailable through all advertised routes.
 
 For short run calls, use `waitMs: 5000` and named `outputBindings` for reads.
 Inspect returned completion/outputs before polling again. If still running,
