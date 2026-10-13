@@ -86,6 +86,25 @@ final class BadgeSessionLifetimeTests:XCTestCase {
    birth="101:1";XCTAssertEqual(badge.refresh(),"unavailable")
   }
  }
+ func testActualNativeCGRectProducerEntersPresenterAndKeepsIdleSession()async throws {
+  try await MainActor.run {
+   let bounds=CGRect(x:10,y:46,width:1292,height:734)
+   var begins=0,hidden=0;var states:[Bool]=[]
+   let runtime=WindowSessionKeyRuntime(process:{_ in(getuid(),"100:1","com.fixture.ide")},foreground:{1639},windows:{[SessionKeyWindow(id:457,pid:1639,layer:0,visible:true,alpha:1,bounds:bounds)]},session:{true},secure:{false})
+   var view=BrowserBadgePresentation(begin:{frame in XCTAssertEqual(frame,bounds);begins+=1;return 1},move:{_,_ in},hide:{_ in hidden+=1},renew:{_ in},complete:{_ in})
+   view.state={_,active in states.append(active)}
+   let badge=BrowserControlBadge(runtime:runtime,schedule:false,presentation:view)
+   let token=String(repeating:"a",count:64),session=String(repeating:"b",count:64)
+   let params=AutomationPointer.sessionControlBadgeParameters(pid:1639,birth:"100:1",bundle:"com.fixture.ide",window:bounds,windowID:457,session:session,action:token,duration:300)
+   // No JSON round trip or handwritten Double dictionary: this is the native
+   // session bridge's actual CGRect producer and the real presenter router.
+   XCTAssertEqual(try badge.handle(method:"controlBadge.begin",params:params)["status"] as? String,"shown")
+   XCTAssertEqual(begins,1);XCTAssertEqual(states.last,true)
+   _=try badge.handle(method:"controlBadge.end",params:["token":token]);XCTAssertEqual(states.last,false)
+   XCTAssertEqual(badge.refresh(),"shown");XCTAssertEqual(hidden,0)
+   _=try badge.handle(method:"controlBadge.releaseSession",params:["sessionToken":session]);XCTAssertEqual(badge.refresh(),"hidden");XCTAssertEqual(hidden,1)
+  }
+ }
  func testTransportEndReleasesAllOwnersWithoutAHeartbeat()async throws {
   try await MainActor.run {
    var hidden=0

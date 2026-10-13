@@ -282,12 +282,17 @@ extension AutomationPointer {
 extension AutomationPointer {
     private static var nativeBadgeSequence:UInt64=1<<63
     private static var nativeBadgeActions:[UInt64:String]=[:]
+    // Shared native producer: tests exercise this exact in-process boundary,
+    // which does not receive JSONDecoder's NSNumber bridging.
+    static func sessionControlBadgeParameters(pid:pid_t,birth:String,bundle:String,window:CGRect,windowID:UInt32,session:String,action:String,duration:Int)->[String:Any] {
+        ["token":action,"sessionToken":session,"windowId":windowID,"expectedApp":bundle,"pid":pid,"processStartToken":birth,"windowBounds":["x":Double(window.minX),"y":Double(window.minY),"width":Double(window.width),"height":Double(window.height)],"durationMs":duration]
+    }
     private static func beginSessionOwnedControl(pid:pid_t,birth:String,bundle:String,window:CGRect,windowID:UInt32,session:String,deadline:TimeInterval)->UInt64? {
         let action=(UUID().uuidString+UUID().uuidString).replacingOccurrences(of:"-",with:"").lowercased()
         badgeLock.lock();guard nativeBadgeActions.count<256 else{badgeLock.unlock();return nil};nativeBadgeSequence &+= 1;let token=nativeBadgeSequence;nativeBadgeActions[token]=action;badgeLock.unlock()
         DispatchQueue.main.async {
             let duration=max(100,min(5000,Int((deadline-ProcessInfo.processInfo.systemUptime)*1000)))
-            let params:[String:Any]=["token":action,"sessionToken":session,"windowId":windowID,"expectedApp":bundle,"pid":pid,"processStartToken":birth,"windowBounds":["x":window.minX,"y":window.minY,"width":window.width,"height":window.height],"durationMs":duration]
+            let params=sessionControlBadgeParameters(pid:pid,birth:birth,bundle:bundle,window:window,windowID:windowID,session:session,action:action,duration:duration)
             guard (try? BrowserControlBadge.shared.handle(method:"controlBadge.begin",params:params)) != nil else{return}
             let timer=Timer(timeInterval:1,repeats:true){timer in
                 badgeLock.lock();let running=nativeBadgeActions[token]==action;badgeLock.unlock()
