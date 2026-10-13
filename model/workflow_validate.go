@@ -60,6 +60,11 @@ func (p Predicate) Validate() error {
 			}
 		}
 	}
+	if p.Kind == "adapter" && p.Adapter == "web" && p.Name == "valueEquals" {
+		if err := p.validateWebValueEquals(); err != nil {
+			return err
+		}
+	}
 	for _, v := range p.Inputs {
 		if err := v.Validate(); err != nil {
 			return err

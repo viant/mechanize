@@ -43,6 +43,36 @@ func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step
 	if !ok || metadata.RunID == "" || metadata.PlanID == "" {
 		return integration.StepResult{}, errors.New("durable execution metadata required")
 	}
+	// Resolve this registered web contract before acquiring executor authority or
+	// committing an input intent. Only the postcondition may depend on this
+	// step's declared result, published after dispatch as binding.<Bind>. Validation
+	// observes no page and grants no read.
+	for position, predicate := range []*model.Predicate{step.Precondition, step.Postcondition} {
+		if predicate == nil || predicate.Kind != "adapter" || predicate.Adapter != "web" || predicate.Name != "valueEquals" {
+			continue
+		}
+		if err := predicate.Validate(); err != nil {
+			return integration.StepResult{DispatchState: "notDispatched", VerificationState: "unverified"}, err
+		}
+		resolved := *predicate
+		resolved.Inputs = make(map[string]model.Value, len(predicate.Inputs))
+		for key, value := range predicate.Inputs {
+			if position == 1 && step.Bind != "" && value.Kind == model.ReferenceValue && value.Ref == "binding."+step.Bind {
+				// Preserve the reference for the existing post-dispatch evaluator;
+				// even an older value under this key must not stand in for this result.
+				resolved.Inputs[key] = value
+				continue
+			}
+			value, err := model.ResolveValue(value, values)
+			if err != nil {
+				return integration.StepResult{DispatchState: "notDispatched", VerificationState: "unverified"}, &model.MechanizeError{Code: "invalidPredicate", Message: "web.valueEquals references must resolve before input, except a postcondition reference to this step's declared result.", Stage: "validation", DispatchState: "notDispatched", EffectState: "none"}
+			}
+			resolved.Inputs[key] = value
+		}
+		if err := resolved.Validate(); err != nil {
+			return integration.StepResult{DispatchState: "notDispatched", VerificationState: "unverified"}, err
+		}
+	}
 	// Native helper dispatch is synchronous. Retire its prepared consent/fence
 	// on every exit, including an intent failure or a previously completed effect.
 	// Browser and detached external authorities retain their own lifetimes.

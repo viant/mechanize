@@ -53,6 +53,33 @@ be enrolled. A public value postcondition uses the `web` adapter's `valueEquals`
 predicate, with a surface reference, exact origin, selector, attribute and typed
 expected value. An expectation never grants authority to read another document.
 
+For an observed element ID, use `strategy: "id"` and `selector` containing that
+ID. The predicate has no `id` input. DOM equality provides `observational`
+authority; requesting `authoritative` is invalid. With `fixture` bound to the
+selected tab in the envelope's `surfaces`, a public fill postcondition is:
+
+```json
+{
+  "kind": "adapter",
+  "adapter": "web",
+  "name": "valueEquals",
+  "scope": {"surfaceRef": "fixture"},
+  "timeoutMs": 3000,
+  "freshnessMs": 3000,
+  "requiredAuthority": "observational",
+  "inputs": {
+    "origin": {"kind": "string", "string": "https://example.test"},
+    "strategy": {"kind": "string", "string": "id"},
+    "selector": {"kind": "string", "string": "message"},
+    "attribute": {"kind": "string", "string": "value"},
+    "expected": {"kind": "string", "string": "Public test message"}
+  }
+}
+```
+
+Use this object as the step's `postcondition`. Validation rejects an invalid
+contract before input; it does not establish the outcome of an older attempt.
+
 DSL timeouts are duration literals such as `timeout:3s`, not strings such as
 `timeout:"3s"`. Workflow step deadlines are integer `timeoutMs` values. Validate
 syntax and the closed workflow schema before dispatch.

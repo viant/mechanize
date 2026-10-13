@@ -198,7 +198,14 @@ func controllerArgs(name string, raw json.RawMessage) (map[string]any, string, e
 			return nil, "", errors.New("bounded script required")
 		}
 		plan, err := compileSource(v.Source, v.Format)
-		if err != nil || !controllerPlanAllowed(plan) {
+		if err != nil {
+			var invalid *model.MechanizeError
+			if errors.As(err, &invalid) && invalid.Code == "invalidPredicate" && invalid.DispatchState == "notDispatched" && invalid.EffectState == "none" {
+				return nil, "", controllerArgumentError("invalidPredicate")
+			}
+			return nil, "", errors.New("invalid or authority-protected script")
+		}
+		if !controllerPlanAllowed(plan) {
 			return nil, "", errors.New("invalid or authority-protected script")
 		}
 		// Credentials use the private native Vault delivery channel. Ordinary
@@ -213,7 +220,14 @@ func controllerArgs(name string, raw json.RawMessage) (map[string]any, string, e
 			return nil, "", errors.New("bounded script required")
 		}
 		plan, err := compileSource(v.Source, v.Format)
-		if err != nil || !controllerPlanAllowed(plan) {
+		if err != nil {
+			var invalid *model.MechanizeError
+			if errors.As(err, &invalid) && invalid.Code == "invalidPredicate" && invalid.DispatchState == "notDispatched" && invalid.EffectState == "none" {
+				return nil, "", controllerArgumentError("invalidPredicate")
+			}
+			return nil, "", errors.New("invalid or authority-protected script")
+		}
+		if !controllerPlanAllowed(plan) {
 			return nil, "", errors.New("invalid or authority-protected script")
 		}
 		for _, def := range plan.Inputs {
@@ -244,11 +258,14 @@ func controllerRejected(dispatch string, codes ...string) *schema.CallToolResult
 	code := "controllerToolRejected"
 	if len(codes) > 0 {
 		switch codes[0] {
-		case "permissionRequired", "permissionExpired", "permissionDenied", "secureDocumentRequired", "staleGeneration", "staleAuthority", "unknownEffect", "targetNotFound", "ambiguousTarget", "invalidArguments", "sessionRequired", "sessionNotOwned", "invalidScopeKind", "invalidConsentScope", "unsupportedMode", "invalidSurface", "invalidScope", "browserInventoryUnavailable", "privateDOMUnavailable", "publicReadIdentityChanged", "publicReadInventoryUnavailable", "publicReadBusy", "publicReadLimit", "publicReadUnavailable":
+		case "invalidPredicate", "permissionRequired", "permissionExpired", "permissionDenied", "secureDocumentRequired", "staleGeneration", "staleAuthority", "unknownEffect", "targetNotFound", "ambiguousTarget", "invalidArguments", "sessionRequired", "sessionNotOwned", "invalidScopeKind", "invalidConsentScope", "unsupportedMode", "invalidSurface", "invalidScope", "browserInventoryUnavailable", "privateDOMUnavailable", "publicReadIdentityChanged", "publicReadInventoryUnavailable", "publicReadBusy", "publicReadLimit", "publicReadUnavailable":
 			code = codes[0]
 		}
 	}
 	message := "Tool request unavailable; review local permissions and operation status."
+	if code == "invalidPredicate" {
+		message = "Invalid verification contract. For web.valueEquals use observational authority and typed origin, strategy, selector, attribute and expected inputs; use strategy id plus selector for an element ID."
+	}
 	if code == "invalidSurface" {
 		message = invalidSurfaceMessage
 	}
