@@ -23,6 +23,12 @@ func (b *Builder) LoadCredentialRecovery(ctx context.Context, p auth.Principal, 
 		// This value selects metadata only. Invocation retains the actual principal.
 		clientID = scope.ClientID
 	}
+	if scope, ok := data.CredentialSourceLifecycleScope(ctx); ok {
+		if scope.Namespace != p.Namespace || scope.PreparationID != id {
+			return data.CredentialPreparationRecord{}, nil, data.ErrCredentialDeliveryAuthority
+		}
+		clientID = scope.ClientID // Metadata selector only; actual actor remains unchanged.
+	}
 	return readCredentialRecoveryClient(ctx, p.Namespace, clientID, id, func(c context.Context, r exec.ComponentRequest) (any, error) {
 		return b.invokeCredentialDeliveryComponent(c, p, r)
 	})

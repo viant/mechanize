@@ -73,12 +73,12 @@ func (b *Builder) invokeCredentialDeliveryComponent(ctx context.Context, p auth.
 		// Generated reader independently restricts exact namespace/client/preparation.
 	} else if request.Target.Component.Name == "CredentialPreparationFinish" || request.Target.Component.Name == "CredentialPreparationReserve" || request.Target.Component.Name == "CredentialPreparationGet" {
 		a, err := data.RequireCredentialPreparationAuthority(ctx)
-		if err != nil || a.Namespace != p.Namespace || (a.ClientID != p.ClientID && (request.Target.Component.Name == "CredentialPreparationReserve" || !data.CredentialPreflightLifecycleMatches(ctx, a.Namespace, a.ClientID, a.PreparationID))) {
+		if err != nil || a.Namespace != p.Namespace || (a.ClientID != p.ClientID && (request.Target.Component.Name == "CredentialPreparationReserve" || !data.CredentialPreflightLifecycleMatches(ctx, a.Namespace, a.ClientID, a.PreparationID) && !data.CredentialSourceLifecycleMatches(ctx, a.Namespace, a.ClientID, a.PreparationID))) {
 			return nil, auth.ErrUnauthorized
 		}
 	} else {
 		a, err := data.RequireCredentialDeliveryAuthority(ctx)
-		if err != nil || a.Record.Namespace != p.Namespace || a.Record.ClientID != p.ClientID {
+		if err != nil || a.Record.Namespace != p.Namespace || (a.Record.ClientID != p.ClientID && (request.Target.Component.Name == "CredentialDeliveryReserve" || !data.CredentialSourceLifecycleMatches(ctx, a.Record.Namespace, a.Record.ClientID, a.Record.SelectionID))) {
 			return nil, auth.ErrUnauthorized
 		}
 	}

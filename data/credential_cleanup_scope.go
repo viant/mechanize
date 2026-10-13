@@ -11,12 +11,13 @@ import (
 
 type credentialCleanupKey struct{}
 type credentialCleanupAuthority struct {
-	preparation   CredentialPreparationRecord
-	attempts      map[string]CredentialDeliveryRecord
-	guard         func(context.Context) error
-	retiredBirth  string
-	preflightOnly bool
-	active        atomic.Bool
+	preparation     CredentialPreparationRecord
+	attempts        map[string]CredentialDeliveryRecord
+	guard           func(context.Context) error
+	retiredBirth    string
+	sourceLifecycle bool
+	preflightOnly   bool
+	active          atomic.Bool
 }
 
 // WithCredentialCleanupAuthority is an internal recovery seam. The host must
@@ -27,7 +28,7 @@ type credentialCleanupAuthority struct {
 // An empty complete child snapshot represents an unfilled preparation; it still
 // requires the same independently proved browser retirement and CAS closure.
 func WithCredentialCleanupAuthority(ctx context.Context, r CredentialPreparationRecord, attempts []CredentialDeliveryRecord, guard func(context.Context) error) (context.Context, func(), error) {
-	return withCredentialCleanupAuthority(ctx, r, attempts, "", guard, false)
+	return withCredentialCleanupAuthority(ctx, r, attempts, "", guard, false, false)
 }
 
 // WithCredentialPreflightCleanupAuthority cannot retire a delivery attempt.
@@ -35,7 +36,7 @@ func WithCredentialCleanupAuthority(ctx context.Context, r CredentialPreparation
 // snapshot under the held user lock before its generated CAS may use this seal.
 // Guard proves that no private input or admission remains pending in the broker.
 func WithCredentialPreflightCleanupAuthority(ctx context.Context, r CredentialPreparationRecord, guard func(context.Context) error) (context.Context, func(), error) {
-	sealed, stop, e := withCredentialCleanupAuthority(ctx, r, nil, "", guard, true)
+	sealed, stop, e := withCredentialCleanupAuthority(ctx, r, nil, "", guard, true, false)
 	if e != nil {
 		return nil, nil, e
 	}
@@ -63,7 +64,7 @@ func WithCredentialRetirementAuthority(ctx context.Context, r CredentialPreparat
 	if retiredBirth == "" {
 		return nil, nil, ErrCredentialDeliveryAuthority
 	}
-	return withCredentialCleanupAuthority(ctx, r, attempts, retiredBirth, guard, false)
+	return withCredentialCleanupAuthority(ctx, r, attempts, retiredBirth, guard, false, false)
 }
 
 // WithCredentialSourceAbsenceAuthority is the exact-document counterpart of
@@ -89,19 +90,28 @@ func WithCredentialSourceAbsenceAuthority(ctx context.Context, r CredentialPrepa
 			return nil, nil, ErrCredentialDeliveryAuthority
 		}
 	}
-	return withCredentialCleanupAuthority(ctx, r, attempts, birth, guard, false)
+	lifecycle := false
+	if scope, ok := CredentialSourceLifecycleScope(ctx); ok {
+		for _, source := range sources {
+			lifecycle = lifecycle || source == scope
+		}
+		if !lifecycle || !credentialSourceLifecyclePreparationMatches(ctx, r, birth) {
+			return nil, nil, ErrCredentialDeliveryAuthority
+		}
+	}
+	return withCredentialCleanupAuthority(ctx, r, attempts, birth, guard, false, lifecycle)
 }
 
-func withCredentialCleanupAuthority(ctx context.Context, r CredentialPreparationRecord, attempts []CredentialDeliveryRecord, retiredBirth string, guard func(context.Context) error, preflightOnly bool) (context.Context, func(), error) {
+func withCredentialCleanupAuthority(ctx context.Context, r CredentialPreparationRecord, attempts []CredentialDeliveryRecord, retiredBirth string, guard func(context.Context) error, preflightOnly, sourceLifecycle bool) (context.Context, func(), error) {
 	p, e := auth.FromContext(ctx)
 	c, ok := auth.ConsentBindingFromContext(ctx)
-	if e != nil || p.Validate() != nil || !p.HasScope("desktop:control") || p.ClientID == "" || p.Namespace != r.Namespace || (p.ClientID != r.ClientID && !(preflightOnly && len(attempts) == 0 && retiredBirth == "" && credentialPreflightLifecyclePreparationMatches(ctx, r))) || !ok || c.SessionID == "" || c.GrantID == "" || c.Purpose == "" || guard == nil || !credentialDeliveryGuard(ctx, guard) || r.ProtectionState != "held" || r.Revision != 1 || !deliveryHex.MatchString(r.PreparationID) || len(attempts) > 512 {
+	if e != nil || p.Validate() != nil || !p.HasScope("desktop:control") || p.ClientID == "" || p.Namespace != r.Namespace || (p.ClientID != r.ClientID && !(preflightOnly && len(attempts) == 0 && retiredBirth == "" && credentialPreflightLifecyclePreparationMatches(ctx, r)) && !(sourceLifecycle && !preflightOnly && credentialSourceLifecyclePreparationMatches(ctx, r, retiredBirth))) || !ok || c.SessionID == "" || c.GrantID == "" || c.Purpose == "" || guard == nil || !credentialDeliveryGuard(ctx, guard) || r.ProtectionState != "held" || r.Revision != 1 || !deliveryHex.MatchString(r.PreparationID) || len(attempts) > 512 {
 		return nil, nil, ErrCredentialDeliveryAuthority
 	}
 	if _, e = RequireScope(ctx, r.Namespace); e != nil {
 		return nil, nil, ErrCredentialDeliveryAuthority
 	}
-	a := &credentialCleanupAuthority{preparation: r, attempts: make(map[string]CredentialDeliveryRecord), guard: guard, retiredBirth: retiredBirth}
+	a := &credentialCleanupAuthority{preparation: r, attempts: make(map[string]CredentialDeliveryRecord), guard: guard, retiredBirth: retiredBirth, sourceLifecycle: sourceLifecycle}
 	for _, v := range attempts {
 		unknownRetired := retiredBirth != "" && v.ChromeStartToken == retiredBirth && v.DispatchState == "unknown"
 		if v.Namespace != r.Namespace || v.ClientID != r.ClientID || v.SessionID != r.SessionID || v.SelectionID != r.PreparationID || v.GrantID != r.GrantID || v.PurposeHash != r.PurposeHash || v.SelectedRevision != r.SelectedRevision || v.Origin != r.Origin || !deliveryHex.MatchString(v.AttemptID) || a.attempts[v.AttemptID].AttemptID != "" || (v.DispatchState != "dispatched" && v.DispatchState != "notDispatched" && !unknownRetired) || (v.ProtectionState != "held" && v.ProtectionState != "closed" && !(unknownRetired && v.ProtectionState == "retired")) || (v.Revision < 2 && !(unknownRetired && v.Revision == 1)) || retiredBirth != "" && v.ChromeStartToken != retiredBirth {
@@ -118,7 +128,7 @@ func requireCredentialCleanup(ctx context.Context) *credentialCleanupAuthority {
 		return nil
 	}
 	p, e := auth.FromContext(ctx)
-	if e != nil || !p.HasScope("desktop:control") || p.Namespace != a.preparation.Namespace || (p.ClientID != a.preparation.ClientID && !(a.preflightOnly && len(a.attempts) == 0 && credentialPreflightLifecyclePreparationMatches(ctx, a.preparation))) {
+	if e != nil || !p.HasScope("desktop:control") || p.Namespace != a.preparation.Namespace || (p.ClientID != a.preparation.ClientID && !(a.preflightOnly && len(a.attempts) == 0 && credentialPreflightLifecyclePreparationMatches(ctx, a.preparation)) && !(a.sourceLifecycle && credentialSourceLifecyclePreparationMatches(ctx, a.preparation, a.retiredBirth))) {
 		return nil
 	}
 	return a

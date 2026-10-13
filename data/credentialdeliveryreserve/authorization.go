@@ -6,6 +6,9 @@ import (
 )
 
 func (in *CredentialDeliveryReserveInput) Init(ctx context.Context) error {
+	if _, ok := data.CredentialSourceLifecycleScope(ctx); ok {
+		return data.ErrCredentialDeliveryAuthority
+	}
 	a, e := data.RequireCredentialDeliveryAuthority(ctx)
 	if e != nil {
 		return e

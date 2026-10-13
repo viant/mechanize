@@ -17,13 +17,19 @@ import (
 )
 
 func protectionAbsenceSources(p auth.Principal, snapshot durable.CredentialProtection) ([]chrome.CredentialProtectionScope, error) {
+	if snapshot.Scope.Namespace != p.Namespace || snapshot.Scope.ClientID != p.ClientID {
+		return nil, errPrivateCredential
+	}
+	return protectionAbsenceSourcesForOwner(snapshot)
+}
+func protectionAbsenceSourcesForOwner(snapshot durable.CredentialProtection) ([]chrome.CredentialProtectionScope, error) {
 	prep := snapshot.Preparation
-	if prep.Namespace != p.Namespace || prep.ClientID != p.ClientID || prep.PreparationID != snapshot.Scope.PreparationID || prep.Origin != snapshot.Scope.Origin || prep.ProtectionState != "held" && prep.ProtectionState != "closed" || len(snapshot.Attempts) > 512 {
+	if prep.Namespace != snapshot.Scope.Namespace || prep.ClientID != snapshot.Scope.ClientID || prep.PreparationID != snapshot.Scope.PreparationID || prep.Origin != snapshot.Scope.Origin || prep.ProtectionState != "held" && prep.ProtectionState != "closed" || len(snapshot.Attempts) > 512 {
 		return nil, errPrivateCredential
 	}
 	var sources []chrome.CredentialProtectionScope
 	if snapshot.Scope.Exact() {
-		sources = append(sources, sourceFromProtection(p, snapshot))
+		sources = append(sources, chrome.CredentialProtectionScope{PreparationID: snapshot.Scope.PreparationID, Origin: snapshot.Scope.Origin, Identity: chrome.Identity{ProfileChannel: snapshot.Scope.ProfileChannel, BrowserInstance: snapshot.Scope.BrowserInstance, TabID: snapshot.Scope.TabID, FrameID: snapshot.Scope.FrameID, DocumentID: snapshot.Scope.DocumentID, Generation: uint64(snapshot.Scope.DocumentGeneration)}, ChromeStartToken: snapshot.Scope.ChromeStartToken, BrokerEpoch: snapshot.Scope.BrokerEpoch, ChannelEpoch: snapshot.Scope.ChannelEpoch, ScopeHash: snapshot.Scope.ScopeHash, LoginRouteSHA256: snapshot.Scope.LoginRouteSHA256})
 	}
 	for _, a := range snapshot.Attempts {
 		if a.Namespace != prep.Namespace || a.ClientID != prep.ClientID || a.SessionID != prep.SessionID || a.SelectionID != prep.PreparationID || a.GrantID != prep.GrantID || a.PurposeHash != prep.PurposeHash || a.SelectedRevision != prep.SelectedRevision || a.Origin != prep.Origin || a.ChromeStartToken == "" || a.ProfileChannel == "" || a.BrowserInstance == "" || a.TabID <= 0 || a.DocumentID == "" || a.DocumentGeneration < 1 || a.Revision < 1 {
@@ -117,6 +123,12 @@ func (s *credentialService) retireAbsentCredentialSources(ctx context.Context, p
 		for _, snapshot := range scopes {
 			if snapshot.Scope.ClientID != p.ClientID && snapshot.Scope.Origin == targetOrigin && !snapshot.Scope.Exact() {
 				if e := s.retireAbandonedControllerPreflight(held, p, snapshot); e != nil {
+					return e
+				}
+				continue
+			}
+			if snapshot.Scope.ClientID != p.ClientID && snapshot.Scope.Origin == targetOrigin && snapshot.Scope.Exact() {
+				if e := s.retireExtinctControllerSource(held, p, snapshot); e != nil {
 					return e
 				}
 				continue
@@ -316,7 +328,11 @@ func (h *Host) retireCredentialSourceRows(ctx context.Context, p auth.Principal,
 	}
 	records := make([]data.CredentialProtectionScopeRecord, 0, len(sources))
 	for _, source := range sources {
-		records = append(records, protectionScopeRecord(p, source))
+		record := protectionScopeRecord(p, source)
+		record.ClientID = prep.ClientID
+		record.CreatedAt = snapshot.Scope.CreatedAt
+		record.LoginRouteSHA256 = snapshot.Scope.LoginRouteSHA256
+		records = append(records, record)
 	}
 	clean, stop, e := data.WithCredentialSourceAbsenceAuthority(ctx, prep, attempts, records, guard)
 	if e != nil {
