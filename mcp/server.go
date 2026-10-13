@@ -245,6 +245,9 @@ func failure(err error) (*schema.CallToolResult, *jsonrpc.Error) {
 	var typed *model.MechanizeError
 	if errors.As(err, &typed) {
 		body = map[string]any{"code": typed.Code, "message": typed.Message, "stage": typed.Stage, "dispatchState": typed.DispatchState, "effectState": typed.EffectState}
+		if typed.Code == "protectionMetadataUnavailable" {
+			body["metadataPhase"], body["metadataCause"] = durable.ClosedProtectionMetadataDiagnostic(err)
+		}
 	}
 	var committed *durable.StatePatchCommittedError
 	if errors.As(err, &committed) {

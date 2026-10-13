@@ -393,7 +393,7 @@ func buildLineage(namespace string, snapshot Snapshot, next model.Plan, ref Repa
 	}
 	out := []*repairadmit.RepairLineage{}
 	for _, effect := range snapshot.Raw.Effects {
-		if effect.State == nil || (*effect.State != "confirmed" && *effect.State != "absent") || effect.AttemptId == nil || effect.Id == nil || effect.BusinessKey == nil || effect.EvidenceJson == nil {
+		if effect.State == nil || (*effect.State != "confirmed" && *effect.State != "absent" && *effect.State != "dispatched") || effect.AttemptId == nil || effect.Id == nil || effect.BusinessKey == nil || effect.EvidenceJson == nil {
 			return nil, errors.New("unknown effect cannot enter repair lineage")
 		}
 		position, ok := attempts[*effect.AttemptId]

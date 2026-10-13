@@ -62,7 +62,7 @@ func TestGeneratedStopBoundaryPreservesUnknownAndNeverAdmitsResume(t *testing.T)
 			return integration.StepResult{}, errors.New("native dispatch preceded exact persisted Endly correlation")
 		}
 		dispatches.Add(1)
-		return integration.StepResult{DispatchState: "dispatched", VerificationState: "unknown"}, nil
+		return integration.StepResult{DispatchState: "dispatched", VerificationState: "unknown"}, errors.New("fixture executor cleanup is unconfirmed")
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -139,7 +139,7 @@ func (b *Builder) LoadResume(ctx context.Context, p auth.Principal, runID string
 		verifiedAttempts[*milestone.AttemptId] = true
 	}
 	for _, effect := range run.Effects {
-		if effect.State == nil || effect.AttemptId == nil || (*effect.State != "confirmed" && *effect.State != "absent") {
+		if effect.State == nil || effect.AttemptId == nil || (*effect.State != "confirmed" && *effect.State != "absent" && *effect.State != "dispatched") {
 			return result, ErrNeedsReconciliation
 		}
 		stepID, exists := attempts[*effect.AttemptId]
@@ -158,7 +158,7 @@ func (b *Builder) LoadResume(ctx context.Context, p auth.Principal, runID string
 			// milestone or output and cannot authorize overwriting its old intent.
 			continue
 		}
-		if evidence.VerificationState != "verified" {
+		if (*effect.State == "confirmed" && evidence.VerificationState != "verified") || (*effect.State == "dispatched" && (steps[stepID].Postcondition != nil || !evidence.DispatchedUnverified() || verifiedAttempts[*effect.AttemptId])) {
 			return result, ErrNeedsReconciliation
 		}
 		step := steps[stepID]
@@ -205,7 +205,7 @@ func validateResumeBusinessKeys(plan model.Plan, inputs, live map[string]model.V
 	}
 	byStep := map[string][]*loadrun.Effect{}
 	for _, effect := range effects {
-		if effect.AttemptId == nil || effect.State == nil || (*effect.State != "confirmed" && *effect.State != "absent") {
+		if effect.AttemptId == nil || effect.State == nil || (*effect.State != "confirmed" && *effect.State != "absent" && *effect.State != "dispatched") {
 			return ErrNeedsReconciliation
 		}
 		stepID, exists := attempts[*effect.AttemptId]
@@ -245,7 +245,7 @@ func validateResumeBusinessKeys(plan model.Plan, inputs, live map[string]model.V
 			return ErrNeedsReconciliation
 		}
 		if completedStep {
-			if evidence.VerificationState != "verified" {
+			if !evidence.CompletedForResume(step) {
 				return ErrNeedsReconciliation
 			}
 			if step.Bind != "" && evidence.Value != nil {
@@ -438,8 +438,8 @@ func validateStateVariableSnapshot(run *loadrun.Run, live, variables map[string]
 			if evidence.DispatchState != "notDispatched" {
 				return ErrNeedsReconciliation
 			}
-		case "confirmed":
-			if evidence.VerificationState != "verified" {
+		case "confirmed", "dispatched":
+			if (*effect.State == "confirmed" && evidence.VerificationState != "verified") || (*effect.State == "dispatched" && (steps[stepID].Postcondition != nil || !evidence.DispatchedUnverified())) {
 				return ErrNeedsReconciliation
 			}
 			if _, exists := completed[stepID]; exists {
@@ -560,7 +560,7 @@ func validateStateBindingPolicy(plan model.Plan, inputs, live, variables map[str
 	frozen := map[string]bool{}
 	for stepID, evidence := range completed {
 		step, exists := steps[stepID]
-		if !exists || evidence.VerificationState != "verified" {
+		if !exists || !evidence.CompletedForResume(step) {
 			return ErrNeedsReconciliation
 		}
 		refs, err := bindingReferences(step)

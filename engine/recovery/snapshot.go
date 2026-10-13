@@ -299,7 +299,7 @@ func (s *Service) decode(ctx context.Context, p auth.Principal, row *recoveryloa
 			out.Unknown = true
 			continue
 		}
-		if *effect.State != "confirmed" && *effect.State != "absent" || effect.EvidenceJson == nil {
+		if *effect.State != "confirmed" && *effect.State != "absent" && *effect.State != "dispatched" || effect.EvidenceJson == nil {
 			return out, errors.New("invalid durable effect proof")
 		}
 		var result integration.StepResult
@@ -324,6 +324,9 @@ func (s *Service) decode(ctx context.Context, p auth.Principal, row *recoveryloa
 				break
 			}
 		}
+		if *effect.State == "dispatched" && (originalStep == nil || originalStep.Postcondition != nil || !result.DispatchedUnverified() || verifiedMilestones[*attempt.Id]) {
+			return out, errors.New("dispatched effect lacks unverified receipt or has a fabricated milestone")
+		}
 		if originalStep == nil {
 			return out, errors.New("original attempt step missing")
 		}
@@ -342,7 +345,7 @@ func (s *Service) decode(ctx context.Context, p auth.Principal, row *recoveryloa
 		if entry, exists := byAttempt[*attempt.Id]; exists && entry.StepIndex != index {
 			return out, errors.New("repair step index mismatch")
 		}
-		if *effect.State == "confirmed" && !reflect.DeepEqual(*originalStep, current.Plan.Steps[index]) {
+		if (*effect.State == "confirmed" || *effect.State == "dispatched") && !reflect.DeepEqual(*originalStep, current.Plan.Steps[index]) {
 			return out, errors.New("completed effect was modified by repair")
 		}
 		records = append(records, known{effect, attempt, result, activeStepID, *originalStep})
@@ -368,7 +371,7 @@ func (s *Service) decode(ctx context.Context, p auth.Principal, row *recoveryloa
 				return out, errors.New("exact original business key differs from immutable input/binding boundary")
 			}
 			state := "absent"
-			if *record.effect.State == "confirmed" {
+			if *record.effect.State == "confirmed" || *record.effect.State == "dispatched" {
 				state = "committed"
 				if committed {
 					return out, errors.New("multiple confirmed effects for same step")

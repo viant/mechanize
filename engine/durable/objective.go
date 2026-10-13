@@ -47,9 +47,13 @@ func (b *Builder) CompleteObjective(ctx context.Context, p auth.Principal, reque
 	}
 	err = json.Unmarshal([]byte(*run.Plan.ContentJson), &envelope)
 	revision := *run.Revision
+	if err := validateDispatchedHistory(run); err != nil {
+		user.mu.Unlock()
+		return result, err
+	}
 	unresolved := false
 	for _, effect := range run.Effects {
-		if effect.State == nil || (*effect.State != "confirmed" && *effect.State != "absent") {
+		if effect.State == nil || (*effect.State != "confirmed" && *effect.State != "absent" && *effect.State != "dispatched") {
 			unresolved = true
 		}
 	}
@@ -68,6 +72,9 @@ func (b *Builder) CompleteObjective(ctx context.Context, p auth.Principal, reque
 		if unresolved {
 			result.VerificationState = "unknown"
 			break
+		}
+		if envelope.Plan.Objective == nil {
+			result.Reason = "Executor actions completed; no business objective was requested."
 		}
 		if envelope.Plan.Objective != nil {
 			verified, evalErr := b.EvaluatePostcondition(ctx, p, *envelope.Plan.Objective, request.Values)

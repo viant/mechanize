@@ -288,6 +288,12 @@ func TestOpenOriginHostMCPDurableCreationAndUnknownNeverReplay(t *testing.T) {
 			if unknown && len(state.UnresolvedEffects) != 1 || !unknown && (len(state.UnresolvedEffects) != 0 || len(state.Progress) != 1 || state.Progress[0].State == nil || *state.Progress[0].State != "verified") {
 				t.Fatal("durable creation outcome mismatched receipt", state)
 			}
+			if !unknown {
+				var receipt automation.StepResult
+				if state.Progress[0].EvidenceJson == nil || json.Unmarshal([]byte(*state.Progress[0].EvidenceJson), &receipt) != nil || receipt.DispatchState != "dispatched" || receipt.VerificationState != "verified" || receipt.Value == nil || receipt.Value.String != out.TabHandle {
+					t.Fatal("trusted tab-creation verification/output was downgraded")
+				}
+			}
 			encoded, _ := json.Marshal(result)
 			if strings.Contains(string(encoded), "PRIVATE_CANARY") || strings.Contains(string(encoded), "https://") {
 				t.Fatal("result exposed URL/provider data")

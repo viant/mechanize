@@ -35,7 +35,7 @@ type hostReconnectFixture struct {
 	dispatches *atomic.Int32
 }
 
-func newHostReconnectFixture(t *testing.T, missing bool) *hostReconnectFixture {
+func newHostReconnectFixture(t *testing.T, missing bool, completed ...bool) *hostReconnectFixture {
 	t.Helper()
 	_, file, _, _ := runtime.Caller(0)
 	source := filepath.Dir(filepath.Dir(file))
@@ -77,7 +77,11 @@ func newHostReconnectFixture(t *testing.T, missing bool) *hostReconnectFixture {
 			panic("fixture process loss before original outcome")
 		}
 		// The only executor is this inert fixture; recovery must never invoke it again.
-		return integration.StepResult{DispatchState: "dispatched", VerificationState: "unknown", Value: &model.Value{Kind: model.StringValue, String: "FIXTURE-PRIVATE-RESULT-CANARY"}}, nil
+		result := integration.StepResult{DispatchState: "dispatched", VerificationState: "unknown", Value: &model.Value{Kind: model.StringValue, String: "FIXTURE-PRIVATE-RESULT-CANARY"}}
+		if len(completed) == 1 && completed[0] {
+			return result, nil
+		}
+		return result, errors.New("fixture executor cleanup unconfirmed")
 	})
 	if e != nil {
 		t.Fatal(e)
@@ -285,5 +289,26 @@ func TestHostChromeReconnectActualProviderIncludesOriginalEpochOmittedFromLineag
 	}
 	if string(before) != string(f.read()) || f.dispatches.Load() != 1 {
 		t.Fatal("snapshot changed original outcome or replayed input")
+	}
+}
+
+func TestHostChromeReconnectJoinedDatlyPreservesDispatchedUnverifiedReceipt(t *testing.T) {
+	f := newHostReconnectFixture(t, false, true)
+	before := f.read()
+	if !strings.Contains(string(before), `"state":"dispatched"`) {
+		t.Fatal("known dispatch state missing")
+	}
+	err := f.host.chromeReconnectBindings(f.ctx, f.p, f.scope, func(c context.Context) error { return c.Err() }, func(rows []chrome.ReconnectBinding) error {
+		if len(rows) != 1 || rows[0].DispatchState != "dispatched" || rows[0].AttemptID != f.descriptor.BrowserAttemptID {
+			return errors.New("dispatch receipt metadata changed")
+		}
+		raw, _ := json.Marshal(rows)
+		if strings.Contains(string(raw), "CANARY") {
+			return errors.New("private result escaped")
+		}
+		return nil
+	})
+	if err != nil || string(before) != string(f.read()) || f.dispatches.Load() != 1 {
+		t.Fatal("read-only reconnect changed known receipt or replayed action", err)
 	}
 }

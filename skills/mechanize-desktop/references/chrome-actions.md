@@ -84,10 +84,14 @@ DSL timeouts are duration literals such as `timeout:3s`, not strings such as
 `timeout:"3s"`. Workflow step deadlines are integer `timeoutMs` values. Validate
 syntax and the closed workflow schema before dispatch.
 
-A successful click receipt proves input dispatch. Verify the next page state
-or application outcome independently. A dispatched action without a suitable
-postcondition may stop as an unresolved durable effect. Do not repeat it merely
-because the operation's overall execution status is `failed`.
+A successful executor receipt and cleanup complete a plain action or script;
+`verificationState: unverified` means no business outcome was asserted.
+Independently verified executor results retain their action evidence; that
+evidence alone does not establish a business goal. Observe
+the next page state before deciding the next action. Explicit postconditions and
+objectives still require their declared evidence. Missing receipts, execution
+errors and uncertain cleanup remain UNKNOWN and must not be replayed. Existing
+UNKNOWN records are not reclassified by this behavior.
 
 ## Short observation loop
 

@@ -23,7 +23,7 @@ import (
 	"github.com/viant/mechanize/script"
 )
 
-// Actual encrypted Put and Datly source initialization failure. This public
+// Actual encrypted Put and bound metadata storage initialization failure. This public
 // synthetic fixture supplies the physical capture and trusted consent lease;
 // the existing Host consent/capture fixture covers real grant consumption.
 func TestCapturePublicationFailureStillReturnsOwnedObservation(t *testing.T) {
@@ -33,7 +33,11 @@ func TestCapturePublicationFailureStillReturnsOwnedObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	pixels := encoded.Bytes()
-	builder, err := durable.New(durable.Options{SourceRoot: t.TempDir(), StorageRoot: t.TempDir(), VerifyArtifact: service.VerifyArtifact, LeaseEpoch: func(context.Context, auth.Principal) (int, error) { return 0, nil }}, func(context.Context, auth.Principal, model.Step, map[string]model.Value) (integration.StepResult, error) {
+	metadataParent := filepath.Join(t.TempDir(), "unavailable-metadata-parent")
+	if err := os.WriteFile(metadataParent, []byte("synthetic storage fault"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	builder, err := durable.New(durable.Options{SourceRoot: filepath.Join(t.TempDir(), "missing-source"), StorageRoot: filepath.Join(metadataParent, "storage"), VerifyArtifact: service.VerifyArtifact, LeaseEpoch: func(context.Context, auth.Principal) (int, error) { return 0, nil }}, func(context.Context, auth.Principal, model.Step, map[string]model.Value) (integration.StepResult, error) {
 		return integration.StepResult{}, nil
 	})
 	if err != nil {
@@ -74,7 +78,7 @@ func TestCapturePublicationFailureStillReturnsOwnedObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.IsError != nil && *result.IsError {
-		t.Fatal("metadata source failure erased captured pixels")
+		t.Fatal("metadata storage failure erased captured pixels")
 	}
 	raw, err := json.Marshal(result)
 	if err != nil {

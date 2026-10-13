@@ -136,12 +136,12 @@ func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step
 			}
 			matched, inherited := false, false
 			for _, entry := range snapshot.Lineage {
-				if entry.StepID == step.ID && entry.StepIndex == metadata.StepIndex && entry.State == "confirmed" {
+				if entry.StepID == step.ID && entry.StepIndex == metadata.StepIndex && (entry.State == "confirmed" || entry.State == "dispatched") {
 					inherited = true
 					matched = entry.BusinessKey == currentKey
 				}
 			}
-			if inherited && (!matched || previous.VerificationState != "verified") {
+			if inherited && (!matched || !previous.CompletedForResume(step)) {
 				return integration.StepResult{}, ErrNeedsReconciliation
 			}
 			if inherited {
@@ -286,10 +286,19 @@ func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step
 		}
 		timing.VerificationMs = time.Since(verificationStarted).Milliseconds()
 	}
+	// A successful executor receipt completes an action, not a business claim.
+	// Preserve independently verified executor outcomes; otherwise a missing
+	// authored postcondition is unverified rather than an execution failure.
+	if dispatchErr == nil && result.DispatchState == "dispatched" && result.VerificationState != "verified" && step.Postcondition == nil {
+		result.VerificationState = "unverified"
+		result.Postcondition = nil
+	}
 	finishTiming()
 	result.Timing = timing
 	state := "unknown"
-	if dispatchErr == nil && result.VerificationState == "verified" {
+	if dispatchErr == nil && result.DispatchedUnverified() && step.Postcondition == nil {
+		state = "dispatched"
+	} else if dispatchErr == nil && result.VerificationState == "verified" {
 		state = "confirmed"
 	} else if result.DispatchState == "notDispatched" {
 		state = "absent"
@@ -352,6 +361,9 @@ func matchesResumedCorrelation(run *loadrun.Run, metadata integration.ExecutionM
 // Confirmed identity is adopted; global uncertainty is a barrier. Only a new,
 // committed resumed operation can append an intent after proven non-dispatch.
 func admitStepAttempt(run *loadrun.Run, metadata integration.ExecutionMetadata, step model.Step, businessKey string) (string, *integration.StepResult, error) {
+	if err := validateDispatchedHistory(run); err != nil {
+		return "", nil, err
+	}
 	base := key("attempt", metadata.RunID, metadata.PlanID, step.ID)
 	if metadata.Resumed && !matchesResumedCorrelation(run, metadata) {
 		return "", nil, ErrNeedsReconciliation
@@ -369,7 +381,7 @@ func admitStepAttempt(run *loadrun.Run, metadata integration.ExecutionMetadata, 
 	absent := false
 	var confirmed *integration.StepResult
 	for _, effect := range run.Effects {
-		if effect.State == nil || (*effect.State != "confirmed" && *effect.State != "absent") {
+		if effect.State == nil || (*effect.State != "confirmed" && *effect.State != "absent" && *effect.State != "dispatched") {
 			return "", nil, ErrNeedsReconciliation
 		}
 		if effect.AttemptId == nil || effect.Id == nil || *effect.Id != key("effect", *effect.AttemptId) {
@@ -399,7 +411,7 @@ func admitStepAttempt(run *loadrun.Run, metadata integration.ExecutionMetadata, 
 			absent = true
 			continue
 		}
-		if evidence.VerificationState != "verified" || confirmed != nil {
+		if (*effect.State == "confirmed" && evidence.VerificationState != "verified") || (*effect.State == "dispatched" && (step.Postcondition != nil || !evidence.DispatchedUnverified())) || confirmed != nil {
 			return "", nil, ErrNeedsReconciliation
 		}
 		if evidence.Value != nil && evidence.Value.Validate() != nil {

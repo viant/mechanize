@@ -2,8 +2,10 @@ package commitoutcome
 
 import (
 	context "context"
+	"encoding/json"
 	"fmt"
 	"github.com/viant/mechanize/data"
+	integration "github.com/viant/mechanize/integration/endly"
 	xhandler "github.com/viant/xdatly/handler"
 	reflect "reflect"
 )
@@ -53,9 +55,15 @@ func (hooks *EffectLifecycle) Validate(ctx context.Context, entity *Effect, stat
 		return fmt.Errorf("outcome state required")
 	}
 	switch *entity.State {
-	case "confirmed", "absent", "unknown":
+	case "confirmed", "absent", "unknown", "dispatched":
 	default:
 		return fmt.Errorf("invalid outcome state")
+	}
+	if *entity.State == "dispatched" {
+		var receipt integration.StepResult
+		if entity.EvidenceJson == nil || json.Unmarshal([]byte(*entity.EvidenceJson), &receipt) != nil || !receipt.DispatchedUnverified() || len(entity.Milestones) != 0 || state.Previous.State == nil || *state.Previous.State != "intent" {
+			return fmt.Errorf("dispatched outcome requires original intent and unverified receipt without milestone")
+		}
 	}
 	if state.Previous.State == nil || (*state.Previous.State != "intent" && *state.Previous.State != "unknown") {
 		return fmt.Errorf("effect already resolved")

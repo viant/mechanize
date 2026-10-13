@@ -8,7 +8,6 @@ import (
 	"github.com/viant/mechanize/data/credentialprotectionscopelegacy"
 	"github.com/viant/mechanize/data/credentialprotectionscopelist"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -22,8 +21,7 @@ import (
 func TestCredentialProtectionScopeGeneratedImmutableReopen(t *testing.T) {
 	ctx, p := privateActor(t)
 	ctx = auth.WithConsentBinding(ctx, auth.ConsentBinding{SessionID: "session", GrantID: "grant", Purpose: "login"})
-	_, file, _, _ := runtime.Caller(0)
-	root := filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
+	root := filepath.Join(t.TempDir(), "missing-source")
 	storage := t.TempDir()
 	b, e := New(Options{SourceRoot: root, StorageRoot: storage, LeaseEpoch: func(context.Context, auth.Principal) (int, error) {
 		t.Fatal("scope requested execution lease")

@@ -140,9 +140,13 @@ for the packaged durable host. Mutating DSL steps default to
 `externalNonIdempotent`, and durable execution requires each such step to carry
 an exact typed `effect.businessKey` in a JSON/YAML workflow envelope. The
 Calculator example at `examples/endly/calculator.yaml` shows the supported
-shape. A semantic press without a verified effect postcondition may dispatch
-but remains `unknown`, which blocks replay until reconciled; add a suitable
-postcondition when the action has an independently observable result. The
+shape. A successful dispatch and executor cleanup complete a plain action with
+business verification still `unverified`; observe the UI before choosing a
+subsequent action. An explicit postcondition still requires its declared proof.
+Missing receipts or uncertain cleanup remain `unknown` and must not be replayed.
+An identical request returns its original receipt rather than repeating input.
+Independently verified executor results, such as tab creation, retain their
+action evidence without claiming a business goal. The
 grammar rejects unknown methods/options and arbitrary JavaScript or shell.
 Locator strategies, assertion observations, and actions can still be missing
 for a particular surface. Check `mechanize_capabilities` and validation.

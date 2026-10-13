@@ -17,6 +17,7 @@ import (
 	"github.com/viant/mechanize/backend/chrome"
 	native "github.com/viant/mechanize/backend/darwin"
 	"github.com/viant/mechanize/consent"
+	"github.com/viant/mechanize/engine/durable"
 	"github.com/viant/mechanize/engine/recording"
 	automation "github.com/viant/mechanize/integration/endly"
 	"github.com/viant/mechanize/model"
@@ -258,7 +259,7 @@ func controllerRejected(dispatch string, codes ...string) *schema.CallToolResult
 	code := "controllerToolRejected"
 	if len(codes) > 0 {
 		switch codes[0] {
-		case "invalidPredicate", "permissionRequired", "permissionExpired", "permissionDenied", "secureDocumentRequired", "staleGeneration", "staleAuthority", "unknownEffect", "targetNotFound", "ambiguousTarget", "invalidArguments", "sessionRequired", "sessionNotOwned", "invalidScopeKind", "invalidConsentScope", "unsupportedMode", "invalidSurface", "invalidScope", "browserInventoryUnavailable", "privateDOMUnavailable", "publicReadIdentityChanged", "publicReadInventoryUnavailable", "publicReadBusy", "publicReadLimit", "publicReadUnavailable":
+		case "invalidPredicate", "permissionRequired", "permissionExpired", "permissionDenied", "secureDocumentRequired", "staleGeneration", "staleAuthority", "unknownEffect", "targetNotFound", "ambiguousTarget", "invalidArguments", "sessionRequired", "sessionNotOwned", "invalidScopeKind", "invalidConsentScope", "unsupportedMode", "invalidSurface", "invalidScope", "browserInventoryUnavailable", "privateDOMUnavailable", "protectionMetadataUnavailable", "publicReadIdentityChanged", "publicReadInventoryUnavailable", "publicReadBusy", "publicReadLimit", "publicReadUnavailable":
 			code = codes[0]
 		}
 	}
@@ -276,6 +277,8 @@ func controllerRejected(dispatch string, codes ...string) *schema.CallToolResult
 		message = "Use an exact discovered scope. Native window observation requires surface.processId and surface.processStartToken plus a discovered window title. For screenshots, discover windows with mechanize_capture_windows and capture the returned window instead."
 	}
 	switch code {
+	case "protectionMetadataUnavailable":
+		message = "Browser protection metadata is unavailable; inspect its metadata phase and cause."
 	case "publicReadIdentityChanged":
 		message = "Public document identity changed during read qualification; select the current tab and observe again."
 	case "publicReadInventoryUnavailable":
@@ -291,6 +294,18 @@ func controllerRejected(dispatch string, codes ...string) *schema.CallToolResult
 	raw, _ := json.Marshal(body)
 	return &schema.CallToolResult{IsError: &yes, StructuredContent: body, Content: []schema.CallToolResultContentElem{schema.TextContent{Type: "text", Text: string(raw)}}}
 }
+func controllerProtectionMetadataRejected(dispatch string, structured map[string]any) *schema.CallToolResult {
+	phase, _ := structured["metadataPhase"].(string)
+	cause, _ := structured["metadataCause"].(string)
+	phase, cause = durable.ClosedProtectionMetadataDiagnostic(&durable.ProtectionMetadataFailure{Phase: phase, Cause: cause})
+	rejected := controllerRejected(dispatch, "protectionMetadataUnavailable")
+	body := rejected.StructuredContent.(map[string]any)
+	body["metadataPhase"], body["metadataCause"] = phase, cause
+	raw, _ := json.Marshal(body)
+	rejected.Content = []schema.CallToolResultContentElem{schema.TextContent{Type: "text", Text: string(raw)}}
+	return rejected
+}
+
 func (d *ControllerDispatcher) CallTool(ctx context.Context, id chrome.ControllerIdentity, call chrome.ControllerToolCall) (*schema.CallToolResult, error) {
 	if !controllerToolAvailable(id, call.Name) {
 		return controllerRejected("notDispatched"), nil
@@ -340,6 +355,9 @@ func (d *ControllerDispatcher) CallTool(ctx context.Context, id chrome.Controlle
 	if answer.IsError != nil && *answer.IsError {
 		dispatch, _ := structured["dispatchState"].(string)
 		code, _ := structured["code"].(string)
+		if code == "protectionMetadataUnavailable" {
+			return controllerProtectionMetadataRejected(dispatch, structured), nil
+		}
 		return controllerRejected(dispatch, code), nil
 	}
 	if call.Name == "mechanize_session_open" {

@@ -3,6 +3,7 @@ package durable
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -33,7 +34,7 @@ func TestGeneratedLateEffectReconciliationNeverReplaysAndPreservesAudit(t *testi
 		return DeclaredReconciliation(c)
 	}}, func(context.Context, auth.Principal, model.Step, map[string]model.Value) (integration.StepResult, error) {
 		dispatches++
-		return integration.StepResult{DispatchState: "dispatched", VerificationState: "unknown"}, nil
+		return integration.StepResult{DispatchState: "dispatched", VerificationState: "unknown"}, errors.New("fixture executor cleanup is unconfirmed")
 	})
 	if err != nil {
 		t.Fatal(err)

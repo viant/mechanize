@@ -168,12 +168,13 @@ func (r *Runtime) ResumeInSession(ctx context.Context, actor auth.Principal, ses
 	if err = json.Unmarshal(encoded, &snapshot); err != nil {
 		return nil, err
 	}
-	stepIDs := make(map[string]bool, len(snapshot.Plan.Steps))
+	stepIDs := make(map[string]model.Step, len(snapshot.Plan.Steps))
 	for _, step := range snapshot.Plan.Steps {
-		stepIDs[step.ID] = true
+		stepIDs[step.ID] = step
 	}
 	for stepID, completed := range snapshot.Completed {
-		if !stepIDs[stepID] || completed.VerificationState != "verified" {
+		step, exists := stepIDs[stepID]
+		if !exists || !completed.CompletedForResume(step) {
 			return nil, errors.New("completed step absent from plan or unverified")
 		}
 	}
@@ -197,7 +198,7 @@ func (r *Runtime) ResumeInSession(ctx context.Context, actor auth.Principal, ses
 	pipeline := []map[string]any{}
 	for index, step := range snapshot.Plan.Steps {
 		if completed, ok := snapshot.Completed[step.ID]; ok {
-			if completed.VerificationState != "verified" {
+			if !completed.CompletedForResume(step) {
 				return nil, errors.New("unverified completed step")
 			}
 			if step.Bind != "" {

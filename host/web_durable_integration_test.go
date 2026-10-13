@@ -21,7 +21,10 @@ func TestWebGeneratedIntentPrecedesPinnedDispatchWithoutNativeFence(t *testing.T
 	source := filepath.Dir(filepath.Dir(file))
 	storage := t.TempDir()
 	nativeFenceCalls := 0
-	store, err := durable.New(durable.Options{SourceRoot: source, StorageRoot: storage, LeaseEpoch: func(context.Context, auth.Principal) (int, error) {
+	var runner *automation.Runtime
+	store, err := durable.New(durable.Options{SourceRoot: source, StorageRoot: storage, StateMutationGuard: func(c context.Context, p auth.Principal, run string) (func(), error) {
+		return runner.StateMutationGuard(c, p, run)
+	}, LeaseEpoch: func(context.Context, auth.Principal) (int, error) {
 		nativeFenceCalls++
 		return 0, errors.New("native fence forbidden for renderer")
 	}, PrepareStepAuthority: h.prepareStepExecutor}, h.execute)
@@ -36,7 +39,7 @@ func TestWebGeneratedIntentPrecedesPinnedDispatchWithoutNativeFence(t *testing.T
 		t.Fatal(err)
 	}
 	defer observer.Close(context.Background())
-	runner, err := automation.NewWithOptions(store.Execute, automation.Options{PreparePlan: store.PreparePlan, EvaluatePostcondition: store.EvaluatePostcondition, CompleteObjective: store.CompleteObjective, AttachInitialOperation: func(ctx context.Context, p auth.Principal, runID string, revision int, sessionID, operationID string) error {
+	runner, err = automation.NewWithOptions(store.Execute, automation.Options{PreparePlan: store.PreparePlan, EvaluatePostcondition: store.EvaluatePostcondition, CompleteObjective: store.CompleteObjective, AttachInitialOperation: func(ctx context.Context, p auth.Principal, runID string, revision int, sessionID, operationID string) error {
 		_, err := store.AttachOperation(ctx, p, runID, revision, sessionID, operationID)
 		return err
 	}})
@@ -75,12 +78,12 @@ func TestWebGeneratedIntentPrecedesPinnedDispatchWithoutNativeFence(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !sawCommittedIntent || nativeFenceCalls != 0 || finished.Status != "failed" {
+	if !sawCommittedIntent || nativeFenceCalls != 0 || finished.Status != "succeeded" {
 		t.Fatalf("intent=%v nativeFence=%d outcome=%+v", sawCommittedIntent, nativeFenceCalls, finished)
 	}
-	// The receipt alone cannot prove the effect or authorize replay.
+	// Action completion proves dispatch, never business success or permission to repeat input.
 	business, err := runner.Result(ctx, opened.SessionID, op.ID)
-	if err != nil || business.BusinessStatus != "unverified" || business.VerificationState != "unknown" {
+	if err != nil || business.BusinessStatus != "unverified" || business.VerificationState != "unverified" {
 		t.Fatalf("receipt promoted to business success: %+v %v", business, err)
 	}
 	id, err := runner.RunReference(ctx, opened.SessionID, op.ID)
@@ -88,7 +91,7 @@ func TestWebGeneratedIntentPrecedesPinnedDispatchWithoutNativeFence(t *testing.T
 		t.Fatal(err)
 	}
 	state, err := observer.StateGet(auth.WithPrincipal(context.Background(), f.principal), f.principal, id)
-	if err != nil || len(state.UnresolvedEffects) != 1 || len(state.Progress) != 0 {
+	if err != nil || len(state.UnresolvedEffects) != 0 || len(state.Progress) != 0 {
 		t.Fatalf("browser uncertainty barrier lost: %+v %v", state, err)
 	}
 }

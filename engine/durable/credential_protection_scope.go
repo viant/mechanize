@@ -81,24 +81,24 @@ type CredentialProtection struct {
 func (b *Builder) CredentialProtectionScopes(ctx context.Context, p auth.Principal, legacyOrigin ...string) ([]CredentialProtection, error) {
 	actual, e := auth.FromContext(ctx)
 	if b == nil || e != nil || actual.Validate() != nil || actual.Namespace != p.Namespace || actual.ClientID != p.ClientID || p.ClientID == "" || !actual.HasScope("desktop:control") && !actual.HasScope("desktop:observe") {
-		return nil, auth.ErrUnauthorized
+		return nil, protectionMetadataFailure("identity", auth.ErrUnauthorized)
 	}
 	user, release, held, e := b.heldInvocation(ctx, p)
 	if e != nil {
-		return nil, e
+		return nil, protectionMetadataFailure("heldContext", e)
 	}
 	if held {
 		defer release()
 	} else {
 		ctx, user, e = b.bound(ctx, p, 0)
 		if e != nil {
-			return nil, e
+			return nil, protectionMetadataFailure("bind", e)
 		}
 		user.mu.Lock()
 		defer user.mu.Unlock()
 	}
 	if user == nil || user.server == nil {
-		return nil, data.ErrCredentialDeliveryAuthority
+		return nil, protectionMetadataFailure("bind", data.ErrCredentialDeliveryAuthority)
 	}
 	return readCredentialProtectionProjection(ctx, p, legacyOrigin, func(c context.Context, r exec.ComponentRequest) (any, error) {
 		return user.server.InvokeComponent(c, r)
@@ -110,27 +110,30 @@ func readCredentialProtectionProjection(ctx context.Context, p auth.Principal, l
 	in.SetNamespace(p.Namespace)
 	value, e := invoke(ctx, exec.ComponentRequest{Target: credentialDeliveryTarget("credentialprotectionscopelist", "CredentialProtectionScopeList", "GET"), Input: in})
 	if e != nil {
-		return nil, e
+		return nil, protectionMetadataFailure("scopeList", e)
 	}
 	out, ok := value.(*credentialprotectionscopelist.CredentialProtectionScopeListOutput)
-	if !ok || len(out.Data) > 512 {
-		return nil, data.ErrCredentialDeliveryAuthority
+	if !ok || out == nil {
+		return nil, protectionMetadataFailure("projection", data.ErrCredentialDeliveryAuthority)
+	}
+	if len(out.Data) > 512 {
+		return nil, protectionMetadataFailure("projection", errProtectionMetadataCapacity)
 	}
 	result := make([]CredentialProtection, 0, len(out.Data))
 	for _, row := range out.Data {
 		raw, e := json.Marshal(row)
 		var r data.CredentialProtectionScopeRecord
 		if e != nil || json.Unmarshal(raw, &r) != nil || r.Namespace != p.Namespace || r.ClientID == "" || !r.ValidOrigin() || r.PreparationID == "" {
-			return nil, data.ErrCredentialDeliveryAuthority
+			return nil, protectionMetadataFailure("projection", data.ErrCredentialDeliveryAuthority)
 		}
 		if r.Exact() {
 			if r.Validate() != nil {
-				return nil, data.ErrCredentialDeliveryAuthority
+				return nil, protectionMetadataFailure("projection", data.ErrCredentialDeliveryAuthority)
 			}
 		} else {
 			minimal := data.CredentialProtectionScopeRecord{Namespace: r.Namespace, ClientID: r.ClientID, PreparationID: r.PreparationID, Origin: r.Origin}
 			if r != minimal {
-				return nil, data.ErrCredentialDeliveryAuthority
+				return nil, protectionMetadataFailure("projection", data.ErrCredentialDeliveryAuthority)
 			}
 		}
 		snapshot := CredentialProtection{Scope: r}
@@ -151,18 +154,21 @@ func readCredentialProtectionProjection(ctx context.Context, p auth.Principal, l
 			in.SetOrigin(legacyOrigin[0])
 			value, e := invoke(ctx, exec.ComponentRequest{Target: credentialDeliveryTarget("credentialprotectionscopelegacy", "CredentialProtectionScopeLegacy", "GET"), Input: in})
 			if e != nil {
-				return nil, e
+				return nil, protectionMetadataFailure("legacyList", e)
 			}
 			rows, ok := value.(*credentialprotectionscopelegacy.CredentialProtectionScopeLegacyOutput)
-			if !ok || len(rows.Data) > 512 {
-				return nil, data.ErrCredentialDeliveryAuthority
+			if !ok || rows == nil {
+				return nil, protectionMetadataFailure("legacyProjection", data.ErrCredentialDeliveryAuthority)
+			}
+			if len(rows.Data) > 512 {
+				return nil, protectionMetadataFailure("legacyProjection", errProtectionMetadataCapacity)
 			}
 			seen := map[string]bool{}
 			for _, row := range rows.Data {
 				raw, e := json.Marshal(row)
 				var source data.CredentialProtectionScopeRecord
 				if e != nil || json.Unmarshal(raw, &source) != nil || source.Namespace != p.Namespace || source.ClientID != p.ClientID || source.Origin != legacyOrigin[0] || source.DocumentID == "" || source.TabID <= 0 || source.DocumentGeneration < 1 || source.ChromeStartToken == "" || seen[source.PreparationID] {
-					return nil, data.ErrCredentialDeliveryAuthority
+					return nil, protectionMetadataFailure("legacyProjection", data.ErrCredentialDeliveryAuthority)
 				}
 				seen[source.PreparationID] = true
 				for i := range result {
@@ -174,5 +180,8 @@ func readCredentialProtectionProjection(ctx context.Context, p auth.Principal, l
 			}
 		}
 	}
-	return result, ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return nil, protectionMetadataFailure("context", err)
+	}
+	return result, nil
 }

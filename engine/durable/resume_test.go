@@ -137,7 +137,10 @@ func TestGeneratedDatlyResumeReconstructsEndlyAndSkipsConfirmed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	done, err = resumed.Wait(wait, result.SessionID, result.Operation.ID)
+	// Reopening the Datly host is fixture setup, not time spent waiting on this operation.
+	resumeWait, resumeCancel := context.WithTimeout(ctx, 20*time.Second)
+	defer resumeCancel()
+	done, err = resumed.Wait(resumeWait, result.SessionID, result.Operation.ID)
 	if err != nil || done.Status != manager.OperationSucceeded {
 		t.Fatalf("resume failed: %+v %v", done, err)
 	}

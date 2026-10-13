@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/viant/mechanize/auth"
@@ -131,8 +130,7 @@ func TestArtifactPublicationRejectsChangedMetadata(t *testing.T) {
 
 func TestArtifactPublicationReplayUsesGeneratedScopedReader(t *testing.T) {
 	ctx, p, ref := publicationFixture(t)
-	_, file, _, _ := runtime.Caller(0)
-	source := filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
+	source := filepath.Join(t.TempDir(), "missing-source")
 	verified := 0
 	builder, err := New(Options{SourceRoot: source, StorageRoot: t.TempDir(), LeaseEpoch: func(context.Context, auth.Principal) (int, error) { return 1, nil }, VerifyArtifact: func(_ context.Context, actor auth.Principal, requested data.ArtifactReference) error {
 		verified++

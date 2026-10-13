@@ -48,7 +48,7 @@ func (hooks *RunLifecycle) Validate(ctx context.Context, entity *Run, state xhan
 			return fmt.Errorf("unresolved effect blocks dispatch")
 		}
 		switch *effect.State {
-		case "confirmed", "absent": // resolved history, never a new pending intent
+		case "confirmed", "absent", "dispatched": // resolved history, never a new pending intent
 		default: // intent, unknown and unsupported states all remain barriers
 			return fmt.Errorf("unresolved effect blocks dispatch")
 		}

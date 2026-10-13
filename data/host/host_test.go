@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"errors"
 	"github.com/viant/datly/exec"
 	"github.com/viant/datly/spec"
 	"github.com/viant/mechanize/data"
@@ -11,14 +12,12 @@ import (
 	"github.com/viant/mechanize/data/publishplan"
 	"github.com/viant/xdatly/handler"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestGeneratedPlanCommitAndNamespaceIsolation(t *testing.T) {
-	_, file, _, _ := runtime.Caller(0)
-	source := filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
+	source := filepath.Join(t.TempDir(), "missing-source")
 	scope := data.Scope{Namespace: strings.Repeat("a", 64), LeaseEpoch: 1}
 	ctx, err := data.WithScope(context.Background(), scope)
 	if err != nil {
@@ -153,5 +152,10 @@ func TestGeneratedPlanCommitAndNamespaceIsolation(t *testing.T) {
 	foreign, _ := data.WithScope(context.Background(), data.Scope{Namespace: strings.Repeat("b", 64)})
 	if _, err = server.InvokeComponent(foreign, exec.ComponentRequest{Target: target, Input: input}); err == nil {
 		t.Fatal("cross-user bound input accepted")
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err = server.InvokeComponent(cancelled, exec.ComponentRequest{Target: target, Input: input}); !errors.Is(err, context.Canceled) {
+		t.Fatal("cancelled source-less component invocation admitted", err)
 	}
 }

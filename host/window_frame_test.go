@@ -225,14 +225,14 @@ func TestWindowFrameHostRetainedCapturePublishesAndDispatchesAfterRealCommittedI
 	if err != nil {
 		t.Fatal(err)
 	}
-	if helper.clicks != 1 || finished.Status != "failed" || captured == nil {
+	if helper.clicks != 1 || finished.Status != "succeeded" || captured == nil {
 		t.Fatalf("expected one unverified click: status=%s clicks=%d error=%s", finished.Status, helper.clicks, finished.Error)
 	}
 	if _, err := data.RequireCommittedStepIntent(context.WithoutCancel(captured), f.principal); err == nil {
 		t.Fatal("intent survived dispatch")
 	}
-	_, err = h.durable.Execute(context.WithoutCancel(captured), f.principal, step, nil)
-	if !errors.Is(err, durable.ErrNeedsReconciliation) || helper.clicks != 1 {
+	receipt, err := h.durable.Execute(context.WithoutCancel(captured), f.principal, step, nil)
+	if err != nil || !receipt.DispatchedUnverified() || helper.clicks != 1 {
 		t.Fatalf("unverified click replay barrier lost: %v", err)
 	}
 }

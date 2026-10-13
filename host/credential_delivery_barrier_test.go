@@ -25,7 +25,8 @@ func TestCredentialBarrierFailurePrecedesOrdinaryWebExposureModes(t *testing.T) 
 			// exposure probe or consent/input path, even if the volatile gate is empty.
 			h := &Host{durable: &durable.Builder{}, vaultExposure: gate}
 			lease, err := h.AuthorizeOperation(context.Background(), auth.Principal{}, model.Surface{Kind: "web", Origin: "https://fixture.invalid"}, mode != consent.Observe, mode)
-			if lease != nil || !errors.Is(err, vault.ErrUnavailable) {
+			var diagnostic *model.MechanizeError
+			if lease != nil || !errors.As(err, &diagnostic) || diagnostic.Code != "protectionMetadataUnavailable" || diagnostic.Stage != "admission" || diagnostic.DispatchState != "notDispatched" || diagnostic.EffectState != "none" {
 				t.Fatal("unavailable durable protection was bypassed")
 			}
 			if probes != 0 {

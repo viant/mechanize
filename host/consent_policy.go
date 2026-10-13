@@ -3,9 +3,11 @@ package host
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/backend/chrome"
 	"github.com/viant/mechanize/consent"
+	"github.com/viant/mechanize/engine/durable"
 	"github.com/viant/mechanize/model"
 	"github.com/viant/mechanize/vault"
 )
@@ -96,7 +98,7 @@ func (h *Host) AuthorizeOperation(ctx context.Context, p auth.Principal, surface
 		if surface.Kind == "web" {
 			scopes, err := h.durable.CredentialProtectionScopes(ctx, p, surface.Origin)
 			if err != nil {
-				return nil, vault.ErrUnavailable
+				return nil, protectionMetadataAdmissionFailure(err)
 			}
 			if len(scopes) > 0 {
 				if !mutation && requested == consent.Observe {
@@ -227,4 +229,18 @@ func (h *Host) authorizeConsentOperation(ctx context.Context, p auth.Principal, 
 		}
 	}
 	return lease, nil
+}
+
+// Metadata unavailability remains a pre-input denial. The closed diagnostic
+// cannot weaken a retained protection or expose the underlying reader error.
+type protectionAdmissionFailure struct {
+	detail *model.MechanizeError
+	cause  error
+}
+
+func (e *protectionAdmissionFailure) Error() string   { return e.detail.Error() }
+func (e *protectionAdmissionFailure) Unwrap() []error { return []error{e.detail, e.cause} }
+func protectionMetadataAdmissionFailure(err error) error {
+	phase, cause := durable.ClosedProtectionMetadataDiagnostic(err)
+	return &protectionAdmissionFailure{detail: &model.MechanizeError{Code: "protectionMetadataUnavailable", Message: fmt.Sprintf("Browser protection metadata is unavailable (%s/%s).", phase, cause), Stage: "admission", DispatchState: "notDispatched", EffectState: "none"}, cause: err}
 }

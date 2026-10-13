@@ -112,6 +112,9 @@ func TestGeneratedNativePostconditionPromotesOnlyFreshIndependentEvidence(t *tes
 				t.Fatal(err)
 			}
 			wantState, wantVerification := "unknown", "unknown"
+			if mode == "receipt-only" {
+				wantState, wantVerification = "dispatched", "unverified"
+			}
 			if mode == "fresh-true" {
 				wantState, wantVerification = "confirmed", "verified"
 			}
@@ -130,7 +133,7 @@ func TestGeneratedNativePostconditionPromotesOnlyFreshIndependentEvidence(t *tes
 				t.Fatalf("UI evidence became business success %+v %v", business, err)
 			}
 			_, err = builder.Execute(context.WithoutCancel(captured), p, plan.Steps[0], nil)
-			if mode == "fresh-true" {
+			if mode == "fresh-true" || mode == "receipt-only" {
 				if err != nil {
 					t.Fatalf("confirmed outcome not adopted: %v", err)
 				}

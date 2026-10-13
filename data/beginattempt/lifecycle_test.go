@@ -30,6 +30,7 @@ func TestBeginAttemptPreviousEffectsGuardChecksStateAndScope(t *testing.T) {
 		{"initial", nil, false},
 		{"resolved historical absence", []*UnresolvedEffect{{Namespace: pointer(p.Namespace), RunId: pointer("run"), State: pointer("absent")}}, false},
 		{"resolved historical confirmation", []*UnresolvedEffect{{Namespace: pointer(p.Namespace), RunId: pointer("run"), State: pointer("confirmed")}}, false},
+		{"dispatched receipt", []*UnresolvedEffect{{Namespace: pointer(p.Namespace), RunId: pointer("run"), State: pointer("dispatched")}}, false},
 		{"intent", []*UnresolvedEffect{{Namespace: pointer(p.Namespace), RunId: pointer("run"), State: pointer("intent")}}, true},
 		{"unknown", []*UnresolvedEffect{{Namespace: pointer(p.Namespace), RunId: pointer("run"), State: pointer("unknown")}}, true},
 		{"pending after resolved", []*UnresolvedEffect{{Namespace: pointer(p.Namespace), RunId: pointer("run"), State: pointer("confirmed")}, {Namespace: pointer(p.Namespace), RunId: pointer("run"), State: pointer("intent")}}, true},
