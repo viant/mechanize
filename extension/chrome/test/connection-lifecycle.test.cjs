@@ -14,8 +14,8 @@ function fixture(shared={}){
 test('offline startup retries with capped backoff and no command or permission replay',async()=>{
  const f=fixture();await f.lifecycle.start();assert.equal(f.state.opens,1);
  for(const delay of DELAYS){assert.equal(f.lifecycle.status().nextAt-f.now(),delay);assert.equal(f.alarms.get(ALARM).when,Math.max(f.lifecycle.status().nextAt,f.now()+60000));await f.advance(delay);}
- assert.equal(f.lifecycle.status().attempt,DELAYS.length);assert.equal(f.lifecycle.status().nextAt-f.now(),900000);assert.deepEqual(Object.keys(f.saved[KEY]).sort(),['attempt','nextAt','phase','version']);assert.deepEqual(f.state.dispatched,[]);assert.equal(f.state.permissionRequests,0);
- f.state.available=true;await f.advance(900000);assert.equal(f.lifecycle.status().phase,'handshake');await f.lifecycle.acknowledged(f.state.token);assert.equal(f.lifecycle.status().nextAt,0);assert.equal(f.alarms.size,0);
+ assert.equal(f.lifecycle.status().attempt,DELAYS.length);assert.equal(f.lifecycle.status().nextAt-f.now(),60000);assert.deepEqual(Object.keys(f.saved[KEY]).sort(),['attempt','nextAt','phase','version']);assert.deepEqual(f.state.dispatched,[]);assert.equal(f.state.permissionRequests,0);
+ f.state.available=true;await f.advance(60000);assert.equal(f.lifecycle.status().phase,'handshake');await f.lifecycle.acknowledged(f.state.token);assert.equal(f.lifecycle.status().nextAt,0);assert.equal(f.alarms.size,0);
 });
 test('duplicate disconnect and retry events create only one connection attempt',async()=>{
  const f=fixture();f.state.available=true;await Promise.all([f.lifecycle.start(),f.lifecycle.request(),f.lifecycle.request()]);assert.equal(f.state.opens,1);await f.lifecycle.acknowledged(f.state.token);
@@ -53,4 +53,13 @@ test('late saved retry read cannot overwrite disabled state during startup',asyn
  const api={storage:{local:{get:async()=>{reads++;await gate;return {[KEY]:{version:1,attempt:8,nextAt:Date.now()+900000,phase:'retry'}};},set:async value=>Object.assign(saved,structuredClone(value))}},alarms:{clear:async key=>alarms.delete(key),create:async(key,value)=>alarms.set(key,value),onAlarm:{addListener(){}}}};
  const lifecycle=create(api,{settings:async()=>({enabled,configured:true}),isOpen:()=>false,close(){},open:async()=>{opens++;return false;}});
  const first=lifecycle.start();await flush();enabled=false;const disabled=lifecycle.reconfigure();await flush();release();await Promise.all([first,disabled]);assert.equal(reads,1);assert.equal(opens,0);assert.equal(lifecycle.status().phase,'idle');assert.equal(lifecycle.status().retryScheduled,false);assert.equal(saved[KEY].phase,'idle');assert.equal(alarms.size,0);
+});
+
+test('a persisted long outage cannot delay a restored connector beyond one minute',async()=>{
+ const f=fixture({saved:{[KEY]:{version:1,attempt:8,nextAt:100000+900000,phase:'retry'}}});
+ f.state.available=true;await f.lifecycle.start();assert.equal(f.state.opens,0);
+ await f.advance(59999);assert.equal(f.state.opens,0);
+ await f.advance(1);assert.equal(f.state.opens,1);
+ await f.lifecycle.acknowledged(f.state.token);assert.equal(f.lifecycle.status().phase,'idle');
+ assert.deepEqual(f.state.dispatched,[]);assert.equal(f.state.permissionRequests,0);
 });

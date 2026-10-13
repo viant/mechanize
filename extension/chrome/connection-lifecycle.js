@@ -1,7 +1,7 @@
 // Transport scheduling only. This module never requests website permission,
 // inspects a document, grants a lease, or retries an application command.
 globalThis.MechanizeConnectionLifecycle=(()=>{
- const KEY='mechanizeConnectionRetryV1',ALARM='mechanize-native-reconnect',DELAYS=[1000,2000,4000,60000,120000,240000,480000,900000];
+ const KEY='mechanizeConnectionRetryV1',ALARM='mechanize-native-reconnect',DELAYS=[1000,2000,4000,8000,15000,30000,60000,60000];
  function create(api,hooks,clock={now:()=>Date.now(),setTimeout:(fn,delay)=>setTimeout(fn,delay),clearTimeout:id=>clearTimeout(id)}){
   let attempt=0,nextAt=0,phase='idle',timer=null,generation=0,flight=null,loaded=false,active=null,failedToken=null;
   const changed=()=>{try{hooks.changed?.();}catch{}};
@@ -13,7 +13,7 @@ globalThis.MechanizeConnectionLifecycle=(()=>{
   let loading=null;
   async function load(){
    if(loaded)return;if(loading)return loading;const epoch=generation;
-   loading=(async()=>{try{const saved=(await api.storage.local.get(KEY))[KEY];if(epoch===generation&&saved&&Object.keys(saved).sort().join()==='attempt,nextAt,phase,version'&&saved.version===1&&Number.isInteger(saved.attempt)&&saved.attempt>=0&&saved.attempt<=DELAYS.length&&Number.isSafeInteger(saved.nextAt)&&saved.nextAt>=0&&['idle','retry','handshake'].includes(saved.phase)){attempt=saved.attempt;nextAt=saved.nextAt;phase=saved.phase;}}catch{}finally{loaded=true;}})();
+   loading=(async()=>{try{const saved=(await api.storage.local.get(KEY))[KEY];if(epoch===generation&&saved&&Object.keys(saved).sort().join()==='attempt,nextAt,phase,version'&&saved.version===1&&Number.isInteger(saved.attempt)&&saved.attempt>=0&&saved.attempt<=DELAYS.length&&Number.isSafeInteger(saved.nextAt)&&saved.nextAt>=0&&['idle','retry','handshake'].includes(saved.phase)){attempt=saved.attempt;nextAt=Math.min(saved.nextAt,clock.now()+DELAYS[DELAYS.length-1]);phase=saved.phase;}}catch{}finally{loaded=true;}})();
    return loading;
   }
 
