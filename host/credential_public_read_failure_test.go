@@ -115,3 +115,37 @@ func TestCredentialPublicReadClosedFailureVocabulary(t *testing.T) {
 		t.Fatal("actual target protection lost")
 	}
 }
+
+func TestCredentialPublicReadNativeProbeFailureIsUnavailableAndActualEntryRemainsProtected(t *testing.T) {
+	credentialHostFixtureFlow(t, "publicRead", credentialHostFixtureHooks{exercise: func(t *testing.T, h *Host, ctx context.Context, p auth.Principal, _ gateway.CredentialRefInput, in gateway.CredentialPrepareInput, f *credentialBrowserFixture, _ *atomic.Int64) {
+		for _, protected := range []bool{false, true} {
+			reader := &publicReadBrowserFixture{}
+			h.credentials.browserFixture = reader
+			gate, err := vault.NewGuardedExposureGate(func(context.Context) error {
+				if protected {
+					return vault.ErrEntryProtected
+				}
+				return errors.New("synthetic probe details")
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.vaultExposure = gate
+			bound := auth.WithConsentBinding(ctx, f.session.consent)
+			lease, handled, err := h.authorizeCredentialPublicRead(bound, p, model.Surface{Kind: "web", Origin: in.Surface.Origin, TabID: "profile/browser/7"})
+			if lease != nil || !handled || err == nil || reader.calls != 0 {
+				t.Fatal("native probe failure minted a renderer permit", err)
+			}
+			if protected {
+				if !errors.Is(err, vault.ErrDeliveryProtected) {
+					t.Fatal("actual native entry protection changed", err)
+				}
+			} else {
+				var detail *model.MechanizeError
+				if errors.Is(err, vault.ErrDeliveryProtected) || !errors.As(err, &detail) || detail.Code != "publicReadUnavailable" || strings.Contains(err.Error(), "synthetic probe details") {
+					t.Fatal("unavailable native probe became private DOM", err)
+				}
+			}
+		}
+	}})
+}

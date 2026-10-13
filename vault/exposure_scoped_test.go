@@ -186,3 +186,76 @@ func TestPreparationRecoverRetiredUsesTrustedProof(t *testing.T) {
 	}
 	release()
 }
+
+func TestScopedWebNativeProbeFailureIsUnavailableNotPrivate(t *testing.T) {
+	g, err := NewGuardedExposureGate(func(context.Context) error { return errors.New("synthetic native probe unavailable") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	classified := false
+	release, err := g.AcquireScopedWebExposure(deliveryContext(), func(context.Context, Binding) error { classified = true; return nil })
+	if release != nil || err == nil || !classified {
+		t.Fatal("fixture did not reach post-classification probe")
+	}
+	if errors.Is(err, ErrDeliveryProtected) || errors.Is(err, ErrEntryProtected) {
+		t.Fatal("native probe failure claimed private delivery")
+	}
+	if g.readers != 0 {
+		t.Fatal("failed probe retained read reservation")
+	}
+}
+
+func TestScopedReadProbePrecedesClassificationWithoutWeakeningControlOrDeliveryExclusion(t *testing.T) {
+	for _, readOnly := range []bool{true, false} {
+		t.Run(map[bool]string{true: "read", false: "control"}[readOnly], func(t *testing.T) {
+			var order []string
+			g, err := NewGuardedExposureGate(func(context.Context) error { order = append(order, "probe"); return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, b := deliveryContext(), fixtureBinding()
+			source, err := g.BeginDelivery(ctx, b, func(context.Context) error { return nil }, func(context.Context) error { return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			order = nil // BeginDelivery performed its own independent native check.
+			verify := func(context.Context, Binding) error { order = append(order, "classify"); return nil }
+			var release func()
+			if readOnly {
+				release, err = g.AcquireScopedWebReadExposure(ctx, verify)
+			} else {
+				release, err = g.AcquireScopedWebExposure(ctx, verify)
+			}
+			if err != nil || release == nil {
+				t.Fatal(err)
+			}
+			want := []string{"classify", "probe"}
+			if readOnly {
+				want = []string{"probe", "classify"}
+			}
+			if len(order) != 2 || order[0] != want[0] || order[1] != want[1] {
+				t.Fatal("wrong independent native/renderer verification order", order)
+			}
+			if err := source.WithDelivery(ctx, b, func() error { t.Fatal("private input overlapped read reservation"); return nil }); !errors.Is(err, ErrBusy) {
+				t.Fatal(err)
+			}
+			release()
+			release()
+			if err := source.WithDelivery(ctx, b, func() error { return nil }); err != nil {
+				t.Fatal("reader did not release private input exclusion", err)
+			}
+		})
+	}
+}
+
+func TestScopedReadNativeProtectionStillBlocksBeforeClassification(t *testing.T) {
+	g, err := NewGuardedExposureGate(func(context.Context) error { return ErrEntryProtected })
+	if err != nil {
+		t.Fatal(err)
+	}
+	classified := false
+	release, err := g.AcquireScopedWebReadExposure(deliveryContext(), func(context.Context, Binding) error { classified = true; return nil })
+	if release != nil || !errors.Is(err, ErrEntryProtected) || classified || g.readers != 0 {
+		t.Fatal("actual native protection lost", err)
+	}
+}

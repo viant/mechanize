@@ -275,12 +275,12 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 	if err := ctx.Err(); err != nil {
 		return Reply{}, dispatchGateFailure(err)
 	}
-	if command.PublicRead {
+	if command.PublicRead || ctx.Value(credentialPublicReadKey{}) != nil {
 		b.mu.Lock()
 		valid := publicReadPermitLocked(ctx, c, command, mutation) != nil
 		b.mu.Unlock()
 		if !valid {
-			return Reply{}, browserError("privateDOMUnavailable", "Explicit public read requires its current server-owned permit", "notDispatched")
+			return Reply{}, publicReadPermitFailure(ctx)
 		}
 	}
 	if err := b.guardPrivacyCommand(ctx, c, command, mutation); err != nil {
@@ -377,7 +377,7 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 	command.PublicRead = semanticPublicRead && c.credentialPublicReadVersion == 2
 	b.mu.Unlock()
 	if ctx.Value(credentialPublicReadKey{}) != nil && !semanticPublicRead {
-		return Reply{}, browserError("privateDOMUnavailable", "Public read permit expired or changed before transport", "notDispatched")
+		return Reply{}, publicReadPermitFailure(ctx)
 	}
 	if b.playwright != nil && playwrightSupported(command) && !semanticPublicRead {
 		return b.callPlaywright(ctx, c, command, mutation, seal != nil, beforeSend...)

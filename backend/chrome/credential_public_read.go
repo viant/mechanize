@@ -74,21 +74,23 @@ func (g *Gateway) WithVerifiedCredentialPublicRead(ctx context.Context, p auth.P
 	if err := b.checkChannelProcess(ctx, c, false); err != nil {
 		return nil, scopeFailure("scopeChanged")
 	}
-	expires := time.Now().Add(5 * time.Second)
-	if d, ok := ctx.Deadline(); ok && d.Before(expires) {
-		expires = d
-	}
+	// One deadline covers classification and delivery. The renderer stores this
+	// same deadline; minting after the response must not restart its lifetime.
+	readCtx, stopRead := context.WithTimeout(ctx, 5*time.Second)
+	defer stopRead()
+	deadline, _ := readCtx.Deadline()
+	expires := time.UnixMilli(deadline.UnixMilli())
 	b.mu.Lock()
 	if c.processEvidence == nil || !c.processEvidence.KernelPeerQualified || c.conn == nil {
 		b.mu.Unlock()
 		return nil, scopeFailure("scopeChanged")
 	}
-	permit := &credentialPublicReadPermit{broker: b, channel: c, conn: c.conn, owner: p.Namespace, client: p.ClientID, consent: consent, brokerEpoch: b.epoch, channelEpoch: c.epoch, scopeHash: c.scopeHash, nativeHost: c.processEvidence.NativeHost, chromeParent: c.processEvidence.ChromeParent, expires: expires}
+	snapshot := credentialPublicReadPermit{broker: b, channel: c, conn: c.conn, owner: p.Namespace, client: p.ClientID, consent: consent, brokerEpoch: b.epoch, channelEpoch: c.epoch, scopeHash: c.scopeHash, nativeHost: c.processEvidence.NativeHost, chromeParent: c.processEvidence.ChromeParent, expires: expires}
 	b.mu.Unlock()
 	// Empty document/generation is deliberately routing metadata, not an
 	// invented document identity. Only the returned renderer proof supplies it.
 	source := CredentialProtectionScope{PreparationID: strings.Repeat("0", 64), Identity: Identity{ProfileChannel: profile, BrowserInstance: instance, TabID: tab}, Origin: target.Origin}
-	r, err := g.credentialScopeExchange(ctx, p, source, "publicRead", tab, target.Origin, nil)
+	r, err := g.credentialScopeExchange(readCtx, p, source, "publicRead", tab, target.Origin, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +98,7 @@ func (g *Gateway) WithVerifiedCredentialPublicRead(ctx context.Context, p auth.P
 	if proof == nil || proof.Version != 1 || !proof.Public || !fingerprintV2Hash.MatchString(proof.RouteSHA256) || proof.Identity.ProfileChannel != profile || proof.Identity.BrowserInstance != instance || proof.Identity.TabID != tab || proof.Identity.FrameID != 0 || !receiptIdentityValid(proof.Identity) || r.TargetIdentity != nil || r.LoginRouteSHA256 != "" {
 		return nil, scopeFailure("scopeChanged")
 	}
+	permit := &snapshot
 	permit.document = Document{Identity: proof.Identity, Origin: target.Origin}
 	permit.routeSHA256 = proof.RouteSHA256
 	verified := context.WithValue(ctx, credentialPublicReadKey{}, permit)
@@ -106,6 +109,15 @@ func (g *Gateway) WithVerifiedCredentialPublicRead(ctx context.Context, p auth.P
 		return nil, scopeFailure("scopeChanged")
 	}
 	return verified, nil
+}
+
+func publicReadPermitFailure(ctx context.Context) error {
+	permit, _ := ctx.Value(credentialPublicReadKey{}).(*credentialPublicReadPermit)
+	code, message := "publicReadIdentityChanged", "Current public read proof changed before delivery; qualify the selected document again."
+	if permit == nil || ctx.Err() != nil || !time.Now().Before(permit.expires) {
+		code, message = "publicReadUnavailable", "Current public read proof expired or is unavailable; qualify the selected document again."
+	}
+	return browserError(code, message, "notDispatched")
 }
 
 // Caller holds the broker mutex. Every command still performs its ordinary

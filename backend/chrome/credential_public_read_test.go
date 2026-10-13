@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/viant/mechanize/auth"
+	"github.com/viant/mechanize/auth/nativepeer"
 	"github.com/viant/mechanize/model"
+	"net"
 	"testing"
 	"time"
 )
@@ -228,5 +230,68 @@ func TestCredentialPublicReadContextCannotAdmitControl(t *testing.T) {
 				t.Fatal("base control context did not remain independent", admission, err)
 			}
 		})
+	}
+}
+
+func TestCredentialPublicReadExpiredProofDoesNotClaimPrivateDOM(t *testing.T) {
+	f, c, ctx := publicReadFixture(t)
+	verified, err := f.g.WithVerifiedCredentialPublicRead(ctx, f.p, readTarget().Surface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permit := verified.Value(credentialPublicReadKey{}).(*credentialPublicReadPermit)
+	permit.expires = time.Now().Add(-time.Second)
+	_, err = f.g.broker.call(verified, c, Command{Action: "observe", Identity: permit.document.Identity}, false)
+	detail, ok := err.(*model.MechanizeError)
+	if !ok || detail.Code != "publicReadUnavailable" || detail.DispatchState != "notDispatched" {
+		t.Fatal("expired public proof claimed private DOM", err)
+	}
+	if f.mutations.Load() != 0 {
+		t.Fatal("expired proof dispatched input")
+	}
+}
+
+func TestCredentialPublicReadExpiryDuringProcessVerificationIsUnavailable(t *testing.T) {
+	f, c, ctx := publicReadFixture(t)
+	verified, err := f.g.WithVerifiedCredentialPublicRead(ctx, f.p, readTarget().Surface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permit := verified.Value(credentialPublicReadKey{}).(*credentialPublicReadPermit)
+	permit.expires = time.Now().Add(20 * time.Millisecond)
+	previous := f.g.broker.verifyPeer
+	f.g.broker.verifyPeer = func(c context.Context, conn *net.UnixConn) (nativepeer.ChromeProcessEvidence, error) {
+		time.Sleep(35 * time.Millisecond)
+		return previous(c, conn)
+	}
+	observation, err := f.g.Observe(verified, f.p, readTarget().Surface)
+	detail, ok := err.(*model.MechanizeError)
+	if !ok || detail.Code != "publicReadUnavailable" || detail.DispatchState != "notDispatched" || len(observation.Nodes) != 0 {
+		t.Fatal("slow process verification relabeled valid public classification as private", err)
+	}
+	if f.publicReadMarked.Load() != 0 || f.mutations.Load() != 0 {
+		t.Fatal("expired proof reached renderer or input")
+	}
+	f.g.broker.mu.Lock()
+	retained := c.privacy != nil && c.conn == permit.conn && len(c.unknown) == 0
+	f.g.broker.mu.Unlock()
+	if !retained {
+		t.Fatal("expiry changed retained credential evidence")
+	}
+}
+
+func TestCredentialPublicReadUsesOriginalScopeDeadlineAfterClassification(t *testing.T) {
+	f, _, base := publicReadFixture(t)
+	ctx, cancel := context.WithTimeout(base, time.Second)
+	defer cancel()
+	verified, err := f.g.WithVerifiedCredentialPublicRead(ctx, f.p, readTarget().Surface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permit := verified.Value(credentialPublicReadKey{}).(*credentialPublicReadPermit)
+	request := f.lastScope.Load().(credentialScopeRequest)
+	deadline, _ := ctx.Deadline()
+	if permit.expires.UnixMilli() != request.DeadlineUnixMS || request.DeadlineUnixMS != deadline.UnixMilli() {
+		t.Fatal("renderer/host proof lifetime diverged or restarted after classification")
 	}
 }

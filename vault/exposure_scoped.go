@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"errors"
 	"sync"
 )
 
@@ -11,6 +12,17 @@ import (
 // It grants no consent or native exposure. Native credential entry remains
 // exclusive, and the reader reservation prevents private source transitions.
 func (g *ExposureGate) AcquireScopedWebExposure(ctx context.Context, verify func(context.Context, Binding) error) (func(), error) {
+	return g.acquireScopedWebExposure(ctx, verify, false)
+}
+
+// AcquireScopedWebReadExposure reserves the same delivery/entry exclusion, but
+// checks native entry before minting a short-lived sanitized renderer read proof.
+// CONTROL callers retain AcquireScopedWebExposure's post-verification check.
+func (g *ExposureGate) AcquireScopedWebReadExposure(ctx context.Context, verify func(context.Context, Binding) error) (func(), error) {
+	return g.acquireScopedWebExposure(ctx, verify, true)
+}
+
+func (g *ExposureGate) acquireScopedWebExposure(ctx context.Context, verify func(context.Context, Binding) error, readOnly bool) (func(), error) {
 	if g == nil || verify == nil || ctx.Err() != nil {
 		return nil, ErrUnavailable
 	}
@@ -33,6 +45,13 @@ func (g *ExposureGate) AcquireScopedWebExposure(ctx context.Context, verify func
 	g.mu.Unlock()
 	var once sync.Once
 	release := func() { once.Do(func() { g.mu.Lock(); g.readers--; g.mu.Unlock() }) }
+	if readOnly && g.checkExposure != nil {
+		var reason error
+		if err := deliveryCall(func() error { reason = g.checkExposure(ctx); return reason }); err != nil || ctx.Err() != nil {
+			release()
+			return nil, scopedExposureProbeFailure(reason)
+		}
+	}
 	if deliveryCall(func() error { return verify(ctx, binding) }) != nil || ctx.Err() != nil {
 		release()
 		return nil, ErrDeliveryProtected
@@ -42,13 +61,31 @@ func (g *ExposureGate) AcquireScopedWebExposure(ctx context.Context, verify func
 	if source != nil {
 		stable = stable && source.binding == binding && source.retired == retired && source.inFlight == 0
 	}
-	if stable && g.checkExposure != nil {
-		stable = deliveryCall(func() error { return g.checkExposure(ctx) }) == nil && ctx.Err() == nil
+	var probeError, probeReason error
+	if stable && !readOnly && g.checkExposure != nil {
+		probeError = deliveryCall(func() error { probeReason = g.checkExposure(ctx); return probeReason })
+		stable = probeError == nil && ctx.Err() == nil
 	}
 	g.mu.Unlock()
+	if probeError != nil {
+		release()
+		return nil, scopedExposureProbeFailure(probeReason)
+	}
 	if !stable {
 		release()
 		return nil, ErrDeliveryProtected
 	}
 	return release, nil
+}
+
+// A failed observation is not proof that a private entry or delivery exists.
+// Keep actual protection sentinels; never expose provider details.
+func scopedExposureProbeFailure(err error) error {
+	if errors.Is(err, ErrEntryProtected) {
+		return ErrEntryProtected
+	}
+	if errors.Is(err, ErrDeliveryProtected) {
+		return ErrDeliveryProtected
+	}
+	return ErrUnavailable
 }

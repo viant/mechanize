@@ -43,7 +43,7 @@ func (h *Host) authorizeCredentialPublicRead(ctx context.Context, p auth.Princip
 	}
 	var release func()
 	if h.vaultExposure != nil {
-		release, err = h.vaultExposure.AcquireScopedWebExposure(lease.Context, verify)
+		release, err = h.vaultExposure.AcquireScopedWebReadExposure(lease.Context, verify)
 	} else {
 		err = verify(lease.Context, vault.Binding{})
 	}
