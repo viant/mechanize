@@ -80,6 +80,21 @@ Local guides join the bundled catalog as immutable snapshots for that user's
 MCP connection; reconnect after editing a guide. Skill resources expose guidance
 only, never Vault records or arbitrary filesystem paths.
 
+## Browser execution and recovery
+
+Saved access policy is independent of temporary executor cleanup. Mechanize
+retains an uncertain action's original receipt and retries only its cleanup;
+it does not replay input or ask for renewed permission to recover that state.
+Execution holds follow the affected browser tab and frame, so other identified
+tabs can continue. A successor document in the same tab remains covered until
+the earlier input is retired. Connection loss and input without a trustworthy
+target still require broader recovery.
+
+The local Playwright process is reused across calls, with fresh target and
+action authorization for each invocation. Cancellation or a broken transport
+discards that process without retrying the action. Browser and native tools
+report delivery separately from verification of the requested outcome.
+
 ## Typed DSL
 
 The parser accepts a closed typed grammar. For example:
