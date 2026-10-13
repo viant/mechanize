@@ -12,9 +12,11 @@ import (
 	"image/jpeg"
 	"image/png"
 	"math/rand"
+	"strings"
 	"testing"
 
 	"github.com/viant/mcp-protocol/schema"
+	"github.com/viant/mechanize/artifact"
 	"github.com/viant/mechanize/auth"
 	native "github.com/viant/mechanize/backend/darwin"
 	"github.com/viant/mechanize/data"
@@ -24,7 +26,7 @@ import (
 )
 
 func TestMCPCaptureImageAndBoundedPublication(t *testing.T) {
-	for _, mode := range []string{"image", "large", "wrong-scope", "unknown-cleanup", "unknown-publication"} {
+	for _, mode := range []string{"image", "large", "wrong-scope", "unknown-cleanup", "unknown-publication", "typed-publication", "source-bind", "publication-ref-mismatch", "publication-authority", "publication-verification", "publication-cancelled", "publication-invalid-enum", "publication-birth-mismatch", "publication-hash-mismatch", "publication-invalid-phase"} {
 		t.Run(mode, func(t *testing.T) {
 			p, _ := auth.NewPrincipal("fixture", "", "alice", []string{"desktop:observe"})
 			ctx := auth.WithPrincipal(context.Background(), p)
@@ -69,6 +71,31 @@ func TestMCPCaptureImageAndBoundedPublication(t *testing.T) {
 				if mode == "wrong-scope" {
 					result.Metadata.BundleID = "other.app"
 				}
+				if mode == "typed-publication" || mode == "source-bind" || strings.HasPrefix(mode, "publication-") {
+					failedRef, phase, cause := ref, "read", "metadataUnavailable"
+					underlying := errors.New("private lost commit acknowledgement")
+					switch mode {
+					case "source-bind":
+						phase, cause = "bind", "metadataSourceUnavailable"
+					case "publication-ref-mismatch":
+						failedRef.ContentHash = "different"
+					case "publication-authority":
+						cause, underlying = "authorizationDenied", auth.ErrUnauthorized
+					case "publication-verification":
+						phase, cause, underlying = "verify", "verificationUnavailable", artifact.ErrCorrupt
+					case "publication-cancelled":
+						cause, underlying = "requestCancelled", context.Canceled
+					case "publication-invalid-enum":
+						cause = "private diagnostic value"
+					case "publication-invalid-phase":
+						phase = "private diagnostic value"
+					case "publication-birth-mismatch":
+						result.Metadata.ProcessStartToken = "2:2"
+					case "publication-hash-mismatch":
+						result.PNG = []byte("different pixels")
+					}
+					return ref, result, &fixtureCapturePublication{ref: failedRef, phase: phase, cause: cause, err: underlying}
+				}
 				return ref, result, nil
 			}})
 			if err != nil {
@@ -79,6 +106,11 @@ func TestMCPCaptureImageAndBoundedPublication(t *testing.T) {
 				t.Fatal(err)
 			}
 			args := map[string]any{"sessionId": "session", "purpose": "Inspect fixture", "surface": map[string]any{"kind": "native", "bundleId": "fixture.app"}, "pid": 123, "windowId": 42}
+			if mode == "publication-birth-mismatch" {
+				surface := args["surface"].(map[string]any)
+				surface["processStartToken"] = "1:1"
+				surface["processId"] = 123
+			}
 			denied, err := client.CallTool(ctx, &schema.CallToolRequestParams{Name: "mechanize_capture", Arguments: args})
 			if err != nil || denied.IsError == nil || !*denied.IsError || calls != 1 {
 				t.Fatal("capture without matching permanent approval was not denied by authorizer")
@@ -118,6 +150,17 @@ func TestMCPCaptureImageAndBoundedPublication(t *testing.T) {
 				}
 			}
 			switch mode {
+			case "typed-publication", "source-bind":
+				if wire.IsError || images != 1 || wire.Structured["imageReturned"] != true || wire.Structured["publicationConfirmed"] != false || wire.Structured["publicationState"] != "unknown" {
+					t.Fatal("metadata failure invalidated independently verified image")
+				}
+				expectedPhase, expectedCause := "read", "metadataUnavailable"
+				if mode == "source-bind" {
+					expectedPhase, expectedCause = "bind", "metadataSourceUnavailable"
+				}
+				if wire.Structured["publicationPhase"] != expectedPhase || wire.Structured["publicationCause"] != expectedCause {
+					t.Fatal("closed publication diagnostic lost")
+				}
 			case "image":
 				if wire.IsError || images != 1 || wire.Structured["imageReturned"] != true {
 					t.Fatalf("missing inline evidence: %s", raw)
@@ -143,7 +186,7 @@ func TestMCPCaptureImageAndBoundedPublication(t *testing.T) {
 					t.Fatal("foreign capture exposed")
 				}
 			}
-			if bytes.Contains(raw, []byte("private helper failure")) || bytes.Contains(raw, []byte("private lost commit")) {
+			if bytes.Contains(raw, []byte("private helper failure")) || bytes.Contains(raw, []byte("private lost commit")) || bytes.Contains(raw, []byte("private diagnostic value")) {
 				t.Fatal("internal failure details exposed")
 			}
 		})
@@ -181,4 +224,18 @@ func TestCaptureGeometryFailureIsActionableWithoutPrivateCause(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Mimics only the trusted host's typed post-Put failure contract.
+type fixtureCapturePublication struct {
+	ref          data.ArtifactReference
+	phase, cause string
+	err          error
+}
+
+func (e *fixtureCapturePublication) Error() string                                     { return "private publication failure" }
+func (e *fixtureCapturePublication) Unwrap() error                                     { return e.err }
+func (e *fixtureCapturePublication) RetainedArtifactReference() data.ArtifactReference { return e.ref }
+func (e *fixtureCapturePublication) ArtifactPublicationDiagnostic() (string, string) {
+	return e.phase, e.cause
 }

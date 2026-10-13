@@ -70,6 +70,26 @@ func (e *ArtifactPublicationError) Error() string {
 }
 func (e *ArtifactPublicationError) Unwrap() error { return e.Cause }
 
+func (e *ArtifactPublicationError) RetainedArtifactReference() data.ArtifactReference {
+	return e.Reference
+}
+func (e *ArtifactPublicationError) ArtifactPublicationDiagnostic() (string, string) {
+	var diagnostic interface{ ArtifactPublicationDiagnostic() (string, string) }
+	if errors.As(e.Cause, &diagnostic) {
+		return diagnostic.ArtifactPublicationDiagnostic()
+	}
+	switch {
+	case errors.Is(e.Cause, auth.ErrUnauthorized):
+		return "unknown", "authorizationDenied"
+	case errors.Is(e.Cause, context.Canceled):
+		return "unknown", "requestCancelled"
+	case errors.Is(e.Cause, context.DeadlineExceeded):
+		return "unknown", "requestDeadline"
+	default:
+		return "unknown", "metadataUnavailable"
+	}
+}
+
 // Publish persists bounded host-provided evidence under exact-surface consent.
 // It performs no platform dispatch, so its lease cleanup is known after this
 // synchronous storage/publication call returns. A capture caller must separately

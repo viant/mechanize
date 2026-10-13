@@ -11,6 +11,7 @@ import (
 	"github.com/viant/jsonrpc"
 	"github.com/viant/mcp-protocol/schema"
 	protocol "github.com/viant/mcp-protocol/server"
+	"github.com/viant/mechanize/artifact"
 	"github.com/viant/mechanize/auth"
 	native "github.com/viant/mechanize/backend/darwin"
 	"github.com/viant/mechanize/data"
@@ -35,13 +36,47 @@ type CaptureWindowInput struct {
 	WindowID  uint32        `json:"windowId"`
 }
 type CaptureResult struct {
-	Artifact        data.ArtifactReference `json:"artifact"`
-	Metadata        native.CaptureMetadata `json:"metadata"`
-	ImageReturned   bool                   `json:"imageReturned"`
-	ImageIsPreview  bool                   `json:"imageIsPreview"`
-	Preview         *CapturePreview        `json:"preview,omitempty"`
-	InlineByteLimit int                    `json:"inlineByteLimit"`
-	Reason          string                 `json:"reason,omitempty"`
+	Artifact             data.ArtifactReference `json:"artifact"`
+	Metadata             native.CaptureMetadata `json:"metadata"`
+	ImageReturned        bool                   `json:"imageReturned"`
+	ImageIsPreview       bool                   `json:"imageIsPreview"`
+	Preview              *CapturePreview        `json:"preview,omitempty"`
+	InlineByteLimit      int                    `json:"inlineByteLimit"`
+	Reason               string                 `json:"reason,omitempty"`
+	PublicationState     string                 `json:"publicationState"`
+	PublicationConfirmed bool                   `json:"publicationConfirmed"`
+	PublicationPhase     string                 `json:"publicationPhase,omitempty"`
+	PublicationCause     string                 `json:"publicationCause,omitempty"`
+}
+
+// Only the trusted host's post-Put failure supplies a retained reference.
+// This interface carries no owner authority and never resolves an artifact.
+type retainedCapturePublication interface {
+	error
+	RetainedArtifactReference() data.ArtifactReference
+	ArtifactPublicationDiagnostic() (string, string)
+}
+
+func capturePublicationDiagnostic(err error, ref data.ArtifactReference) (bool, string, string) {
+	var retained retainedCapturePublication
+	if !errors.As(err, &retained) || retained.RetainedArtifactReference() != ref {
+		return false, "unknown", "metadataUnavailable"
+	}
+	phase, cause := retained.ArtifactPublicationDiagnostic()
+	switch phase {
+	case "bind", "verify", "read", "writeAck", "readback", "unknown":
+	default:
+		return false, "unknown", "metadataUnavailable"
+	}
+	switch cause {
+	case "metadataUnavailable", "metadataSourceUnavailable", "metadataConflict", "authorizationDenied", "verificationUnavailable", "requestCancelled", "requestDeadline":
+	default:
+		return false, phase, "metadataUnavailable"
+	}
+	var nativeFailure *native.CaptureError
+	allowed := phase != "verify" && (cause == "metadataUnavailable" || cause == "metadataSourceUnavailable" || cause == "metadataConflict")
+	allowed = allowed && !errors.As(err, &nativeFailure) && !errors.Is(err, auth.ErrUnauthorized) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, artifact.ErrCorrupt) && !errors.Is(err, artifact.ErrKeyUnavailable)
+	return allowed, phase, cause
 }
 
 func captureContext(ctx context.Context, session, grant, purpose string) (context.Context, auth.Principal, error) {
@@ -86,7 +121,8 @@ func captureFailure(err error, ref data.ArtifactReference) (*schema.CallToolResu
 		return encoded, rpcErr
 	}
 	if ref.ID != "" {
-		r, rpcErr := result(map[string]any{"code": "artifactPublicationUnconfirmed", "message": "Encrypted capture bytes retained; metadata publication requires reconciliation", "artifact": ref, "publicationState": "unknown", "dispatchState": "dispatched", "imageReturned": false})
+		_, phase, cause := capturePublicationDiagnostic(err, ref)
+		r, rpcErr := result(map[string]any{"code": "artifactPublicationUnconfirmed", "message": "Encrypted capture bytes retained; metadata publication requires reconciliation", "artifact": ref, "publicationState": "unknown", "publicationConfirmed": false, "publicationPhase": phase, "publicationCause": cause, "dispatchState": "dispatched", "imageReturned": false})
 		bad := true
 		r.IsError = &bad
 		return r, rpcErr
@@ -132,15 +168,26 @@ func registerCapture(base *protocol.DefaultHandler, d Dependencies) error {
 			return failure(err)
 		}
 		ref, image, err := d.CaptureWindow(bound, p, in.Surface, in.PID, in.WindowID)
+		publicationConfirmed, publicationPhase, publicationCause := err == nil, "", ""
 		if err != nil {
-			return captureFailure(err, ref)
+			var observationAvailable bool
+			observationAvailable, publicationPhase, publicationCause = capturePublicationDiagnostic(err, ref)
+			if !observationAvailable {
+				return captureFailure(err, ref)
+			}
+		}
+		if bound.Err() != nil {
+			return captureFailure(bound.Err(), ref)
 		}
 		hash := sha256.Sum256(image.PNG)
 		m := image.Metadata
-		if ref.ID == "" || ref.MediaType != "image/png" || ref.SizeBytes != len(image.PNG) || ref.ContentHash != hex.EncodeToString(hash[:]) || len(image.PNG) == 0 || len(image.PNG) > native.MaximumCaptureBytes || m.BundleID != in.Surface.BundleID || m.PID != in.PID || m.WindowID != in.WindowID || m.Bytes != len(image.PNG) || m.Identity != fmt.Sprintf("window:%d", in.WindowID) {
+		if ref.ID == "" || ref.MediaType != "image/png" || ref.SizeBytes != len(image.PNG) || ref.ContentHash != hex.EncodeToString(hash[:]) || len(image.PNG) == 0 || len(image.PNG) > native.MaximumCaptureBytes || m.BundleID != in.Surface.BundleID || m.PID != in.PID || m.WindowID != in.WindowID || m.Bytes != len(image.PNG) || m.Identity != fmt.Sprintf("window:%d", in.WindowID) || in.Surface.ProcessStartToken != "" && m.ProcessStartToken != in.Surface.ProcessStartToken {
 			return failure(&model.MechanizeError{Code: "captureEvidenceMismatch", Message: "Capture publication did not match the exact requested window and bytes", Stage: "capture", DispatchState: "unknown"})
 		}
-		out := CaptureResult{Artifact: ref, Metadata: m, ImageReturned: len(image.PNG) <= MaximumInlineCaptureBytes, InlineByteLimit: MaximumInlineCaptureBytes}
+		out := CaptureResult{Artifact: ref, Metadata: m, ImageReturned: len(image.PNG) <= MaximumInlineCaptureBytes, InlineByteLimit: MaximumInlineCaptureBytes, PublicationState: "published", PublicationConfirmed: publicationConfirmed, PublicationPhase: publicationPhase, PublicationCause: publicationCause}
+		if !publicationConfirmed {
+			out.PublicationState = "unknown"
+		}
 		inline, mime := image.PNG, "image/png"
 		if !out.ImageReturned {
 			preview, previewErr := BuildCapturePreview(ctx, image.PNG, m, MaximumInlineCaptureBytes)
@@ -155,6 +202,12 @@ func registerCapture(base *protocol.DefaultHandler, d Dependencies) error {
 					out.Reason = preview.Reason
 				}
 			}
+		}
+		if !publicationConfirmed {
+			if !out.ImageReturned {
+				return captureFailure(err, ref)
+			}
+			out.Reason += " Capture image is available; encrypted bytes are retained, but metadata publication is unconfirmed."
 		}
 		r, rpcErr := result(out)
 		if rpcErr == nil && out.ImageReturned {
