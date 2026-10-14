@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/backend/chrome"
+	automation "github.com/viant/mechanize/integration/endly"
 	"github.com/viant/mechanize/model"
 	"github.com/viant/mechanize/vault"
 )
@@ -84,4 +85,23 @@ func webPreparationCause(err error) string {
 		}
 	}
 	return "unavailable"
+}
+
+func webPreparationDetails(err error) automation.PreparationDiagnostic {
+	var failure *webPreparationCleanupFailure
+	if errors.As(err, &failure) && failure != nil {
+		details := webPreparationDetails(failure.primary)
+		details.CleanupPhase, details.CleanupReason = chrome.ControlFailureDiagnostic(failure.cleanup)
+		if details.CleanupPhase == "" {
+			switch {
+			case errors.Is(failure.cleanup, context.DeadlineExceeded):
+				details.CleanupPhase, details.CleanupReason = "retireWait", "deadline"
+			case errors.Is(failure.cleanup, context.Canceled):
+				details.CleanupPhase, details.CleanupReason = "retireWait", "cancelled"
+			}
+		}
+		return details
+	}
+	phase, reason := chrome.ControlFailureDiagnostic(err)
+	return automation.PreparationDiagnostic{Phase: phase, Reason: reason}
 }

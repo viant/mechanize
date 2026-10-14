@@ -164,17 +164,23 @@ func (b *Broker) acceptCredentialPrivacyLocked(c *channel, raw []byte) bool {
 	}
 	return true
 }
-func privacyActor(ctx context.Context, p auth.Principal, s *credentialPrivacyState, mutation bool) bool {
+func privacyActorError(ctx context.Context, p auth.Principal, s *credentialPrivacyState, mutation bool) error {
 	if s == nil || s.admit == nil || authorize(ctx, p, mutation) != nil || ctx.Err() != nil {
-		return false
+		return errCredentialPrivacy
 	}
 	actual, e := auth.FromContext(ctx)
 	binding, ok := auth.ConsentBindingFromContext(ctx)
-	return e == nil && ok && actual.Namespace == s.source.Owner && actual.ClientID == s.source.ClientID && p.Namespace == s.source.Owner && p.ClientID == s.source.ClientID && binding == s.binding && s.admit(ctx) == nil
+	if e != nil || !ok || actual.Namespace != s.source.Owner || actual.ClientID != s.source.ClientID || p.Namespace != s.source.Owner || p.ClientID != s.source.ClientID || binding != s.binding {
+		return errCredentialPrivacy
+	}
+	return s.admit(ctx)
+}
+func privacyActor(ctx context.Context, p auth.Principal, s *credentialPrivacyState, mutation bool) bool {
+	return privacyActorError(ctx, p, s, mutation) == nil
 }
 func (g *Gateway) privacyChannel(ctx context.Context, p auth.Principal, s *credentialPrivacyState) error {
-	if !privacyActor(ctx, p, s, false) {
-		return credentialPrivacyFailure("admission")
+	if err := privacyActorError(ctx, p, s, false); err != nil {
+		return errors.Join(credentialPrivacyFailure("admission"), err)
 	}
 	if g.broker.verifyChannelProcess(ctx, s.channel) != nil {
 		return credentialPrivacyFailure("fence")

@@ -1,6 +1,7 @@
 package endly
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -86,5 +87,35 @@ func TestPreparationSubstageIsClosedAndPreservesOriginalError(t *testing.T) {
 	}
 	if CaptureStepPreparationFailure(NewStepPreparationFailureDetail("qualify", "unavailable", "unconfirmed", "PRIVATE_CANARY", original)) != nil {
 		t.Fatal("unbounded provider details accepted")
+	}
+}
+
+func TestPreparationControlDetailIsFiniteAndDoesNotClaimInput(t *testing.T) {
+	original := errors.New("PRIVATE_CANARY")
+	detail := PreparationDiagnostic{Phase: "acquireAck", Reason: "deadline", CleanupPhase: "retireVerify", CleanupReason: "privateDOMUnavailable"}
+	err := NewStepPreparationFailureDetail("qualify", "unavailable", "unconfirmed", "admission", original, detail)
+	failure := CaptureStepPreparationFailure(err)
+	if failure == nil || failure.DispatchState != "notDispatched" || failure.Preparation.Phase != "acquireAck" || failure.Preparation.Reason != "deadline" || failure.Preparation.CleanupReason != "privateDOMUnavailable" || !errors.Is(err, original) {
+		t.Fatal("closed detail lost primary or dispatch semantics")
+	}
+	raw, _ := json.Marshal(failure)
+	if strings.Contains(string(raw), "PRIVATE_CANARY") {
+		t.Fatal("raw private error projected")
+	}
+	for _, field := range []string{"phase", "reason", "cleanupPhase", "cleanupReason"} {
+		bad := detail
+		switch field {
+		case "phase":
+			bad.Phase = "PRIVATE_CANARY"
+		case "reason":
+			bad.Reason = "PRIVATE_CANARY"
+		case "cleanupPhase":
+			bad.CleanupPhase = "PRIVATE_CANARY"
+		case "cleanupReason":
+			bad.CleanupReason = "PRIVATE_CANARY"
+		}
+		if CaptureStepPreparationFailure(NewStepPreparationFailureDetail("qualify", "unavailable", "unconfirmed", "admission", original, bad)) != nil {
+			t.Fatal("unbounded metadata projected", field)
+		}
 	}
 }

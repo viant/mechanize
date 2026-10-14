@@ -253,7 +253,26 @@ func (b *Broker) callBound(ctx context.Context, c *channel, command Command, p a
 		return commit(ctx, p, descriptor)
 	}, beforeSend...)
 }
-func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, mutation bool, seal func(Command) (BindingCommit, error), beforeSend ...func() error) (Reply, error) {
+func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, mutation bool, seal func(Command) (BindingCommit, error), beforeSend ...func() error) (returned Reply, returnErr error) {
+	metadataPhase := "PreWrite"
+	defer func() {
+		if returnErr != nil && !mutation && (command.Action == "executor.acquire" || command.Action == "executor.retire") {
+			prefix := "acquire"
+			if command.Action == "executor.retire" {
+				prefix = "retire"
+			}
+			if metadataPhase == "Ack" && returned.Error != nil {
+				metadataPhase = "Reply"
+			}
+			var callback interface{ CredentialAdmissionReason() string }
+			if ctx.Err() != nil && !errors.As(returnErr, &callback) {
+				returnErr = controlFailureAt(prefix+metadataPhase, returnErr, controlFailureReason(ctx.Err()))
+			} else {
+				returnErr = controlFailureAt(prefix+metadataPhase, returnErr)
+			}
+		}
+	}()
+
 	if c == nil {
 		return Reply{}, browserError("channelUnqualified", "Exact enrolled channel required", "notDispatched")
 	}
@@ -284,7 +303,7 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 		}
 	}
 	if err := b.guardPrivacyCommand(ctx, c, command, mutation); err != nil {
-		return Reply{}, browserError("privateDOMUnavailable", "Private document qualification rejected the command before transport write", "notDispatched")
+		return Reply{}, errors.Join(browserError("privateDOMUnavailable", "Private document qualification rejected the command before transport write", "notDispatched"), err)
 	}
 	if err := b.verifyChannelProcess(ctx, c); err != nil {
 		return Reply{}, browserError("channelUnqualified", "Signed native-host/Chrome channel proof unavailable", "notDispatched")
@@ -433,6 +452,7 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 		attempted bool
 	}
 	written := make(chan writeResult, 1)
+	metadataPhase = "Write"
 	go func() {
 		c.writeMu.Lock()
 		defer c.writeMu.Unlock()
@@ -469,6 +489,9 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 	var err error
 	select {
 	case outcome := <-written:
+		if !outcome.attempted {
+			metadataPhase = "PreWrite"
+		}
 		err = outcome.err
 		if err != nil && !outcome.attempted {
 			b.mu.Lock()
@@ -488,6 +511,7 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 		conn.Close()
 		return Reply{}, browserError("hostLost", "Dispatch transport failed; reconcile original attempt", uncertain(mutation))
 	}
+	metadataPhase = "Ack"
 	timer := time.NewTimer(time.Until(deadline))
 	defer timer.Stop()
 	select {

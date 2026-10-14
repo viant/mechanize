@@ -239,12 +239,27 @@ func (g *Gateway) admitControlOnce(ctx context.Context, p auth.Principal, surfac
 		if created && g.releaseRejectedAcquisition(ctx, p, a, c, originalConn, reply) {
 			admission.Created = false
 			admission.acquireNotInstalled = true
-			return admission, reply.Error
+			return admission, controlFailureAt("acquireReply", reply.Error)
 		}
-		return admission, errors.Join(err, browserError("authorityUnconfirmed", "Renderer lease admission is unconfirmed", "notDispatched"))
+		failure := browserError("authorityUnconfirmed", "Renderer lease admission is unconfirmed", "notDispatched")
+		if err != nil {
+			return admission, errors.Join(err, failure)
+		}
+		reason := "notValidated"
+		if reply.Validated {
+			switch {
+			case reply.ControlLease == nil:
+				reason = "leaseMissing"
+			case *reply.ControlLease != a.Lease:
+				reason = "leaseMismatch"
+			case reply.Identity != a.Document.Identity:
+				reason = "identityMismatch"
+			}
+		}
+		return admission, controlFailureAt("acquireReply", failure, reason)
 	}
 	if err = g.VerifyControl(ctx, p, a); err != nil {
-		return admission, err
+		return admission, controlFailureAt("postAckVerify", err)
 	}
 	admission.Confirmed = true
 	return admission, nil
@@ -381,7 +396,15 @@ func (g *Gateway) executeControl(ctx context.Context, p auth.Principal, step mod
 
 // RetireControl revokes dispatch at the broker before asking the exact endpoint
 // to revoke that lease. This is not executor.quiesce (whole-document shutdown).
-func (g *Gateway) RetireControl(ctx context.Context, p auth.Principal, a ControlAuthority) (bool, error) {
+func (g *Gateway) RetireControl(ctx context.Context, p auth.Principal, a ControlAuthority) (retired bool, returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			if phase, _ := ControlFailureDiagnostic(returnErr); phase == "" {
+				returnErr = controlFailureAt("retireVerify", returnErr)
+			}
+		}
+	}()
+
 	if err := authorize(ctx, p, true); err != nil {
 		return false, err
 	}
@@ -446,7 +469,20 @@ func (g *Gateway) RetireControl(ctx context.Context, p auth.Principal, a Control
 		// The broker already validates exact source identity with a monotonic
 		// generation. Source-absence proof instead ACKs the original identity.
 		if err != nil || !reply.RetiredAuthorityQuiesced || knownSourceRetirement && reply.Identity != a.Document.Identity || reply.ControlLease == nil || *reply.ControlLease != a.Lease {
-			return false, errors.Join(err, browserError("retirementUnknown", "Exact renderer lease retirement unconfirmed", "unknown"))
+			failure := browserError("retirementUnknown", "Exact renderer lease retirement unconfirmed", "unknown")
+			if err != nil {
+				return false, errors.Join(err, failure)
+			}
+			reason := "notQuiesced"
+			switch {
+			case reply.ControlLease == nil:
+				reason = "leaseMissing"
+			case *reply.ControlLease != a.Lease:
+				reason = "leaseMismatch"
+			case knownSourceRetirement && reply.Identity != a.Document.Identity:
+				reason = "identityMismatch"
+			}
+			return false, controlFailureAt("retireReply", failure, reason)
 		}
 	}
 	g.broker.mu.Lock()

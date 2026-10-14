@@ -128,8 +128,8 @@ func TestWebPreparationFailureReachesOwnedControllerBeforeAnyIntent(t *testing.T
 			detail := failure["preparation"].(map[string]any)
 			expectedFields := 2
 			if kind == "changedCleanup" || kind == "admission" || kind == "readPin" {
-				expectedFields = 3
-				if detail["cleanup"] != "unconfirmed" {
+				expectedFields = 5
+				if detail["cleanup"] != "unconfirmed" || detail["cleanupPhase"] != "retireWait" || detail["cleanupReason"] != "deadline" {
 					t.Fatal("cleanup outcome not preserved", detail)
 				}
 			}
@@ -181,5 +181,23 @@ func TestWebPreparationFailureReachesOwnedControllerBeforeAnyIntent(t *testing.T
 				t.Fatal("foreign client obtained diagnostic")
 			}
 		})
+	}
+}
+
+func TestPreparationDiagnosticKeepsPrimaryAndCleanupPrivateTextSeparate(t *testing.T) {
+	primary := errors.New("PRIVATE_CANARY-primary")
+	cleanup := errors.Join(context.DeadlineExceeded, errors.New("PRIVATE_CANARY-cleanup"))
+	err := newWebPreparationCleanupFailure(webPreparationAt("admission", errors.Join(primary, ErrWebControlUnqualified)), cleanup)
+	details := webPreparationDetails(err)
+	captured := integration.CaptureStepPreparationFailure(integration.NewStepPreparationFailureDetail("qualify", webPreparationCause(err), webPreparationCleanupStatus(err), webPreparationSubstage(err), err, details))
+	if captured == nil || captured.DispatchState != "notDispatched" || captured.Preparation.Cause != "unavailable" || captured.Preparation.Substage != "admission" || captured.Preparation.Cleanup != "unconfirmed" || captured.Preparation.CleanupPhase != "retireWait" || captured.Preparation.CleanupReason != "deadline" {
+		t.Fatal("primary and cleanup diagnostics conflated")
+	}
+	raw, e := json.Marshal(captured)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if strings.Contains(string(raw), "PRIVATE_CANARY") || !errors.Is(err, primary) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("private error leaked or original cause lost")
 	}
 }
