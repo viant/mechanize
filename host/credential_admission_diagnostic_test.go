@@ -14,7 +14,7 @@ import (
 )
 
 func TestCredentialAdmissionDiagnosticsNameExistingRejectingBranch(t *testing.T) {
-	for _, mode := range []string{"lifetime", "actor", "binding", "session", "exposure", "lease", "consent", "exposureChanged"} {
+	for _, mode := range []string{"lifetime", "actor", "binding", "session", "exposure", "lease", "consent", "consentDeadline", "exposureChanged"} {
 		t.Run(mode, func(t *testing.T) {
 			credentialHostFixtureFlow(t, "known", credentialHostFixtureHooks{clientID: "controller:" + strings.Repeat("a", 64), exercise: func(t *testing.T, h *Host, ctx context.Context, p auth.Principal, ref gateway.CredentialRefInput, input gateway.CredentialPrepareInput, f *credentialBrowserFixture, reads *atomic.Int64) {
 				item := f.session
@@ -55,8 +55,11 @@ func TestCredentialAdmissionDiagnosticsNameExistingRejectingBranch(t *testing.T)
 				case "lease":
 					item.protected.Retire()
 					expected = "credentialLease"
-				case "consent":
+				case "consent", "consentDeadline":
 					h.consent.options.ControllerPolicy = func(context.Context, auth.Principal) (context.Context, time.Time, func(), error) {
+						if mode == "consentDeadline" {
+							return nil, time.Time{}, nil, context.DeadlineExceeded
+						}
 						return nil, time.Time{}, nil, errors.New("PRIVATE_CANARY")
 					}
 					expected = "credentialConsent"
@@ -74,6 +77,11 @@ func TestCredentialAdmissionDiagnosticsNameExistingRejectingBranch(t *testing.T)
 				var detail *credentialAdmissionFailure
 				if !errors.As(err, &detail) || detail.CredentialAdmissionReason() != expected || !errors.Is(err, errPrivateCredential) || strings.Contains(err.Error(), "PRIVATE_CANARY") {
 					t.Fatal("existing callback branch lost or leaked", mode, err)
+				}
+				if mode == "consentDeadline" {
+					if !errors.Is(err, context.DeadlineExceeded) || webPreparationCause(err) != "deadline" {
+						t.Fatal("real consent timeout lost primary deadline")
+					}
 				}
 				if f.fills != 0 || f.submits != 0 {
 					t.Fatal("diagnostic caused input")

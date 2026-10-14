@@ -150,3 +150,39 @@ func TestPublishedPrivacyCallbackFailureSurvivesAcquireAndRetirement(t *testing.
 		t.Fatal("open callback metadata projected")
 	}
 }
+
+func TestCallbackDeadlineKeepsConsentReasonAtAcquirePreWrite(t *testing.T) {
+	g, p, ctx, source, submit := privacyFixture(t)
+	defer g.Close()
+	armed := false
+	callback := func(c context.Context) error {
+		if !armed {
+			return nil
+		}
+		g.controlMu.Lock()
+		current := testFirstControl(g)
+		created := current != nil && current.Lease.ID != source.Lease.ID
+		g.controlMu.Unlock()
+		if !created {
+			return nil
+		}
+		<-c.Done()
+		return &admissionDiagnosticFixture{cause: c.Err(), reason: "credentialConsent"}
+	}
+	proof, err := g.QualifyCredentialPrivacy(ctx, p, source, submit, callback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, ok := proof.Authority()
+	if !ok {
+		t.Fatal("published proof missing")
+	}
+	armed = true
+	bounded, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	admission, err := g.AdmitControlWithStatus(bounded, p, model.Surface{Kind: "web", Origin: a.Document.Origin, TabID: a.Document.QualifiedTabID()})
+	phase, reason := ControlFailureDiagnostic(err)
+	if !admission.Created || admission.Confirmed || bounded.Err() != context.DeadlineExceeded || !errors.Is(err, context.DeadlineExceeded) || phase != "acquirePreWrite" || reason != "credentialConsent" {
+		t.Fatal("deadline replaced the deep callback reason", phase, reason, err)
+	}
+}
