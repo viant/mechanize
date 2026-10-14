@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	gateway "github.com/viant/mechanize/mcp"
 	"github.com/viant/mechanize/model"
 	"github.com/viant/mechanize/script"
+	"github.com/viant/mechanize/vault"
 	"github.com/viant/scy"
 )
 
@@ -69,7 +71,7 @@ func (f *windowFrameHostHelper) Call(ctx context.Context, r native.Request) (nat
 		png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 16, 12)))
 		sum := sha256.Sum256(buf.Bytes())
 		now := time.Now()
-		f.permit = native.WindowFramePermit{ID: "host-frame-permit", Owner: params.Owner, HelperEpoch: "fixture", FenceGeneration: r.Lease.Generation, BundleID: params.Bundle, PID: params.PID, ProcessStartToken: params.Birth, WindowID: params.Window, DisplayID: 1, Width: 16, Height: 12, Bounds: native.CaptureBounds{X: 10, Y: 20, Width: 16, Height: 12}, Scale: 1, ContentHash: hex.EncodeToString(sum[:]), CapturedAt: now, ExpiresAt: now.Add(native.WindowFramePermitLifetime)}
+		f.permit = native.WindowFramePermit{ID: fmt.Sprintf("host-frame-permit-%d", r.Lease.Generation), Owner: params.Owner, HelperEpoch: "fixture", FenceGeneration: r.Lease.Generation, BundleID: params.Bundle, PID: params.PID, ProcessStartToken: params.Birth, WindowID: params.Window, DisplayID: 1, Width: 16, Height: 12, Bounds: native.CaptureBounds{X: 10, Y: 20, Width: 16, Height: 12}, Scale: 1, ContentHash: hex.EncodeToString(sum[:]), CapturedAt: now, ExpiresAt: now.Add(native.WindowFramePermitLifetime)}
 		reply.Result, _ = json.Marshal(map[string]any{"permit": f.permit, "pngBase64": base64.StdEncoding.EncodeToString(buf.Bytes())})
 	case "windows.clickFrame":
 		if f.beforeClick != nil {
@@ -622,4 +624,134 @@ func TestWindowFrameFailurePreservesClosedPhaseAndConfirmedCleanup(t *testing.T)
 			}
 		})
 	}
+}
+
+func TestWindowFrameFreshCaptureSupersedesOnlySameOwnerUnusedPermit(t *testing.T) {
+	for _, mode := range []string{"unused", "used", "foreignClient", "foreignSession", "cleanupUnknown"} {
+		t.Run(mode, func(t *testing.T) {
+			h, f, _, ctx, surface := newWindowFrameHostFixture(t)
+			_, _, original, err := h.CaptureWindowFrame(ctx, f.principal, surface, 42, 17)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.frameMu.Lock()
+			old := h.framePermits[f.principal.Namespace]
+			if mode == "used" {
+				old.used = true
+			}
+			if mode == "foreignClient" {
+				old.principal.ClientID = "another-client"
+			}
+			if mode == "foreignSession" {
+				old.binding.SessionID = "another-session"
+			}
+			h.frameMu.Unlock()
+			if mode == "cleanupUnknown" {
+				f.unknown = true
+			}
+			_, _, fresh, err := h.CaptureWindowFrame(ctx, f.principal, surface, 42, 17)
+			if mode == "unused" {
+				if err != nil || fresh.Permit.ID == original.Permit.ID || fresh.Permit.FenceGeneration <= original.Permit.FenceGeneration {
+					t.Fatal("fresh feedback capture did not replace proof", err)
+				}
+				select {
+				case <-old.done:
+				default:
+					t.Fatal("original retirement not confirmed")
+				}
+				if old.lease.Context.Err() == nil || !old.retiring {
+					t.Fatal("old input authority retained")
+				}
+			} else {
+				if err == nil {
+					t.Fatal("unsafe interval superseded")
+				}
+				if mode == "cleanupUnknown" {
+					var failure *native.CaptureError
+					if !errors.As(err, &failure) || failure.CleanupConfirmed || !errors.Is(err, ErrNativeControlCleanupUnknown) {
+						t.Fatal("cleanup uncertainty lost", err)
+					}
+				} else if old.retiring {
+					t.Fatal("foreign/used interval retired")
+				}
+			}
+			h.frameMu.Lock()
+			old.used = false
+			h.frameMu.Unlock()
+			f.unknown = false
+		})
+	}
+}
+
+func TestUnusedWindowFrameRetainsExposureUntilActualRetirement(t *testing.T) {
+	h, f, _, ctx, surface := newWindowFrameHostFixture(t)
+	gate, err := vault.NewGuardedExposureGate(func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.vaultExposure = gate
+	if _, _, _, err = h.CaptureWindowFrame(ctx, f.principal, surface, 42, 17); err != nil {
+		t.Fatal(err)
+	}
+	target := vault.Target{Origin: "https://example.test", Account: "fixture"}
+	if _, err = gate.BeginDeliveryPreparation(ctx, target, func(context.Context) error { return nil }, func(context.Context) error { return nil }); !errors.Is(err, vault.ErrBusy) {
+		t.Fatal("unused capture did not reproduce retained exposure", err)
+	}
+	h.frameMu.Lock()
+	old := h.framePermits[f.principal.Namespace]
+	h.frameMu.Unlock()
+	if err = h.retireWindowFrame(old); err != nil {
+		t.Fatal(err)
+	}
+	prep, err := gate.BeginDeliveryPreparation(ctx, target, func(context.Context) error { return nil }, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal("actual frame retirement did not release private-preparation exposure", err)
+	}
+	if err = prep.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWindowFrameConcurrentSupersessionKeepsOneReservation(t *testing.T) {
+	h, f, _, ctx, surface := newWindowFrameHostFixture(t)
+	if _, _, _, err := h.CaptureWindowFrame(ctx, f.principal, surface, 42, 17); err != nil {
+		t.Fatal(err)
+	}
+	h.frameMu.Lock()
+	old := h.framePermits[f.principal.Namespace]
+	h.frameMu.Unlock()
+	var mu sync.Mutex
+	var winner *windowFramePermit
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			candidate := &windowFramePermit{principal: f.principal, binding: old.binding, done: make(chan struct{}), cancel: func() {}}
+			if err := h.reserveWindowFrame(ctx, f.principal, candidate); err == nil {
+				mu.Lock()
+				if winner != nil {
+					t.Error("multiple creation reservations")
+				}
+				winner = candidate
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if winner == nil {
+		t.Fatal("no fresh reservation after confirmed retirement")
+	}
+	select {
+	case <-old.done:
+	default:
+		t.Fatal("new reservation before retirement")
+	}
+	h.frameMu.Lock()
+	if h.framePermits[f.principal.Namespace] != winner {
+		t.Error("winner not retained")
+	}
+	// No capture/helper was acquired for this reservation-only synthetic race.
+	delete(h.framePermits, f.principal.Namespace)
+	h.frameMu.Unlock()
 }

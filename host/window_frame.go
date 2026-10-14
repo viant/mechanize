@@ -49,7 +49,7 @@ func (h *Host) CaptureWindowFrame(ctx context.Context, requested auth.Principal,
 		if err == nil || imageRef.ID != "" {
 			return
 		}
-		clean := record == nil || record.cleanupErr == nil
+		clean := (record == nil || record.cleanupErr == nil) && !errors.Is(err, ErrNativeControlCleanupUnknown)
 		if primaryCode == "" {
 			primaryCode = windowFrameFailureCode(err)
 		}
@@ -166,15 +166,40 @@ func (h *Host) CaptureWindowFrame(ctx context.Context, requested auth.Principal,
 	return imageRef, provenanceRef, frame, nil
 }
 
+// retireUnusedWindowFrame shares the existing retirement owner with expiry.
+// A caller may replace only its own ready, unused interval, never input in flight.
+func (h *Host) retireUnusedWindowFrame(ctx context.Context, p auth.Principal, sessionID string) error {
+	h.frameMu.Lock()
+	old := h.framePermits[p.Namespace]
+	if old == nil {
+		h.frameMu.Unlock()
+		return ctx.Err()
+	}
+	if !old.ready || old.used || old.retiring || old.principal.Namespace != p.Namespace || old.principal.ClientID != p.ClientID || old.binding.SessionID != sessionID {
+		h.frameMu.Unlock()
+		return framePermitRejected("An earlier capture interval is still active")
+	}
+	old.retiring = true
+	h.frameMu.Unlock()
+	go func() { _ = h.finishWindowFrameRetirement(ctx, old) }()
+	select {
+	case <-old.done:
+		return errors.Join(old.cleanupErr, ctx.Err())
+	case <-ctx.Done():
+		return errors.Join(ctx.Err(), ErrNativeControlCleanupUnknown)
+	}
+}
+
 func (h *Host) reserveWindowFrame(ctx context.Context, p auth.Principal, record *windowFramePermit) error {
+	if err := h.retireUnusedWindowFrame(ctx, p, record.binding.SessionID); err != nil {
+		return err
+	}
 	h.frameMu.Lock()
 	defer h.frameMu.Unlock()
-	if h.framesClosed {
-		return framePermitRejected("Host capture intervals are closing")
+	if h.framesClosed || ctx.Err() != nil {
+		return framePermitRejected("Fresh capture admission ended during retirement")
 	}
-	// Runtime.Close marks admission closed before invoking the host hook and
-	// releases its own mutex before acquiring frameMu. This check and insertion
-	// therefore cannot slip past a close callback that found no earlier record.
+	// Session close and click consumption use this same reservation boundary.
 	if err := h.Runtime.CheckSession(ctx, p, record.binding.SessionID); err != nil {
 		return err
 	}
@@ -182,7 +207,7 @@ func (h *Host) reserveWindowFrame(ctx context.Context, p auth.Principal, record 
 		h.framePermits = map[string]*windowFramePermit{}
 	}
 	if h.framePermits[p.Namespace] != nil {
-		return framePermitRejected("An earlier capture interval is still active")
+		return framePermitRejected("A concurrent capture interval is active")
 	}
 	h.framePermits[p.Namespace] = record
 	return nil
@@ -245,6 +270,10 @@ func (h *Host) retireWindowFrame(record *windowFramePermit) error {
 	}
 	record.retiring = true
 	h.frameMu.Unlock()
+	return h.finishWindowFrameRetirement(context.Background(), record)
+}
+
+func (h *Host) finishWindowFrameRetirement(ctx context.Context, record *windowFramePermit) error {
 	if record.cancel != nil {
 		record.cancel()
 	}
@@ -255,7 +284,7 @@ func (h *Host) retireWindowFrame(record *windowFramePermit) error {
 	clean := record.admission.Epoch == 0
 	var cleanupErr error
 	if !clean {
-		cleanup, cancel := context.WithTimeout(auth.WithPrincipal(context.Background(), record.principal), 2*time.Second)
+		cleanup, cancel := context.WithTimeout(auth.WithPrincipal(ctx, record.principal), 2*time.Second)
 		matched, report, err := h.nativeControl.revokeWindowFrameGeneration(cleanup, record.principal, uint64(record.admission.Epoch))
 		cancel()
 		clean = !matched && err == nil || err == nil && report.InputInhibited && report.HelperStopped && report.FenceReleased && !report.UnknownInputs

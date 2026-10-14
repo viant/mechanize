@@ -429,6 +429,12 @@ func (s *credentialService) pin(ctx context.Context, p auth.Principal, item *cre
 		}
 	}
 	item.attention = "entryProtection"
+	// An inspection frame retains native exposure until its exact unused
+	// control interval is retired. Release only this caller/session's interval
+	// before taking private protection; live input and foreign owners still block.
+	if e := s.host.retireUnusedWindowFrame(ctx, p, item.consent.SessionID); e != nil {
+		return errPrivateCredential
+	}
 	prep, e := s.host.vaultExposure.BeginDeliveryPreparation(ctx, item.target, admit, func(context.Context) error { return vault.ErrEntryCleanup })
 	if e != nil {
 		return errPrivateCredential
