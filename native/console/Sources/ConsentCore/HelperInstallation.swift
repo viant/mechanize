@@ -166,11 +166,26 @@ public struct HelperInstallation {
         }
         let actualString = actualText as String
         let suppliedString = suppliedText as String
-        let nativeIdentifier = "identifier \"com.viant.mechanize.broker\""
-        // The manifest may add the fixed broker identifier to an ad hoc CDHash.
-        // Accept only that exact conjunction; broad or OR alternatives fail.
-        let stricterPin = actualString.hasPrefix("cdhash H\"") &&
-            (suppliedString == nativeIdentifier + " and " + actualString || suppliedString == actualString + " and " + nativeIdentifier)
-        guard actualString == suppliedString || stricterPin else { throw HelperInstallationError.untrustedImage }
+        guard acceptsVerifiedRequirement(actual: actualString, supplied: suppliedString) else {
+            throw HelperInstallationError.untrustedImage
+        }
+    }
+
+    // Called only after Security verifies the supplied requirement against the
+    // actual image. A per-build broker pin remains valid when its designated
+    // requirement uses a stable certificate rather than an ad-hoc CDHash.
+    static func acceptsVerifiedRequirement(actual: String, supplied: String) -> Bool {
+        if actual == supplied { return true }
+        let identifier = #"identifier "com.viant.mechanize.broker""#
+        // Retain the existing exact designated-requirement conjunction for
+        // universal ad-hoc images, whose requirement can contain multiple hashes.
+        if actual.hasPrefix("cdhash H\"") &&
+            (supplied == identifier + " and " + actual || supplied == actual + " and " + identifier) {
+            return true
+        }
+        let hash = #"cdhash H"[0-9a-fA-F]{40}""#
+        let pattern = "^(?:" + NSRegularExpression.escapedPattern(for: identifier) + " and " + hash
+            + "|" + hash + " and " + NSRegularExpression.escapedPattern(for: identifier) + ")$"
+        return supplied.range(of: pattern, options: .regularExpression) != nil
     }
 }

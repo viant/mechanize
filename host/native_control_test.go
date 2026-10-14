@@ -648,12 +648,17 @@ func TestNativeControlWindowKeyboardRequiresSessionOptinExactLeaseAndScope(t *te
 }
 
 func TestNativeControlRecoversStoppedRawFenceOnlyWithTrustedReleasedInputProof(t *testing.T) {
-	for _, allow := range []bool{false, true} {
-		t.Run(fmt.Sprint(allow), func(t *testing.T) {
+	for _, tc := range []struct{ allow, relocated bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		allow := tc.allow
+		t.Run(fmt.Sprintf("allow=%v/relocated=%v", allow, tc.relocated), func(t *testing.T) {
 			f := newControlFixture(t)
 			f.alive = false
 			lease := session.Lease{ID: "historical", Generation: 77, Owner: f.principal.Namespace, Scope: session.Scope{AllowedBundles: f.enrolled}}
-			raw, _ := json.Marshal(map[string]any{"generation": 77, "lease": lease, "helper": f.identity, "inputProfile": "raw", "lastCleanup": session.CleanupReport{UnknownInputs: true, BusinessOutcomeUnknown: true}})
+			historical := f.identity
+			if tc.relocated {
+				historical.Executable = "/old-installation/mechanize-native"
+			}
+			raw, _ := json.Marshal(map[string]any{"generation": 77, "lease": lease, "helper": historical, "inputProfile": "raw", "lastCleanup": session.CleanupReport{UnknownInputs: true, BusinessOutcomeUnknown: true}})
 			if err := os.WriteFile(f.options.LockPath, raw, 0600); err != nil {
 				t.Fatal(err)
 			}

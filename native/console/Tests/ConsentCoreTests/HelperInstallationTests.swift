@@ -115,6 +115,17 @@ final class HelperInstallationTests: XCTestCase {
 }
 
 extension HelperInstallationTests {
+    func testCertificateDesignatedRequirementAcceptsOnlyVerifiedExactBrokerPin() {
+        let actual = "identifier \"com.viant.mechanize.broker\" and certificate leaf = H\"" + String(repeating: "1", count: 40) + "\""
+        let hash = "cdhash H\"" + String(repeating: "a", count: 40) + "\""
+        let pin = "identifier \"com.viant.mechanize.broker\" and " + hash
+        XCTAssertTrue(HelperInstallation.acceptsVerifiedRequirement(actual: actual, supplied: actual))
+        XCTAssertTrue(HelperInstallation.acceptsVerifiedRequirement(actual: actual, supplied: pin))
+        XCTAssertTrue(HelperInstallation.acceptsVerifiedRequirement(actual: actual, supplied: hash + " and identifier \"com.viant.mechanize.broker\""))
+        for invalid in ["true", hash, pin + " or true", pin.replacingOccurrences(of: "broker", with: "other"), pin + "\ntrue"] {
+            XCTAssertFalse(HelperInstallation.acceptsVerifiedRequirement(actual: actual, supplied: invalid))
+        }
+    }
     func testFinderRevealsAppBundleAndRechecksItAtClickTime() throws {
         let (app, helper) = try fixture()
         var trusted = true

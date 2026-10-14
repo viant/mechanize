@@ -113,7 +113,15 @@ func (s *Supervisor) reconcileStoppedGeneration(ctx context.Context, p auth.Prin
 	if deriveGeneration {
 		generation = prior.Generation
 	}
-	if generation == 0 || prior.Generation != generation || prior.Lease == nil || prior.Lease.Generation != generation || prior.Lease.Owner != p.Namespace || prior.Lease.ID == "" || prior.Lease.Scope.Validate() != nil || prior.Helper == nil || prior.Helper.PID <= 0 || prior.Helper.StartToken == "" || prior.Helper.UID != uint32(os.Getuid()) || filepath.Clean(prior.Helper.Executable) != filepath.Clean(s.options.HelperExecutable) || prior.LastCleanup == nil || !prior.LastCleanup.UnknownInputs {
+	if generation == 0 || prior.Generation != generation || prior.Lease == nil || prior.Lease.Generation != generation || prior.Lease.Owner != p.Namespace || prior.Lease.ID == "" || prior.Lease.Scope.Validate() != nil || prior.Helper == nil || prior.Helper.PID <= 0 || prior.Helper.StartToken == "" || prior.Helper.UID != uint32(os.Getuid()) || prior.LastCleanup == nil || !prior.LastCleanup.UnknownInputs {
+		return CleanupReport{}, ErrCleanupUnknown
+	}
+	// A unified-app upgrade can relocate the helper. Only released-input
+	// recovery may cross that path change: its mandatory trusted live proof and
+	// both historical process-death checks remain under the original fence.
+	// No historical executable is launched or granted new authority here.
+	if !filepath.IsAbs(prior.Helper.Executable) || filepath.Clean(prior.Helper.Executable) != prior.Helper.Executable ||
+		(prior.Helper.Executable != filepath.Clean(s.options.HelperExecutable) && !(deriveGeneration && proof != nil)) {
 		return CleanupReport{}, ErrCleanupUnknown
 	}
 	if err = s.proveStopped(*prior.Helper); err != nil {

@@ -209,3 +209,94 @@ func TestReleasedInputRecoveryRequiresStoppedOwnedHelperAndPreservesBusinessUnkn
 	}
 	_, _ = fresh.Close(ctx)
 }
+
+func TestReleasedInputRecoveryAfterHelperRelocation(t *testing.T) {
+	for _, mode := range []string{"released", "pid-reused", "alive", "held", "foreign", "cancelled", "second-stop-fails", "relative", "unclean", "legacy-route"} {
+		t.Run(mode, func(t *testing.T) {
+			options, _, identity := fixtureOptions(t)
+			ctx, p := supervisorActor(t, "alice")
+			identity.Executable = "/historical/mechanize-native"
+			if mode == "relative" {
+				identity.Executable = "historical/mechanize-native"
+			}
+			if mode == "unclean" {
+				identity.Executable = "/historical/../mechanize-native"
+			}
+			lease := Lease{ID: "historical", Generation: 33, Owner: p.Namespace, Scope: Scope{AllApplications: true}}
+			prior := record{Generation: 33, Lease: &lease, Helper: &identity, InputProfile: InputProfileRaw, LastCleanup: &CleanupReport{UnknownInputs: true, BusinessOutcomeUnknown: true}}
+			if mode == "legacy-route" {
+				prior.InputProfile = InputProfileSemantic
+			}
+			raw, _ := json.Marshal(prior)
+			if err := os.WriteFile(options.LockPath, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			inspections := 0
+			options.Inspect = func(pid int) (ProcessIdentity, bool, error) {
+				if pid != identity.PID {
+					t.Fatal("historical PID lost")
+				}
+				inspections++
+				if mode == "pid-reused" {
+					replacement := identity
+					replacement.StartToken = "new-birth"
+					return replacement, true, nil
+				}
+				return identity, mode == "alive" || mode == "second-stop-fails" && inspections == 2, nil
+			}
+			s, err := NewSupervisor(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			proofCalls := 0
+			proof := func(proofCtx context.Context, l Lease, h ProcessIdentity) error {
+				proofCalls++
+				if l.ID != lease.ID || l.Generation != 33 || h != identity {
+					t.Fatal("historical identity changed")
+				}
+				if mode == "held" {
+					return errors.New("input still held")
+				}
+				return nil
+			}
+			if mode == "foreign" {
+				ctx, p = supervisorActor(t, "bob")
+			}
+			if mode == "cancelled" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			var report CleanupReport
+			if mode == "legacy-route" {
+				report, err = s.ReconcileNoRawInput(ctx, p, 33)
+			} else {
+				report, err = s.ReconcileReleasedInput(ctx, p, proof)
+			}
+			after, _ := os.ReadFile(options.LockPath)
+			if mode != "released" && mode != "pid-reused" {
+				if err == nil || report.FenceReleased || string(after) != string(raw) {
+					t.Fatalf("unsafe recovery: %+v %v", report, err)
+				}
+				if mode == "alive" || mode == "foreign" || mode == "relative" || mode == "unclean" || mode == "legacy-route" {
+					if proofCalls != 0 {
+						t.Fatal("invalid historical identity reached proof")
+					}
+				}
+				return
+			}
+			if err != nil || proofCalls != 1 || inspections != 2 || !report.FenceReleased || !report.BusinessOutcomeUnknown || report.UnknownInputs {
+				t.Fatalf("relocation recovery: %+v %v", report, err)
+			}
+			var saved record
+			if json.Unmarshal(after, &saved) != nil || saved.Helper != nil || saved.Lease != nil || !saved.LastCleanup.BusinessOutcomeUnknown {
+				t.Fatal("business uncertainty lost")
+			}
+			next, err := s.Acquire(ctx, p, Scope{AllApplications: true})
+			if err != nil || next.Generation != 34 {
+				t.Fatal("recovered generation unavailable", err)
+			}
+			_, _ = s.Close(ctx)
+		})
+	}
+}

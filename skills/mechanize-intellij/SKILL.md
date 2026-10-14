@@ -5,6 +5,12 @@ description: "Operate IntelliJ IDEA through Mechanize accessibility for project 
 
 # IntelliJ through Mechanize
 
+Use this skill for an explicitly requested IntelliJ workflow or Git actions through
+Mechanize. Read-only Git commands may inspect diffs, branch status, commit contents
+and remote refs; when the user requests GUI execution, perform commit and push
+through the IDE and verify them independently. Installing this guide does not
+connect a broker or grant application access.
+
 Discover the current app, process birth token, windows and advertised capabilities through Mechanize. Follow the desktop skill for session ownership and action receipts. Never reuse process or window identifiers from a previous run.
 
 For large IDE menus, use `native:menuScope` when advertised: observe `nativeRoot: "menuBar"` with `nativeMenu` equal to an observed top-level menu name. Use the same named scope in the action DSL, for example `.menuBar(name:"Git")`. This bounds discovery to that menu and preserves exact lookup. A truncated whole-menu observation cannot prove uniqueness; repeating it or increasing unrelated traversal is ineffective.

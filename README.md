@@ -176,6 +176,15 @@ and qualify it through MCP and Endly before documenting support in a skill.
 App-specific names and workflows stay in app/site guides. Source-only improvements
 and historical unknown effects must remain explicit in those guides.
 
+For Microsoft Word, Excel, PowerPoint and Outlook on macOS, use the bundled
+[Microsoft Office skill](skills/mechanize-microsoft-office/SKILL.md) and its
+[support matrix](skills/mechanize-microsoft-office/references/getting-started.md).
+The guide includes recorded document, spreadsheet, presentation and authorized
+email workflows, with case-specific limitations. Retrieve it through `skill_get`
+with `{"uri":"skill://mechanize-microsoft-office/SKILL.md"}`. Source edits enter
+the embedded catalog on rebuild and deployment; a personal Codex skill copy
+does not update or connect a running Mechanize broker.
+
 ## Credits and Acknowledgements
 
 **Library Authors:**
