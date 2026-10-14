@@ -398,20 +398,23 @@ func (g *Gateway) verifyCredentialPrivacy(ctx context.Context, p auth.Principal,
 	b.mu.Lock()
 	authoritySnapshot, identitySnapshot := s.authority, s.identity
 	b.mu.Unlock()
-	if surface.Kind != "web" || surface.Origin != s.source.Document.Origin || surface.BundleID != "" || surface.TabID != "" && surface.TabID != authoritySnapshot.Document.QualifiedTabID() && surface.TabID != strconv.Itoa(identitySnapshot.TabID) || !privacyActor(ctx, p, s, mutation) {
+	if surface.Kind != "web" || surface.Origin != s.source.Document.Origin || surface.BundleID != "" || surface.TabID != "" && surface.TabID != authoritySnapshot.Document.QualifiedTabID() && surface.TabID != strconv.Itoa(identitySnapshot.TabID) || authorize(ctx, p, mutation) != nil {
 		return errCredentialPrivacy
 	}
+	// One fresh private admission and channel check precedes the state checks.
+	// Admission callbacks can revoke or replace this proof; validate their
+	// resulting state instead of reauthorizing the same callback twice.
+	if err := g.privacyChannel(ctx, p, s); err != nil {
+		return err
+	}
 	b.mu.Lock()
-	wasChanged := s.changed && c.privacy == s && s.published && c.conn == s.conn && privacyOperationIdleLocked(ctx, c, identitySnapshot)
+	wasChanged := s.changed && c.privacy == s && s.published && c.conn == s.conn && s.identity == identitySnapshot && privacyOperationIdleLocked(ctx, c, identitySnapshot)
 	b.mu.Unlock()
 	if wasChanged {
-		if g.privacyChannel(ctx, p, s) != nil {
-			return errCredentialPrivacy
-		}
 		return ErrCredentialPrivacyDocumentChanged
 	}
 	b.mu.Lock()
-	valid := c.privacy == s && s.active && s.published && c.conn == s.conn && privacyOperationIdleLocked(ctx, c, identitySnapshot)
+	valid := c.privacy == s && s.active && s.published && c.conn == s.conn && s.identity == identitySnapshot && privacyOperationIdleLocked(ctx, c, identitySnapshot)
 	expected := s.identity
 	b.mu.Unlock()
 	if !valid {
@@ -420,9 +423,6 @@ func (g *Gateway) verifyCredentialPrivacy(ctx context.Context, p auth.Principal,
 	// Login has already retired private input and committed the extension's
 	// redactor. Ordinary operations perform their own document/lease admission;
 	// do not interleave another private inspector into that admission.
-	if err := g.privacyChannel(ctx, p, s); err != nil {
-		return err
-	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, d := range c.documents {
