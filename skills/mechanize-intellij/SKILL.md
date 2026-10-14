@@ -1,9 +1,14 @@
 ---
 name: mechanize-intellij
-description: "Operate IntelliJ IDEA through Mechanize accessibility for project navigation and authorized Git commit/push workflows."
+description: "Use Mechanize to open or close IntelliJ projects, navigate and edit owned files, create Git branches, and perform authorized commits or pushes with independent result checks."
 ---
 
 # IntelliJ through Mechanize
+
+Guide version 0.2.0. For project opening/closing, editing, branching and commits,
+start with the [October 14 fixture workflow](references/project-edit-git.md).
+It identifies the successful routes and false-success cases on IDEA 2026.2.1.
+The older navigation/commit/push evidence below remains case-specific.
 
 Use this skill for an explicitly requested IntelliJ workflow or Git actions through
 Mechanize. Read-only Git commands may inspect diffs, branch status, commit contents
@@ -12,6 +17,10 @@ through the IDE and verify them independently. Installing this guide does not
 connect a broker or grant application access.
 
 Discover the current app, process birth token, windows and advertised capabilities through Mechanize. Follow the desktop skill for session ownership and action receipts. Never reuse process or window identifiers from a previous run.
+
+For New Branch and Close Project, the October 14 menu actions returned success
+without the expected transition; use the verified action-search route in the
+fixture workflow. Do not replay those menu actions to diagnose the result.
 
 For large IDE menus, use `native:menuScope` when advertised: observe `nativeRoot: "menuBar"` with `nativeMenu` equal to an observed top-level menu name. Use the same named scope in the action DSL, for example `.menuBar(name:"Git")`. This bounds discovery to that menu and preserves exact lookup. A truncated whole-menu observation cannot prove uniqueness; repeating it or increasing unrelated traversal is ineffective.
 

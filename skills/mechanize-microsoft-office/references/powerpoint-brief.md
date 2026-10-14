@@ -8,6 +8,10 @@ a transferred Excel chart with independently checked cached values. Its saved
 external relationship prevents self-contained editable-chart qualification.
 Unattended arbitrary presentations and general layout/pointer coverage remain open.
 
+For the October 14 runtime, the Find staging route below is blocked by foreground
+AXWindow checks. Use the [current handoff and timing case](powerpoint-handoff-timing.md)
+for the verified Excel clipboard route and exact recovery limits.
+
 ## Create and edit
 
 1. Discover the current process/birth and welcome/template state. In this case

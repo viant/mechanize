@@ -50,6 +50,7 @@ __pycache__/
 !/skills/mechanize-app-discovery/
 !/skills/mechanize-browser-recovery/
 !/skills/mechanize-desktop/
+!/skills/mechanize-docker/
 !/skills/mechanize-finder/
 !/skills/mechanize-intellij/
 !/skills/mechanize-microsoft-office/

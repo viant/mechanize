@@ -1,7 +1,8 @@
 # PowerPoint content, design and portability quality
 
 Planning and acceptance guidance adapted from the bundled Presentations skill.
-Read the [observed brief case](powerpoint-brief.md) before execution. Its current
+For text decks, start with the [current handoff](powerpoint-handoff-timing.md).
+For chart work, read the [observed brief case](powerpoint-brief.md). Its current
 chart retains an external workbook relationship; the October 6 strict embedded
 check still fails. Quality advice does not resolve that limit or qualify a new
 paste, chart-editing, menu-disclosure or layout operation.

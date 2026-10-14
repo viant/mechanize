@@ -6,6 +6,11 @@ Recipient-inbox delivery was not independently checked. This is a bounded case,
 not a general unattended email guarantee. All GUI work used Mechanize MCP and
 Endly; saved workbook inspection was read-only.
 
+For the current October 14 runtime, start with the
+[handoff procedure](market-trends-handoff.md) and
+[PPTX/popup follow-up](powerpoint-handoff-timing.md). The older picker and
+per-character routes below are historical evidence, not the default repeat path.
+
 ## Authorization and discovery
 
 Checking mail, preparing a draft, and sending are separate requested outcomes.

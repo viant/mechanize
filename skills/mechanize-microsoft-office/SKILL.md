@@ -5,11 +5,22 @@ description: Use Mechanize MCP and Endly to operate Microsoft Word, Excel, Power
 
 # Microsoft Office through Mechanize
 
-Guide version 0.15.4. Quality guidance adapted from bundled Codex Office skills
+Guide version 0.15.8. Quality guidance adapted from bundled Codex Office skills
 26.909.12148; see [provenance and adaptation boundaries](references/sources.md).
-Live evidence remains case-specific on Office 16.113.3/macOS 27.0. Read the
-[qualification summary](references/qualification-status.md) and relevant case
-before execution. New planning or validation advice is not new GUI qualification.
+Live evidence is case-specific; the October 14 cases include Office 16.113.4
+on macOS 27.0. Start with the current procedure for the requested task. Consult
+the [historical qualification inventory](references/qualification-status.md) only
+for operations outside that procedure. Guidance does not qualify new GUI behavior.
+
+## Execute the known route first
+
+For a repeat Office task, read [efficient execution](references/efficient-execution.md)
+and its task/subtask contract, plus the current task case. For repeat PowerPoint
+work, use its transition guidance for fresh windows, batched slide operations and
+Save/reopen checks. Prepare content before controlling the UI, batch proven steps,
+and inspect at meaningful state boundaries. Enter discovery only when the
+current UI or capability differs from the recorded procedure. Do not benchmark
+exploration as routine execution or promise an unmeasured repeat-run duration.
 
 ## Choose the task reference
 
@@ -21,11 +32,16 @@ before execution. New planning or validation advice is not new GUI qualification
   [Excel quality](references/excel-quality.md).
 - Word structure, templates, styles, review state and pagination:
   [Word quality](references/word-quality.md).
+- PowerPoint creation, PPTX email and measured optimization baseline:
+  [PowerPoint handoff and timing](references/powerpoint-handoff-timing.md).
 - PowerPoint audience, design, editable objects and chart portability:
   [PowerPoint quality](references/powerpoint-quality.md).
 - Saving, reopening, optional independent file QA and email attachments:
   [handoff quality](references/handoff-quality.md).
-- Outlook execution: [observed email case](references/outlook-email.md);
+- Outlook composition and attachments: use the current
+  [handoff procedure](references/market-trends-handoff.md), with the
+  [PPTX and popup follow-up](references/powerpoint-handoff-timing.md) when relevant.
+  Earlier behavior and limits: [historical email case](references/outlook-email.md);
   user-designated incoming requests: [incoming-email workflow](references/incoming-email-request.md).
 - First launch, updates or recovery: [first-run evidence](references/first-run.md).
 - Exact native queries and private outcome checks:
