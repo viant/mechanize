@@ -141,13 +141,20 @@ globalThis.MechanizeController = {
       p.onMessage.addListener(async m => {
         if (sessions.get(id) !== s || Date.now()>=s.expiresAt || !s.approved || !exact(m,['type','requestId','operation','deadlineUnixMs',...(m?.operation==='tools/call' || m && ['initialize','tools/list'].includes(m.operation) && Object.hasOwn(m,'params') ? ['params'] : [])]) ||
             m.type !== 'request' || !['connection.status','tools.list','browser.inventory.summary','tools/list','tools/call','initialize'].includes(m.operation) || typeof m.requestId !== 'string' || !/^[A-Za-z0-9._:-]{1,64}$/.test(m.requestId) ||
-            s.seen.has(m.requestId) || s.seen.size >= 128 || pending.size >= 16 || !Number.isSafeInteger(m.deadlineUnixMs) || m.deadlineUnixMs <= Date.now() || m.deadlineUnixMs > Date.now()+10000) { revoke(id); return; }
+            s.seen.has(m.requestId) || s.seen.size >= 128 || pending.size >= 16 || !Number.isSafeInteger(m.deadlineUnixMs) || m.deadlineUnixMs > Date.now()+10000) { revoke(id); return; }
         if (new TextEncoder().encode(JSON.stringify(m)).length>65536 || m.operation!=='tools/call' && !metadata(m) || m.operation==='tools/call' && (!exact(m.params,['name','arguments']) || !s.tools.has(m.params.name) || !m.params.arguments || typeof m.params.arguments!=='object' || Array.isArray(m.params.arguments) || new TextEncoder().encode(JSON.stringify(m.params.arguments)).length>49152)) {revoke(id);return;}
         s.seen.add(m.requestId);
         try {
           if (!await live(s) || sessions.get(id) !== s) { revoke(id); return; }
           const binding = native.binding();
           if (!binding) { revoke(id); return; }
+          // A request can expire in the page/extension queue or during its live
+          // proof. Its original ID remains spent, without dispatch or renewal.
+          if (m.deadlineUnixMs <= Date.now()) {
+            const body={code:'controllerToolRejected',message:'Request deadline expired before dispatch.',dispatchState:'notDispatched'};
+            emit(p,{type:'result',requestId:m.requestId,...(m.operation==='tools/call'?{result:{isError:true,content:[{type:'text',text:JSON.stringify(body)}],structuredContent:body}}:{error:'deadlineExceeded'})});
+            return;
+          }
           renew(id); // Only a validated live request extends idle lifetime.
           const requestId = crypto.randomUUID();
           const timer = setTimeout(() => { const held=pending.get(requestId);if(held)finishResult(requestId,held,m.operation==='tools/call'?'resultTransferTimeout':'deadlineExceeded'); }, Math.max(1,m.deadlineUnixMs-Date.now()));

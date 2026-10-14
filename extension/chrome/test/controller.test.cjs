@@ -5,7 +5,7 @@ const fs=require('node:fs');
 function fixture(origin='http://localhost:3000') {
  const events={}, sent=[], outward=[],state={nativeReady:true,disconnectOutward:[],autoAcknowledge:true};
  const event=k=>({addListener:f=>events[k]=f});
- const chrome={runtime:{id:'id',getURL:p=>'chrome-extension://id/'+p,onMessage:event('local'),onConnectExternal:event('external')},webNavigation:{onCommitted:event('navigate'),getFrame:async()=>({url:origin+'/shell',documentId:'d1'})},tabs:{onRemoved:event('removed')}};
+ const chrome={runtime:{id:'id',getURL:p=>'chrome-extension://id/'+p,onMessage:event('local'),onConnectExternal:event('external')},webNavigation:{onCommitted:event('navigate'),getFrame:async()=>{state.onGetFrame?.();return state.frame??{url:origin+'/shell',documentId:'d1'};}},tabs:{onRemoved:event('removed')}};
  const timers=new Map();let next=0;
  const ctx=vm.createContext({URL,Date:class extends Date{static now(){return state.now??Date.now();}},TextEncoder,TextDecoder,atob,btoa,crypto:require('node:crypto').webcrypto,setTimeout:(f,delay)=>{timers.set(++next,{f,delay});return next},clearTimeout:id=>timers.delete(id)});
  vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../controller.js'),'utf8'),ctx);
@@ -76,9 +76,63 @@ test('stale channel policy cannot authorize a new origin',()=>{
  f.bridge.receive({type:'controllerPolicy',enabled:true,origins:['https://shell.fixture.test'],...f.binding,channelEpoch:'stale'});
  f.events.external(f.p);assert.equal(f.p.disconnected,true);
 });
-test('deadline and raw-argument requests revoke without native dispatch',async()=>{
- for(const change of [{deadlineUnixMs:Date.now()-1},{deadlineUnixMs:Date.now()+60000},{arguments:{code:'arbitrary'}},{operation:'vault.read'}]){
+test('invalid future deadlines and raw-argument requests revoke without native dispatch',async()=>{
+ for(const change of [{deadlineUnixMs:Date.now()+60000},{arguments:{code:'arbitrary'}},{operation:'vault.read'}]){
   const f=fixture();f.events.external(f.p);await f.approve();await f.events.message({...request(),...change});assert.equal(f.p.disconnected,true);assert.equal(f.sent.filter(x=>x.type==='controllerRequest').length,0);
+ }
+});
+async function statusCallFixture(){
+ const f=fixture();f.state.now=Date.now();f.events.external(f.p);await f.approve();
+ await f.events.message({...request(),operation:'tools/list'});
+ f.bridge.receive({type:'controllerResult',requestId:f.sent[0].requestId,result:{tools:[{name:'mechanize_browser_status',inputSchema:{type:'object'}}]}});
+ f.sent.length=0;f.outward.length=0;return f;
+}
+const statusCall=(f,requestId,deadlineUnixMs=f.state.now+5000)=>({...request(),requestId,deadlineUnixMs,operation:'tools/call',params:{name:'mechanize_browser_status',arguments:{}}});
+test('expired original tool request completes once without dispatch or connection revocation; a fresh call succeeds',async()=>{
+ for(const expiresDuringProof of [false,true]){
+  const f=await statusCallFixture(),idleTimer=[...f.timers.values()][0];
+  const expired=statusCall(f,'expired-original',expiresDuringProof?f.state.now+1:f.state.now-1);
+  if(expiresDuringProof)f.state.onGetFrame=()=>{f.state.now+=2;};
+  await f.events.message(expired);
+  assert.equal(f.p.disconnected,undefined);assert.equal(f.sent.length,0);assert.equal(f.outward.length,1);
+  const reply=f.outward[0];assert.equal(reply.type,'result');assert.equal(reply.requestId,expired.requestId);assert.equal(reply.result.isError,true);
+  assert.equal(reply.result.structuredContent.code,'controllerToolRejected');assert.equal(reply.result.structuredContent.dispatchState,'notDispatched');
+  assert.deepEqual(JSON.parse(reply.result.content[0].text),JSON.parse(JSON.stringify(reply.result.structuredContent)));
+  assert.deepEqual([...f.timers.values()],[idleTimer],'expired requests do not renew idle authority or create pending work');
+  f.state.onGetFrame=undefined;
+  await f.events.message(statusCall(f,'fresh-original'));assert.equal(f.sent.length,1);assert.equal(f.sent[0].type,'controllerRequest');
+  const result={content:[{type:'text',text:'{"ready":true}'}],structuredContent:{ready:true}};
+  f.bridge.receive({type:'controllerResult',requestId:f.sent[0].requestId,result});
+  assert.equal(f.outward.at(-1).requestId,'fresh-original');assert.equal(f.outward.at(-1).result.structuredContent.ready,true);
+  const count=f.outward.length;f.bridge.receive({type:'controllerResult',requestId:f.sent[0].requestId,result});assert.equal(f.outward.length,count);
+  await f.events.message(statusCall(f,expired.requestId));assert.equal(f.p.disconnected,true,'the expired original ID cannot be retimed');
+  assert.equal(f.sent.filter(m=>m.type==='controllerRequest').length,1);assert.equal(f.outward.filter(m=>m.requestId===expired.requestId).length,1);
+ }
+});
+test('expired metadata completes without native dispatch or authority renewal',async()=>{
+ const f=fixture();f.state.now=Date.now();f.events.external(f.p);await f.approve();const timer=[...f.timers.values()][0];
+ await f.events.message({...request(),deadlineUnixMs:f.state.now-1});
+ assert.equal(f.p.disconnected,undefined);assert.equal(f.sent.length,0);assert.equal(f.outward.at(-1).requestId,'r1');assert.equal(f.outward.at(-1).error,'deadlineExceeded');
+ assert.deepEqual([...f.timers.values()],[timer]);
+ await f.events.message({...request(),requestId:'fresh',deadlineUnixMs:f.state.now+5000});assert.equal(f.sent.length,1);
+});
+test('expired request still refuses invalid arguments, stale identity, policy and replay',async()=>{
+ for(const mode of ['arguments','catalog','shape','document','origin','fence','native','policy','approval','idle','duplicate']){
+  const f=await statusCallFixture(),m=statusCall(f,'expired-invalid',f.state.now-1);
+  if(mode==='arguments')m.params.arguments=[];
+  if(mode==='catalog')m.params.name='mechanize_unknown';
+  if(mode==='shape')m.foreign='PRIVATE_CANARY';
+  if(mode==='document')f.state.frame={url:'http://localhost:3000/shell',documentId:'other'};
+  if(mode==='origin')f.state.frame={url:'https://fixture.example.test/shell',documentId:'d1'};
+  if(mode==='fence')f.state.binding={...f.binding,channelEpoch:'other'};
+  if(mode==='native')f.state.nativeReady=false;
+  if(mode==='policy')f.bridge.receive({type:'controllerPolicy',enabled:false,origins:[],...f.binding});
+  if(mode==='approval'){f.events.external(f.p);f.sent.length=0;f.outward.length=0;}
+  if(mode==='idle')f.state.now+=24*60*60*1000;
+  if(mode==='duplicate')m.requestId='r1';
+  await f.events.message(m);assert.equal(f.p.disconnected,true,mode);assert.equal(f.sent.filter(m=>m.type==='controllerRequest').length,0,mode);
+  assert.equal(f.outward.filter(v=>v.type==='result'&&v.requestId===m.requestId).length,0,mode);
+  assert.equal(JSON.stringify(f.outward).includes('PRIVATE_CANARY'),false,mode);
  }
 });
 test('standard MCP tools/call requires canonical catalog and projects only text structured results',async()=>{
