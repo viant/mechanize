@@ -508,6 +508,8 @@ func observationDiagnosticMessage(code string) (string, bool) {
 		return "Native observation permission is unavailable. Inspect the existing macOS permission status.", true
 	case "observationTimeout":
 		return "Observation reached its deadline without input. Narrow the requested scope or use exact-window capture.", true
+	case "observationTooLarge":
+		return "Observation exceeded the controller result budget without input; its contents were withheld. Narrow the requested scope using advertised window discovery or use exact-window capture. Do not repeat an unscoped application query.", true
 	case "nativeObservationUnavailable":
 		return "Native semantic observation is unavailable. Inspect current application/window metadata and use exact-window capture when available.", true
 	}

@@ -239,6 +239,12 @@ and `surface.processStartToken`; a window title and bundle ID alone are insuffic
 Use the current discovery result rather than guessing the native window title
 from a browser tab's title. An `invalidScope` result is an argument repair, not
 a request for another permission approval.
+Physical capture window titles from CG/SCK discovery are not guaranteed to match
+accessibility window titles. After `scopedTargetNotFound`, do not repeat broad,
+unscoped AX queries to guess the title. Use an advertised window-listing mode
+when available, or discover physical windows with `mechanize_capture_windows`
+and inspect the exact window with `mechanize_capture`. An `observationTooLarge`
+result withholds the oversized read; narrow its scope or use that capture fallback.
 For public UI, confirm the active tab's origin/handle before changing it. Plan
 the action before acquiring a fresh frame, then click within its expiry; refresh
 an expired frame instead of reusing its coordinates or repeating an unknown input.

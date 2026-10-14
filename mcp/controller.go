@@ -378,6 +378,13 @@ func (d *ControllerDispatcher) CallTool(ctx context.Context, id chrome.Controlle
 	}
 	var structured map[string]any
 	encoded, encodeErr := json.Marshal(answer.StructuredContent)
+	if encodeErr == nil && len(encoded) > 192*1024 && call.Name == "mechanize_observe" {
+		// Observation sends no business input. Withhold the entire oversized
+		// result, including refs and private metadata, without implying an
+		// unknown input effect or raising the controller transport budget.
+		out, _ := observationFailure(&native.NativeError{Code: "observationTooLarge"})
+		return out, nil
+	}
 	if encodeErr != nil || len(encoded) > 192*1024 || json.Unmarshal(encoded, &structured) != nil || structured == nil {
 		return controllerRejected("unknown"), nil
 	}
