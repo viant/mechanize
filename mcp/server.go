@@ -76,8 +76,10 @@ type Dependencies struct {
 	ObserveNativeWindow       ObserveNativeWindow
 	ObserveNativeRoot         ObserveNativeRoot
 	Observe                   Observe
-	Policy                    Policy
-	Version                   string
+	// ObservationPolicy checks enrollment only; nil retains the existing Policy path.
+	ObservationPolicy Policy
+	Policy            Policy
+	Version           string
 }
 type Empty struct{}
 type SessionInput struct {
@@ -540,8 +542,15 @@ func registerObserve(base *protocol.DefaultHandler, d Dependencies) error {
 		if err != nil {
 			return failure(err)
 		}
-		policy, err := d.Policy(ctx, p)
+		policyProvider := d.ObservationPolicy
+		if policyProvider == nil {
+			policyProvider = d.Policy
+		}
+		policy, err := policyProvider(ctx, p)
 		if err != nil {
+			return failure(err)
+		}
+		if err := ctx.Err(); err != nil {
 			return failure(err)
 		}
 		var key string

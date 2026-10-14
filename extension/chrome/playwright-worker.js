@@ -208,7 +208,10 @@ globalThis.MechanizePlaywrightWorker = (() => {
         }
         if(!held||held.originalPort!==originalPort||held.relayId!==message.relayId||message.deadlineUnixMs>held.command.deadlineUnixMs)throw fail('playwrightAuthorityChanged');
         const finalizing=message.type==='playwright.receipt'||message.type==='playwright.close';
-        if(finalizing?!await receiptCurrent(held):held.closed||!await current(held))throw fail('playwrightAuthorityChanged');
+        // send() owns the fresh authority check in relay.validate immediately
+        // before CDP; input/release also validate before journal/sequence changes.
+        // Other boundaries retain their own gate, and every result is rechecked.
+        if(finalizing?!await receiptCurrent(held):held.closed||message.type!=='playwright.send'&&!await current(held))throw fail('playwrightAuthorityChanged');
         if(held.wireRequests.has(message.requestId)||held.wireRequests.size>=4096)throw fail('playwrightRequestReplay');
         held.wireRequests.add(message.requestId);
         if(message.type==='playwright.close'){if(held.record&&!held.record.receipt&&held.possible)finalizationOnly(held);else await finish(held);post({...response,result:{closed:true}});return;}

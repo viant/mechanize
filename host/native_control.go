@@ -317,6 +317,21 @@ func (m *NativeControlManager) AdmitScope(ctx context.Context, requested auth.Pr
 	}
 	return NativeControlAdmission{Gateway: gateway, Epoch: int(lease.Generation)}, nil
 }
+
+// admissionCurrent permits reuse only for policy discovery immediately after
+// this operation admitted the same held generation. It grants no dispatch;
+// lease acquisition and every helper call still freshly qualify the process,
+// permission/session readiness and physical fence.
+func (m *NativeControlManager) admissionCurrent(ctx context.Context, p auth.Principal, a NativeControlAdmission) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.options.Owner.Err() != nil || m.held == nil || m.held.inhibited || a.Gateway == nil || a.Gateway != m.held.gateway || a.Epoch != int(m.held.lease.Generation) {
+		return false
+	}
+	actual, _, err := m.actor(ctx, p, m.held.scope)
+	return err == nil && actual.ClientID == p.ClientID && actual.Namespace == m.held.principal.Namespace
+}
+
 func (m *NativeControlManager) qualify(ctx context.Context, p auth.Principal, held *nativeControlHeld) error {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()

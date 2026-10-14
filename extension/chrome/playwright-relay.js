@@ -12,6 +12,16 @@ globalThis.MechanizePlaywrightRelay = (() => {
     'Emulation.setFocusEmulationEnabled','Emulation.setEmulatedMedia',
     'Target.setAutoAttach','Input.dispatchMouseEvent','Input.dispatchKeyEvent','Input.insertText',
   ]);
+  // Only these root events are consumed by the scoped sidecar's pageEvents.
+  // Filter before worker authority checks/native IPC so unused Network/Log
+  // bursts cannot consume or overflow the operation's bounded event queue.
+  const rootEvents=Object.freeze([
+    'Runtime.executionContextCreated','Runtime.executionContextDestroyed','Runtime.executionContextsCleared',
+    'Page.frameNavigated','Page.frameAttached','Page.frameDetached','Page.lifecycleEvent',
+    'Page.loadEventFired','Page.domContentEventFired','Page.frameStoppedLoading',
+    'Page.javascriptDialogOpening','Page.javascriptDialogClosed','Inspector.detached','Inspector.targetCrashed',
+  ]);
+  const requiredEvents=new Set(rootEvents);
   // File input is never an admitted typed operation of this engine.
   methods.delete('DOM.setFileInputFiles');
   const fail = code => Object.assign(new Error('Local Playwright relay unavailable'), {code, dispatchState:'notDispatched'});
@@ -68,7 +78,7 @@ globalThis.MechanizePlaywrightRelay = (() => {
           identity:{...i},origin:binding.origin,
           async current(){try{await current();return session.current();}catch{return false;}},
           validate,
-          onEvent(listener){return session.onEvent(event=>{if(!closed&&event.sessionId===undefined)listener(event);});},
+          onEvent(listener){return session.onEvent(event=>{if(!closed&&event.sessionId===undefined&&requiredEvents.has(event.method))listener(event);});},
           async send(method,params,requestDeadline,onDispatch){
             await validate(method,params,requestDeadline);
             // Child debugger sessions/frames cannot be selected by this relay.
@@ -100,6 +110,6 @@ globalThis.MechanizePlaywrightRelay = (() => {
       }
     };
   }
-  return {create,methods,inputAllowed};
+  return {create,methods,inputAllowed,rootEvents};
 })();
 if(typeof module!=='undefined')module.exports=globalThis.MechanizePlaywrightRelay;

@@ -78,6 +78,8 @@ func credentialFreshFixture(t *testing.T, mode string, builds ...int) (*Gateway,
 				}
 				if fresh {
 					switch mode {
+					case "pinnedMissingNonce":
+						delete(reply, "recipientId")
 					case "pinnedWrongNonce":
 						reply["recipientId"] = strings.Repeat("e", 64)
 					case "pinnedFormAbsent":
@@ -274,8 +276,8 @@ func TestPrivateRecipientNavigationIDPreservesLegacyAndBindsNonce(t *testing.T) 
 }
 
 func TestReviewedWorkerCredentialRecipientCompatibility(t *testing.T) {
-	for _, build := range []int{34, 35} {
-		for _, mode := range []string{"pinnedGeneration", "pinnedWrongNonce"} {
+	for _, build := range []int{34, 35, 36} {
+		for _, mode := range []string{"pinnedGeneration", "pinnedWrongNonce", "pinnedMissingNonce"} {
 			t.Run(fmt.Sprintf("build%d/%s", build, mode), func(t *testing.T) {
 				g, p, ctx, a, binding, calls := credentialFreshFixture(t, mode, build)
 				if !fingerprintV2Hash.MatchString(a.PrivateRecipientID) {
@@ -295,8 +297,8 @@ func TestReviewedWorkerCredentialRecipientCompatibility(t *testing.T) {
 			})
 		}
 	}
-	t.Run("futureBuild36", func(t *testing.T) {
-		_, _, _, a, _, _ := credentialFreshFixture(t, "ready", 36)
+	t.Run("futureBuild37", func(t *testing.T) {
+		_, _, _, a, _, _ := credentialFreshFixture(t, "ready", 37)
 		if a.PrivateRecipientID != "" {
 			t.Fatal("unreviewed worker received recipient capability")
 		}

@@ -37,7 +37,7 @@ func newConsentReconnectProof(c *channel, conn net.Conn, brokerEpoch string, pre
 		LeaseRequired    bool   `json:"leaseRequired"`
 		Fingerprint      int    `json:"mutationFingerprintVersion"`
 	}
-	if len(previous) > 2048 || c == nil || conn == nil || c.fixtureOnly || (c.workerBuild != 32 && c.workerBuild != 33 && c.workerBuild != 34 && c.workerBuild != 35) || c.processEvidence == nil || !c.processEvidence.KernelPeerQualified || !channelScopeQualified(c) ||
+	if len(previous) > 2048 || c == nil || conn == nil || c.fixtureOnly || (c.workerBuild != 32 && c.workerBuild != 33 && c.workerBuild != 34 && c.workerBuild != 35 && c.workerBuild != 36) || c.processEvidence == nil || !c.processEvidence.KernelPeerQualified || !channelScopeQualified(c) ||
 		!reconnectTopFields(previous, "brokerEpoch", "channelEpoch", "scopeHash", "trustScope", "scopeQualified", "profileQualified", "leaseRequired", "mutationFingerprintVersion") || decodeReconnectClosed(previous, &old) != nil ||
 		!receiptOpaqueID.MatchString(old.BrokerEpoch) || !receiptOpaqueID.MatchString(old.ChannelEpoch) || old.ScopeHash != c.scopeHash || old.TrustScope != c.grant.TrustScope || !old.ScopeQualified || old.ProfileQualified != c.profileQualified || !old.LeaseRequired || old.Fingerprint != 2 || old.BrokerEpoch == brokerEpoch && old.ChannelEpoch == c.epoch {
 		return nil

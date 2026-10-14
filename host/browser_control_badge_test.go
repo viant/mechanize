@@ -224,3 +224,79 @@ func TestBrowserControlBadgeHiddenRemainsRenewable(t *testing.T) {
 		t.Fatal("normal completion did not end hidden owner")
 	}
 }
+
+func TestBrowserBadgeActionsKeepOpaqueSessionOwnerUntilActualSessionClose(t *testing.T) {
+	p, _ := auth.NewPrincipal("fixture", "", "badge-session", []string{"desktop:observe"})
+	p.ClientID = "session-client"
+	base := auth.WithPrincipal(context.Background(), p)
+	ctx := auth.WithConsentBinding(base, auth.ConsentBinding{SessionID: "fixture-browser-session", Purpose: "observe public fixture"})
+	c := &badgeStatusCaller{beginStatus: "shown", renewStatus: "shown", events: make(chan native.Request, 32)}
+	g, err := native.NewGateway(c, native.GatewayOptions{AllApplications: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Host{nativeByUser: map[string]*native.Gateway{p.Namespace: g}}
+	for i := 0; i < 2; i++ {
+		operation, cancel := context.WithCancel(ctx)
+		end := h.presentBrowserControlBadge(operation, p, session.ProcessIdentity{PID: 12, StartToken: "1790000000:1", Executable: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}, chrome.ControlBadgeWindow{Width: 900, Height: 700})
+		if end == nil {
+			t.Fatal("bound session badge did not begin")
+		}
+		end()
+		cancel()
+	}
+	c.mu.Lock()
+	owner := ""
+	actions := map[string]bool{}
+	ends := 0
+	for _, r := range c.requests {
+		if r.Method == "doctor" {
+			continue
+		}
+		var params struct {
+			Token   string `json:"token"`
+			Session string `json:"sessionToken"`
+		}
+		if json.Unmarshal(r.Params, &params) != nil {
+			t.Fatal("invalid parameters")
+		}
+		switch r.Method {
+		case "controlBadge.begin":
+			if len(params.Session) != 64 || params.Session == "fixture-browser-session" {
+				t.Fatal("missing opaque session owner")
+			}
+			if owner != "" && owner != params.Session {
+				t.Fatal("operation replaced session owner")
+			}
+			owner = params.Session
+			actions[params.Token] = true
+		case "controlBadge.end":
+			ends++
+		default:
+			t.Fatalf("action completion released session: %s", r.Method)
+		}
+	}
+	c.mu.Unlock()
+	if len(actions) != 2 || ends != 2 {
+		t.Fatalf("actions/ends=%d/%d", len(actions), ends)
+	}
+	if err = h.cancelOwnedSession(base, p, "fixture-browser-session"); err != nil {
+		t.Fatal(err)
+	}
+	if !c.waitMethod("controlBadge.releaseSession", time.Second) {
+		t.Fatal("actual session close did not release presentation")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, r := range c.requests {
+		if r.Method != "controlBadge.releaseSession" {
+			continue
+		}
+		var params struct {
+			Session string `json:"sessionToken"`
+		}
+		if json.Unmarshal(r.Params, &params) != nil || params.Session != owner || r.Lease != nil {
+			t.Fatal("session cleanup changed owner or input authority")
+		}
+	}
+}

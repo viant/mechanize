@@ -25,7 +25,7 @@ struct BrowserBadgePresentation {
  private var connectionClosed=false
  private var sequence:UInt64=0,timer:Timer?
  private var shownKey:String?,shownToken:UInt64?,shownActive:Bool?,shownBounds:CGRect?
- private var suspended=false,anchorKey:String?,anchorSize:CGSize?,anchor:ControlBadgeAnchor?,nextMeasureAt:TimeInterval=0,measuredAt:TimeInterval=0
+ private var suspended=false,anchorKey:String?,anchorSize:CGSize?,anchor:ControlBadgeAnchor?,nextMeasureAt:TimeInterval=0,measuredAt:TimeInterval=0,verifiedAt:TimeInterval=0
 
  private let runtime:WindowSessionKeyRuntime,now:()->TimeInterval,schedule:Bool,presentation:BrowserBadgePresentation
  init(runtime:WindowSessionKeyRuntime = .system,now:@escaping()->TimeInterval={ProcessInfo.processInfo.systemUptime},schedule:Bool=true,presentation:BrowserBadgePresentation = .system){self.runtime=runtime;self.now=now;self.schedule=schedule;self.presentation=presentation}
@@ -35,12 +35,25 @@ struct BrowserBadgePresentation {
  private func suspend(){guard let token=shownToken else{return};if let conceal=presentation.suspend{if !suspended{conceal(token)};suspended=true}else{hide()}}
  private func measuredAnchor(_ owner:Owner,_ bounds:CGRect)->ControlBadgeAnchor? {
   guard let measure=presentation.measure else{return nil}
-  if anchorKey != owner.key {anchorKey=owner.key;anchorSize=nil;anchor=nil;nextMeasureAt=0;measuredAt=0}
-  if anchorSize==bounds.size,now()<nextMeasureAt{return anchor}
+  if anchorKey != owner.key {anchorKey=owner.key;anchorSize=nil;anchor=nil;nextMeasureAt=0;measuredAt=0;verifiedAt=0}
+  if anchorSize==bounds.size,now()<nextMeasureAt{return now()<verifiedAt+6 ? anchor:nil}
   // Relative offsets survive translations; resize and failed scans have a
   // cooldown rather than synchronous AX IPC on every 100ms tracking tick.
-  if anchorSize != nil && now()<measuredAt+0.5 && anchorSize != bounds.size{return nil}
-  anchor=measure(owner.pid,bounds);anchorSize=bounds.size;measuredAt=now();nextMeasureAt=now()+(anchor == nil ? 1:5)
+  if anchorSize != nil && anchorSize != bounds.size {
+   anchor=nil;verifiedAt=0
+   if now()<measuredAt+0.5 {nextMeasureAt=min(nextMeasureAt,measuredAt+0.5);return nil}
+  }
+  let sameSize=anchorSize==bounds.size
+  let measured=measure(owner.pid,bounds);measuredAt=now()
+  if let measured {anchor=measured;verifiedAt=now();nextMeasureAt=now()+5}
+  else {
+   // One bounded retry may use the last verified relative placement, only on
+   // the same process/window and unchanged size. Never invent an AX anchor or
+   // carry it across resize; repeated failures conceal rather than drift.
+   if !sameSize || now()>=verifiedAt+6 {anchor=nil}
+   nextMeasureAt=now()+1
+  }
+  anchorSize=bounds.size
   return anchor
  }
  private func startTimer(){guard schedule&&timer==nil else{return};let t=Timer(timeInterval:0.1,repeats:true){_ in Task{@MainActor in _=self.refresh()}};timer=t;RunLoop.main.add(t,forMode:.common)}
@@ -84,7 +97,7 @@ struct BrowserBadgePresentation {
   var invalid=false
   for (token,o) in owners {
    let matches=rows.filter{$0.id==o.windowID&&$0.pid==o.pid&&[0,3,8].contains($0.layer)&&$0.alpha.isFinite&&$0.alpha>0&&$0.alpha<=1}
-   if !identity(o)||matches.count != 1||ControlBadgeGeometry.frame(window:matches[0].bounds)==nil||o.session==nil&&o.activeUntil<=now(){owners.removeValue(forKey:token);invalid=true}
+   if !identity(o)||rows.filter({$0.id==o.windowID}).count != 1||matches.count != 1||ControlBadgeGeometry.frame(window:matches[0].bounds)==nil||o.session==nil&&o.activeUntil<=now(){owners.removeValue(forKey:token);invalid=true}
   }
   let front=rows.first{[0,3,8].contains($0.layer)&&$0.visible&&$0.alpha>0},foreground=runtime.foreground()
   let candidates=owners.values.filter{$0.pid==foreground&&$0.pid==front?.pid&&$0.windowID==front?.id}.sorted{$0.sequence>$1.sequence}
@@ -92,6 +105,12 @@ struct BrowserBadgePresentation {
   let active=candidates.contains{!$0.completed&&$0.activeUntil>now()}
   let oldAnchor=anchor,resolved=measuredAnchor(o,bounds)
   if presentation.measure != nil && resolved == nil {suspend();return "placementUnavailable"}
+  // The panel is above ordinary windows, so independently conceal it when
+  // a higher WindowServer row covers its verified frame. The helper's own
+  // indicator is excluded; no overlay can redirect presentation ownership.
+  let overlays=rows.prefix{!($0.id==o.windowID && $0.pid==o.pid)}
+  if let frame=ControlBadgeGeometry.frame(window:bounds,headerCenter:resolved?.headerCenter ?? 17,leading:resolved?.leading ?? 84,size:resolved?.size ?? CGSize(width:46,height:18)),
+     overlays.contains(where:{$0.pid != getpid() && $0.visible && $0.alpha != 0 && $0.bounds.intersects(frame)}) {suspend();return "hidden"}
   let newlyShown=shownKey != o.key || shownToken == nil
   if newlyShown {hide();shownToken=resolved.flatMap{presentation.beginAnchored?(bounds,$0)} ?? (presentation.measure == nil ? presentation.begin(bounds):nil);shownKey=o.key;shownBounds=bounds;shownActive=nil}
   guard identity(o) else {owners.removeValue(forKey:o.token);hide();return "unavailable"}

@@ -370,7 +370,7 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 	if err != nil {
 		return fail(err)
 	}
-	h.Server, err = gateway.New(gateway.Dependencies{ExtensionReload: h.ExtensionReload, ExtensionReloadStatus: h.ExtensionReloadStatus, LocalSkills: h.localSkills, CredentialPrepare: h.CredentialPrepare, CredentialRecover: h.CredentialRecover, CredentialResumeManual: h.CredentialResumeManual, CredentialApply: h.CredentialApply, CredentialSubmit: h.CredentialSubmit, CredentialStatus: h.CredentialStatus, BrowserActivateTab: h.BrowserActivateTab, BrowserTabLocationMatches: h.BrowserTabLocationMatches, BrowserOpenOrigin: h.BrowserOpenOrigin, BrowserLocationMatches: h.BrowserLocationMatches, BrowserTabs: h.BrowserTabs, BrowserStatus: h.BrowserStatus, StateStopBoundary: h.durable.StopBoundary, EffectReconcile: h.durable.ReconcileEffect, Recovery: h.recovery, Scenarios: h.scenarios, CaptureWindow: h.CaptureWindow, CaptureWindows: h.CaptureWindows, CaptureWindowFrame: h.CaptureWindowFrame, StateResume: h.ResumeRun, PermissionRequest: h.consent.Request, PermissionStatus: h.consent.RequestStatus, Recording: h.recording, Runtime: h.Runtime, Observe: h.Observe, ObserveNativeRoot: h.ObserveNativeRoot, ObserveNativeWindow: h.ObserveNativeWindow, Policy: h.Policy, StateGet: h.durable.StateGet, StatePatch: h.durable.StatePatch, StatePause: h.PauseRun})
+	h.Server, err = gateway.New(gateway.Dependencies{ExtensionReload: h.ExtensionReload, ExtensionReloadStatus: h.ExtensionReloadStatus, LocalSkills: h.localSkills, CredentialPrepare: h.CredentialPrepare, CredentialRecover: h.CredentialRecover, CredentialResumeManual: h.CredentialResumeManual, CredentialApply: h.CredentialApply, CredentialSubmit: h.CredentialSubmit, CredentialStatus: h.CredentialStatus, BrowserActivateTab: h.BrowserActivateTab, BrowserTabLocationMatches: h.BrowserTabLocationMatches, BrowserOpenOrigin: h.BrowserOpenOrigin, BrowserLocationMatches: h.BrowserLocationMatches, BrowserTabs: h.BrowserTabs, BrowserStatus: h.BrowserStatus, StateStopBoundary: h.durable.StopBoundary, EffectReconcile: h.durable.ReconcileEffect, Recovery: h.recovery, Scenarios: h.scenarios, CaptureWindow: h.CaptureWindow, CaptureWindows: h.CaptureWindows, CaptureWindowFrame: h.CaptureWindowFrame, StateResume: h.ResumeRun, PermissionRequest: h.consent.Request, PermissionStatus: h.consent.RequestStatus, Recording: h.recording, Runtime: h.Runtime, Observe: h.Observe, ObserveNativeRoot: h.ObserveNativeRoot, ObserveNativeWindow: h.ObserveNativeWindow, ObservationPolicy: h.ObservationPolicy, Policy: h.Policy, StateGet: h.durable.StateGet, StatePatch: h.durable.StatePatch, StatePause: h.PauseRun})
 	if err != nil {
 		return fail(err)
 	}
@@ -400,6 +400,11 @@ func (h *Host) authorize(ctx context.Context, p auth.Principal) (User, error) {
 	return user, nil
 }
 func (h *Host) Policy(ctx context.Context, p auth.Principal) (script.Policy, error) {
+	return h.policy(ctx, p, nil)
+}
+
+// policy reuses only an admission obtained by this exact synchronous native operation.
+func (h *Host) policy(ctx context.Context, p auth.Principal, admission *NativeControlAdmission) (script.Policy, error) {
 	u, err := h.authorize(ctx, p)
 	if err != nil {
 		return script.Policy{}, err
@@ -541,7 +546,7 @@ func (h *Host) Policy(ctx context.Context, p auth.Principal) (script.Policy, err
 			}
 		}
 	}
-	allowMutation := h.nativeControlPolicy(ctx, p, caps, reasons)
+	allowMutation := h.nativeControlPolicyAdmitted(ctx, p, caps, admission, reasons)
 	if nativeReadReady && nativeSemanticMenuSupported && caps["native:semanticPress"] {
 		caps["native:semanticMenu"] = true
 	}

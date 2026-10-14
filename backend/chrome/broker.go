@@ -507,7 +507,7 @@ func (b *Broker) serve(conn net.Conn) {
 	c.visibilityUnknownVersion = hello.VisibilityUnknownVersion
 	c.extensionVersion = reportedExtensionVersion(hello.ExtensionVersion)
 	c.workerBuild = 0
-	if hello.WorkerBuild >= 20 && hello.WorkerBuild <= 35 {
+	if hello.WorkerBuild >= 20 && hello.WorkerBuild <= 36 {
 		c.workerBuild = hello.WorkerBuild
 	}
 	c.controllerSessions = make(map[string]*ControllerSession)
@@ -520,7 +520,7 @@ func (b *Broker) serve(conn net.Conn) {
 	c.extensionMaintenancePending = nil
 	c.executorChallenge = newID()
 	c.consentReconnect = nil
-	if hello.WorkerBuild == 32 || hello.WorkerBuild == 33 || hello.WorkerBuild == 34 || hello.WorkerBuild == 35 {
+	if hello.WorkerBuild == 32 || hello.WorkerBuild == 33 || hello.WorkerBuild == 34 || hello.WorkerBuild == 35 || hello.WorkerBuild == 36 {
 		c.consentReconnect = newConsentReconnectProof(c, conn, b.epoch, hello.LastGrant)
 	}
 	b.mu.Unlock()

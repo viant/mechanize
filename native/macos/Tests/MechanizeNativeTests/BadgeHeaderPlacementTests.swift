@@ -127,3 +127,70 @@ final class BadgeHeaderPlacementTests:XCTestCase {
   }
  }
 }
+
+extension BadgeHeaderPlacementTests {
+ func testTransientAXFailureRetainsVerifiedExactWindowAnchorForOneRetry()async throws {
+  try await MainActor.run {
+   var time=100.0,available=true,front:pid_t?=42,measurements=0,suspends=0,resumes=0,hidden=0
+   var bounds=CGRect(x:0,y:26,width:900,height:700)
+   let runtime=WindowSessionKeyRuntime(process:{_ in(getuid(),"100:1","com.fixture.app")},foreground:{front},windows:{[SessionKeyWindow(id:7,pid:42,layer:0,visible:true,alpha:1,bounds:bounds)]},session:{true},secure:{false})
+   var p=BrowserBadgePresentation(begin:{_ in XCTFail("unverified fallback");return nil},move:{_,_ in},hide:{_ in hidden+=1},renew:{_ in})
+   p.measure={_,_ in measurements+=1;return available ? ControlBadgeAnchor(headerCenter:24,leading:68):nil}
+   p.beginAnchored={_,anchor in XCTAssertEqual(anchor.leading,68);return 1};p.moveAnchored={_,_,anchor in XCTAssertEqual(anchor.leading,68)}
+   p.suspend={_ in suspends+=1};p.resume={_ in resumes+=1}
+   let badge=BrowserControlBadge(runtime:runtime,now:{time},schedule:false,presentation:p)
+   let token=String(repeating:"a",count:64),session=String(repeating:"b",count:64)
+   _=try badge.handle(method:"controlBadge.begin",params:["token":token,"sessionToken":session,"expectedApp":"com.fixture.app","pid":Int32(42),"processStartToken":"100:1","windowBounds":["x":0.0,"y":26.0,"width":900.0,"height":700.0],"durationMs":300])
+   _=try badge.handle(method:"controlBadge.end",params:["token":token])
+   available=false;time=105;XCTAssertEqual(badge.refresh(),"shown");XCTAssertEqual(measurements,2);XCTAssertEqual(suspends,0)
+   bounds.origin.x=100;time=105.5;XCTAssertEqual(badge.refresh(),"shown");XCTAssertEqual(measurements,2)
+   front=99;XCTAssertEqual(badge.refresh(),"hidden");XCTAssertEqual(suspends,1)
+   front=42;XCTAssertEqual(badge.refresh(),"shown");XCTAssertEqual(resumes,1)
+   time=106.1;XCTAssertEqual(badge.refresh(),"placementUnavailable");XCTAssertEqual(suspends,2)
+   available=true;time=107.2;XCTAssertEqual(badge.refresh(),"shown");XCTAssertEqual(resumes,2)
+   _=try badge.handle(method:"controlBadge.releaseSession",params:["sessionToken":session]);XCTAssertEqual(hidden,1)
+  }
+ }
+ func testTransientAXFallbackNeverReusesAnchorAfterResizeOrWindowReplacement()async throws {
+  try await MainActor.run {
+   var time=100.0,available=true,id:UInt32=7,hidden=0
+   var bounds=CGRect(x:0,y:26,width:900,height:700)
+   let runtime=WindowSessionKeyRuntime(process:{_ in(getuid(),"100:1","com.fixture.app")},foreground:{42},windows:{[SessionKeyWindow(id:id,pid:42,layer:0,visible:true,alpha:1,bounds:bounds)]},session:{true},secure:{false})
+   var p=BrowserBadgePresentation(begin:{_ in XCTFail("unverified fallback");return nil},move:{_,_ in},hide:{_ in hidden+=1},renew:{_ in})
+   p.measure={_,_ in available ? ControlBadgeAnchor(headerCenter:24,leading:68):nil};p.beginAnchored={_,_ in 1};p.suspend={_ in}
+   let badge=BrowserControlBadge(runtime:runtime,now:{time},schedule:false,presentation:p)
+   _=try badge.handle(method:"controlBadge.begin",params:["token":String(repeating:"c",count:64),"sessionToken":String(repeating:"d",count:64),"expectedApp":"com.fixture.app","pid":Int32(42),"processStartToken":"100:1","windowBounds":["x":0.0,"y":26.0,"width":900.0,"height":700.0],"durationMs":300])
+   available=false;time=100.2;bounds.size.width=1000;XCTAssertEqual(badge.refresh(),"placementUnavailable")
+   bounds.size.width=900;time=100.3;XCTAssertEqual(badge.refresh(),"placementUnavailable")
+   time=105;bounds.size.width=1000;XCTAssertEqual(badge.refresh(),"placementUnavailable")
+   bounds.size.width=900;time=105.6;XCTAssertEqual(badge.refresh(),"placementUnavailable")
+   id=8;XCTAssertEqual(badge.refresh(),"unavailable");XCTAssertEqual(hidden,1)
+  }
+ }
+}
+
+extension BadgeHeaderPlacementTests {
+ func testVerifiedAnchorHidesBehindForeignOverlayAndRejectsDuplicateWindowNumber()async throws {
+  try await MainActor.run {
+   var hidden=0,suspends=0,resumes=0
+   let bounds=CGRect(x:0,y:26,width:900,height:700)
+   let owned=SessionKeyWindow(id:7,pid:42,layer:0,visible:true,alpha:1,bounds:bounds)
+   var rows=[owned]
+   let runtime=WindowSessionKeyRuntime(process:{_ in(getuid(),"100:1","com.fixture.app")},foreground:{42},windows:{rows},session:{true},secure:{false})
+   var p=BrowserBadgePresentation(begin:{_ in XCTFail("unverified fallback");return nil},move:{_,_ in},hide:{_ in hidden+=1},renew:{_ in})
+   p.measure={_,_ in ControlBadgeAnchor(headerCenter:24,leading:68)};p.beginAnchored={_,_ in 1};p.suspend={_ in suspends+=1};p.resume={_ in resumes+=1}
+   let badge=BrowserControlBadge(runtime:runtime,schedule:false,presentation:p)
+   _=try badge.handle(method:"controlBadge.begin",params:["token":String(repeating:"e",count:64),"sessionToken":String(repeating:"f",count:64),"expectedApp":"com.fixture.app","pid":Int32(42),"processStartToken":"100:1","windowBounds":["x":0.0,"y":26.0,"width":900.0,"height":700.0],"durationMs":300])
+   let frame=CGRect(x:68,y:41,width:46,height:18)
+   rows=[SessionKeyWindow(id:8,pid:99,layer:24,visible:true,alpha:1,bounds:frame),owned]
+   XCTAssertEqual(badge.refresh(),"hidden");XCTAssertEqual(suspends,1)
+   // The helper's own indicator is never mistaken for a foreign overlay.
+   rows=[SessionKeyWindow(id:9,pid:getpid(),layer:24,visible:true,alpha:1,bounds:frame),owned]
+   XCTAssertEqual(badge.refresh(),"shown");XCTAssertEqual(resumes,1)
+   rows=[SessionKeyWindow(id:8,pid:99,layer:24,visible:true,alpha:1,bounds:CGRect(x:500,y:200,width:100,height:100)),owned]
+   XCTAssertEqual(badge.refresh(),"shown")
+   rows=[owned,SessionKeyWindow(id:7,pid:99,layer:0,visible:true,alpha:1,bounds:bounds)]
+   XCTAssertEqual(badge.refresh(),"unavailable");XCTAssertEqual(hidden,1)
+  }
+ }
+}

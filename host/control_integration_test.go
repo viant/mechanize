@@ -259,7 +259,11 @@ func TestHostNativeDispatchConsentCleanup(t *testing.T) {
 				step.Action = "app.open"
 				step.Target.Locator = nil
 			}
+			checksBefore := f.executableChecks
 			result, err := h.execute(bound, f.principal, step, nil)
+			if mode == "clean" && f.executableChecks-checksBefore != 1 {
+				t.Errorf("one native dispatch repeated admission through policy: executable checks=%d want1", f.executableChecks-checksBefore)
+			}
 			if binding, ok := auth.ConsentBindingFromContext(bound); !ok || binding.GrantID != requestedGrantID {
 				t.Fatal("cleanup changed caller consent binding")
 			}

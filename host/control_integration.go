@@ -129,6 +129,10 @@ func nativeControlUnavailable(caps map[string]bool, reasons []map[string]string,
 	}
 }
 func (h *Host) nativeControlPolicy(ctx context.Context, p auth.Principal, caps map[string]bool, reasons ...map[string]string) bool {
+	return h.nativeControlPolicyAdmitted(ctx, p, caps, nil, reasons...)
+}
+
+func (h *Host) nativeControlPolicyAdmitted(ctx context.Context, p auth.Principal, caps map[string]bool, admission *NativeControlAdmission, reasons ...map[string]string) bool {
 	tabActivation := caps["web:browser.activateTab"] && p.HasScope("desktop:control")
 	originOpening := caps["web:browser.openOrigin"] && p.HasScope("desktop:control")
 	// A native grant cannot qualify a renderer or browser executor generation.
@@ -165,9 +169,11 @@ func (h *Host) nativeControlPolicy(ctx context.Context, p auth.Principal, caps m
 		nativeControlUnavailable(caps, reasons, reason)
 		return webMutation
 	}
-	if _, err := h.admitNativeControl(ctx, p); err != nil {
-		nativeControlUnavailable(caps, reasons, nativeControlAdmissionReason(err))
-		return webMutation
+	if admission == nil || !h.nativeControl.admissionCurrent(ctx, p, *admission) {
+		if _, err := h.admitNativeControl(ctx, p); err != nil {
+			nativeControlUnavailable(caps, reasons, nativeControlAdmissionReason(err))
+			return webMutation
+		}
 	}
 	caps["native:appLaunch"] = true
 	if h.nativeControl.options.SessionText {
@@ -208,7 +214,7 @@ func (h *Host) executeNativeControl(ctx context.Context, p auth.Principal, step 
 	if admission.Epoch != scope.LeaseEpoch {
 		return result, session.ErrNoLease
 	}
-	policy, err := h.Policy(ctx, p)
+	policy, err := h.policy(ctx, p, &admission)
 	if err != nil {
 		return result, err
 	}
