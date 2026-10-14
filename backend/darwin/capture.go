@@ -80,6 +80,8 @@ func (e *CaptureError) Diagnostic() (string, string) {
 		return "", ""
 	}
 	switch e.CauseCode {
+	case "windowKeyboardUnqualified", "sessionUnqualified", "foregroundRefreshUnavailable":
+		return e.Phase, e.CauseCode
 	case "unavailable", "unauthorized", "cancelled", "deadline", "nativeCleanupUnknown", "nativeUnqualified", "consentCleanupUnconfirmed", "permissionRequired", "capabilityUnavailable", "staleFramePermit", "permissionDenied", "targetNotFound", "staleReference", "staleEpoch", "captureTooLarge", "captureOffDisplay", "captureAmbiguousDisplay", "captureUnqualified", "invalidScope", "staleLease", "invalidPermit", "frameEvidenceMismatch", "framePermitActive":
 		return e.Phase, e.CauseCode
 	}

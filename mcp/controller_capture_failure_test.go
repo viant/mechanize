@@ -164,3 +164,30 @@ func TestFrameCaptureClosedPhaseSurvivesControllerProjection(t *testing.T) {
 		t.Fatal("unbounded capture metadata leaked")
 	}
 }
+
+func TestFrameRecipientRejectionsSurviveCanonicalControllerFailure(t *testing.T) {
+	for _, code := range []string{"windowKeyboardUnqualified", "sessionUnqualified", "foregroundRefreshUnavailable"} {
+		for _, cleanup := range []bool{true, false} {
+			for _, dispatch := range []string{"notDispatched", "unknown"} {
+				t.Run(code+"/"+dispatch+"/"+map[bool]string{true: "clean", false: "uncertain"}[cleanup], func(t *testing.T) {
+					failure := &native.CaptureError{Cause: &native.NativeError{Code: code, Message: "PRIVATE_CANARY"}, Phase: "nativeCapture", CauseCode: code, CleanupConfirmed: cleanup, DispatchState: dispatch}
+					d, id, ctx, _ := controllerFixture(t, func(deps *Dependencies) {
+						deps.CaptureWindowFrame = func(context.Context, auth.Principal, model.Surface, int32, uint32) (data.ArtifactReference, data.ArtifactReference, native.WindowFrameCapture, error) {
+							return data.ArtifactReference{}, data.ArtifactReference{}, native.WindowFrameCapture{}, failure
+						}
+					})
+					session := controllerBody(t, controllerCall(t, d, ctx, id, "mechanize_session_open", map[string]any{"name": "generic recipient rejection"}))["sessionId"].(string)
+					out := controllerCall(t, d, ctx, id, "mechanize_capture_window_frame", CaptureWindowInput{SessionID: session, GrantID: "fixture-grant", Purpose: "Inspect generic fixture", Surface: model.Surface{Kind: "native", BundleID: "com.example.Fixture", ProcessID: 71, ProcessStartToken: "71:1"}, PID: 71, WindowID: 2})
+					body := controllerBody(t, out)
+					if out.IsError == nil || !*out.IsError || body["code"] != "captureFailed" || body["capturePhase"] != "nativeCapture" || body["captureCause"] != code || body["cleanupConfirmed"] != cleanup || body["dispatchState"] != dispatch {
+						t.Fatal("finite frame rejection or original outcome lost", body)
+					}
+					raw, _ := json.Marshal(out)
+					if strings.Contains(string(raw), "PRIVATE_CANARY") || len(out.Content) != 1 {
+						t.Fatal("native private message entered controller response")
+					}
+				})
+			}
+		}
+	}
+}
