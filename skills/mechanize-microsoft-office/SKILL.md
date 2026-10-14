@@ -5,7 +5,7 @@ description: Use Mechanize MCP and Endly to operate Microsoft Word, Excel, Power
 
 # Microsoft Office through Mechanize
 
-Guide version 0.15.3. Quality guidance adapted from bundled Codex Office skills
+Guide version 0.15.4. Quality guidance adapted from bundled Codex Office skills
 26.909.12148; see [provenance and adaptation boundaries](references/sources.md).
 Live evidence remains case-specific on Office 16.113.3/macOS 27.0. Read the
 [qualification summary](references/qualification-status.md) and relevant case
@@ -15,6 +15,8 @@ before execution. New planning or validation advice is not new GUI qualification
 
 - Capability assessment, connection prerequisites and choosing an observed recipe:
   [getting started and support matrix](references/getting-started.md).
+- A complete Excel/Word/email case, including GUI clipboard transfer and Finder
+  file attachments: [market-trends handoff](references/market-trends-handoff.md).
 - Excel analysis, formulas, typed values, recalculation and checks:
   [Excel quality](references/excel-quality.md).
 - Word structure, templates, styles, review state and pagination:
