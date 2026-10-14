@@ -88,3 +88,34 @@ test('snapshot refusal or surviving original target cannot publish executor or c
  });
 });
 module.exports={unknownFixture,restartUnknown,snapshotResponder,retire};
+
+test('same-fence qualification retires independently absent UNKNOWN target without requiring ready inventory',async t=>{
+ for(const journal of ['initial','adopted'])await t.test(journal,async()=>{
+ const {f,c}=await unknownFixture(),before=JSON.stringify(f.storage.mechanizePlaywrightJournalV1),inputs=f.state.debuggerInputs.length;
+ if(journal==='adopted'){
+  const prior={...grant,brokerEpoch:'prior-broker',channelEpoch:'prior-channel'},nonce='a'.repeat(64);
+  f.storage.mechanizeReconnect={version:1,phase:'adopted',nonce,oldFence:prior,newFence:grant,history:[{nonce,oldFence:prior,newFence:grant,executors:[]}]};
+ }
+ const originalJournal=JSON.stringify(f.storage.mechanizeReconnect);
+ f.state.inventoryTabs=[];
+ snapshotResponder(f,c,grant);
+ await f.receive({type:'processQualified',...grant,fixtureOnly:false,profileQualified:true,scopeQualified:true,executorQualified:false,executorChallenge:'same-fence-challenge',mutationFingerprintVersion:2,reconnectBindingsVersion:1});
+ assert.ok(f.messages.some(m=>m.type==='executorPrepared'),'same-fence retained UNKNOWN stranded independent absent-target proof '+JSON.stringify(f.messages.map(m=>({type:m.type,code:m.error?.code,phase:m.reconnectPhase,reason:m.reconnectReason}))));
+ assert.equal(f.unknownCount(),0);assert.equal(JSON.stringify(f.storage.mechanizePlaywrightJournalV1),before);assert.equal(JSON.stringify(f.storage.mechanizeReconnect),originalJournal);assert.equal(f.state.debuggerInputs.length,inputs);
+ });
+});
+test('same-fence retirement refuses live replacement ambiguous and unbound target hazards',async t=>{
+ for(const mode of ['liveTab','replacementTab','liveTarget','ambiguousTarget','failedCensus','malformedCensus','unbound','refused'])await t.test(mode,async()=>{
+ const {f,c}=await unknownFixture(),before=JSON.stringify(f.storage.mechanizePlaywrightJournalV1),journal=JSON.stringify(f.storage.mechanizeReconnect),inputs=f.state.debuggerInputs.length;
+ f.state.inventoryTabs=[];
+ if(mode==='liveTab'||mode==='replacementTab')f.state.inventoryTabs=[{id:7,url:'https://fixture.example.test/replacement'}];
+ if(mode==='liveTarget')f.state.debuggerTargets=[{id:'old-target',type:'page',tabId:7}];
+ if(mode==='ambiguousTarget')f.state.debuggerTargets=[{id:'opaque-target',type:'page'}];
+ if(mode==='failedCensus')f.state.rejectTargets=true;
+ if(mode==='malformedCensus')f.state.debuggerTargets='invalid';
+ if(mode==='unbound')f.reconnectBarrier('unknown');
+ snapshotResponder(f,c,grant,{refuse:mode==='refused'});
+ await f.receive({type:'processQualified',...grant,fixtureOnly:false,profileQualified:true,scopeQualified:true,executorQualified:false,executorChallenge:'same-fence-challenge',mutationFingerprintVersion:2,reconnectBindingsVersion:1});
+ assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));assert.ok(f.unknownCount()>0);assert.equal(JSON.stringify(f.storage.mechanizePlaywrightJournalV1),before);assert.equal(JSON.stringify(f.storage.mechanizeReconnect),journal);assert.equal(f.state.debuggerInputs.length,inputs);
+ });
+});

@@ -1063,7 +1063,7 @@ function reconnectBooleanValidation(validate){
  try{return validate()===true;}catch{return false;}finally{reconnectDiagnosticReason=reason;if(journal)journal.reason=journalReason;}
 }
 function pendingReconnectValid(value,lastGrant){return reconnectBooleanValidation(()=>pendingReconnectValidCore(value,lastGrant));}
-function pendingReconnectValidCore(value,lastGrant) {
+function pendingReconnectValidCore(value,lastGrant,allowSameFenceRetirement=false) {
   if(value?.archive!==undefined&&!reconnectArchiveReferenceValid(value.archive,value.history))return false;
   try{reconnectCanonical(value);}catch{return false;}
   const nonces=new Set();
@@ -1073,7 +1073,7 @@ function pendingReconnectValidCore(value,lastGrant) {
     const recovery=record?.version>1;
     if(depth>=MAX_RECONNECT_VERSION||!record||!reconnectVersionValid(record.version)||!reconnectCoreKeys(record,recovery)||record.phase!=="pending"||
        typeof record.nonce!=="string"||!/^[a-f0-9]{64}$/.test(record.nonce)||nonces.has(record.nonce)||!reconnectFenceValid(record.oldFence)||!reconnectFenceValid(record.newFence)||
-       !sameReconnectFence(record.oldFence,expectedOld)||record.oldFence.scopeHash!==record.newFence.scopeHash||sameReconnectFence(record.oldFence,record.newFence)||
+       !sameReconnectFence(record.oldFence,expectedOld)||record.oldFence.scopeHash!==record.newFence.scopeHash||sameReconnectFence(record.oldFence,record.newFence)&&!(allowSameFenceRetirement&&depth===0&&record.version===1&&!recovery)||
        !Array.isArray(record.history)||record.history.length>=64||history.some(entry=>entry?.nonce===record.nonce))return false;
     nonces.add(record.nonce);
     if(activeReconnectJournal(record)&&!reconnectAuditConsistent(sourceRecord))return false;
@@ -1871,12 +1871,15 @@ async function receiveUnknownTargetRetirement(command){
 // held through executorPrepared; Done acknowledges rows, never business outcomes.
 async function retireReconnectUnknownTargets(journal,previous,candidate,enrollment,command,ownPort,qualification){
  if(!unknownAttempts.size)return;
- if(command.type!=='processQualified'||!previous||sameReconnectFence(previous,candidate)||!setupFence||mutationBusy||privatePending||privateAdmission||privateFlow||privatePrivacy||lifecycleGuardId||activeBrowserInputs.size||setupActiveCommands!==1)throw reconnectRefuse('unknownReceipts');
+ if(command.type!=='processQualified'||!previous||!setupFence||mutationBusy||privatePending||privateAdmission||privateFlow||privatePrivacy||lifecycleGuardId||activeBrowserInputs.size||setupActiveCommands!==1)throw reconnectRefuse('unknownReceipts');
+ const sameFence=sameReconnectFence(previous,candidate);
  let pending=journal;
- if(!pendingReconnectValid(pending,previous)){
-  pending={version:activeReconnectJournal(journal)?1:journal?.version||1,phase:'pending',nonce:Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join(''),oldFence:reconnectFence(previous),newFence:reconnectFence(candidate),history:journal?.history||[],...(journal?.archive?{archive:journal.archive}:{}),...(journal?.recovery?{recovery:journal.recovery}:{})};
+ if(sameFence || !pendingReconnectValid(pending,previous)){
+  pending={version:sameFence?1:activeReconnectJournal(journal)?1:journal?.version||1,phase:'pending',nonce:Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join(''),oldFence:reconnectFence(previous),newFence:reconnectFence(candidate),history:journal?.history||[],...(journal?.archive?{archive:journal.archive}:{}),...(!sameFence&&journal?.recovery?{recovery:journal.recovery}:{})};
  }
- if(!pendingReconnectValid(pending,previous))throw reconnectJournalRefuse('lineageInvalid');
+ // Same-fence snapshots are transient retirement metadata, never persisted or
+ // adopted. Ordinary handoff validation still rejects an identical fence.
+ if(!(sameFence?reconnectBooleanValidation(()=>pendingReconnectValidCore(pending,previous,true)):pendingReconnectValid(pending,previous)))throw reconnectJournalRefuse('lineageInvalid');
  await verifyReconnectArchives(pending,qualification);
  const attempts=[...unknownAttempts.keys()].sort();
  if(attempts.length>512||attempts.some(id=>!/^[a-f0-9]{64}$/.test(id)))throw reconnectRefuse('unknownReceipts');
@@ -1987,7 +1990,10 @@ async function receiveCommand(command, qualification) {
       if (![1,2].includes(mutationFingerprintVersion)) { replyTo({type:"attention", error:MechanizeProtocol.error("executorBindingFailed", "Supported mutation fingerprint negotiation required")}); return; }
       const candidate = {mutationFingerprintVersion, brokerEpoch: command.brokerEpoch, channelEpoch: command.channelEpoch, scopeHash: command.scopeHash};
       if(changedFence && command.type!=="processQualified"){replyTo({type:"attention",error:reconnectFail()});return;}
-      if(unknownAttempts.size&&changedFence)await retireReconnectUnknownTargets(savedReconnect,lastGrant,candidate,scope,command,commandPort,qualification);
+      // Unbound/legacy unknowns keep the original conservative readiness barrier.
+      // Only exact retained target tuples can use same-fence retirement metadata.
+      const sameFenceTargets=lastGrant&&[...unknownAttempts].every(([id,record])=>record&&/^[a-f0-9]{64}$/.test(id));
+      if(unknownAttempts.size&&(changedFence||sameFenceTargets))await retireReconnectUnknownTargets(savedReconnect,lastGrant,candidate,scope,command,commandPort,qualification);
       if(mutationBusy||unknownAttempts.size||privatePending||privateAdmission||privateFlow||privatePrivacy||privateRedactions.length){replyTo({type:'attention',error:changedFence?reconnectFail():MechanizeProtocol.error('executorNotQuiescent','Active executor work requires reconciliation')});return;}
       if (command.type === "processQualified") {
         const trustScope = command.trustScope === undefined || command.trustScope === "" ? "profile" : command.trustScope;
@@ -2029,7 +2035,7 @@ async function receiveCommand(command, qualification) {
       if (snapshot.truncated) { replyTo({type: "attention", error: MechanizeProtocol.error("inventoryIncomplete", "Complete root inventory required")}); return; }
       if(port!==commandPort)throw reconnectFail();
       const emptyRecovery=Boolean(reconnectRecord)&&savedReconnect?.phase==="pending";
-      const verifyCommit=emptyRecovery||Boolean(reconnectRecord?.archive||reconnectRecord?.recovery||reconnectRecord?.audit||qualification.retirementSnapshot);
+      const verifyCommit=Boolean(reconnectRecord)&&(emptyRecovery||Boolean(reconnectRecord.archive||reconnectRecord.recovery||reconnectRecord.audit||qualification.retirementSnapshot));
       try {
         if(verifyCommit)await reconnectRecoveryChecks.get(reconnectRecord)(false);
         // Obtain commit readiness while Host admission stays held. Lost
@@ -2385,7 +2391,7 @@ async function connectNativeOnce(token,valid=()=>true) {
     }catch{metadataStartupBarrier='inventoryUnavailable';}
     // This fixed metadata hello is independent of secret/document visibility.
     // No retained document or input payload is replayed on a replacement port.
-    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,playwrightTargetRetirementVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:33,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
+    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,playwrightTargetRetirementVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:34,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
 
   } catch {
     if (lifecycleGuardId) connectionAttention = "lifecycleInhibited";

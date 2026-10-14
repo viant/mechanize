@@ -522,3 +522,21 @@ func TestProductionWorkerPendingArchiveRestartThroughBindingTransport(t *testing
 		t.Fatal("metadata reference granted executor authority")
 	}
 }
+
+func TestSameFenceLineageIsOnlyExactRetirementMetadata(t *testing.T) {
+	scope := strings.Repeat("c", 64)
+	current := ReconnectFence{BrokerEpoch: "current-broker", ChannelEpoch: "current-channel", ScopeHash: scope}
+	raw, _ := json.Marshal(map[string]any{"version": 1, "phase": "pending", "nonce": strings.Repeat("a", 64), "oldFence": current, "newFence": current, "history": []any{}})
+	if _, _, err := reconnectBindingLineage(raw, scope); err == nil {
+		t.Fatal("ordinary identical-fence handoff accepted")
+	}
+	fences, _, err := reconnectBindingLineage(raw, scope, current)
+	if err != nil || len(fences) != 1 || fences[0] != current {
+		t.Fatal("exact retirement snapshot rejected", err)
+	}
+	other := current
+	other.ChannelEpoch = "other-channel"
+	if _, _, err = reconnectBindingLineage(raw, scope, other); err == nil {
+		t.Fatal("stale generation borrowed retirement snapshot")
+	}
+}

@@ -151,7 +151,8 @@ func decodeReconnectClosed(raw []byte, out any) error {
 
 // The journal itself stays extension-local. Its exact bytes bind the request;
 // only bounded old/new fence lineage is admitted to the generated DB reader.
-func reconnectBindingLineage(raw json.RawMessage, scope string) ([]ReconnectFence, string, error) {
+func reconnectBindingLineage(raw json.RawMessage, scope string, retirementCurrent ...ReconnectFence) ([]ReconnectFence, string, error) {
+	allowSameFence := len(retirementCurrent) == 1
 	if len(raw) == 0 || len(raw) > MaxFrameBytes {
 		return nil, "", errReconnectBindings
 	}
@@ -199,7 +200,7 @@ func reconnectBindingLineage(raw json.RawMessage, scope string) ([]ReconnectFenc
 			Audit          json.RawMessage  `json:"audit,omitempty"`
 			RecoveryFences []ReconnectFence `json:"recoveryFences,omitempty"`
 		}
-		if decodeReconnectClosed(value, &r) != nil || r.Phase != "pending" || r.Version < 1 || r.Version > 6 || !setupHash.MatchString(r.Nonce) || seenNonce[r.Nonce] || r.Old == r.New || len(r.History) > 64 {
+		if decodeReconnectClosed(value, &r) != nil || r.Phase != "pending" || r.Version < 1 || r.Version > 6 || !setupHash.MatchString(r.Nonce) || seenNonce[r.Nonce] || r.Old == r.New && !(allowSameFence && depth == 0 && r.Version == 1 && r.Recovery == nil && r.Format == "" && r.Old == retirementCurrent[0]) || len(r.History) > 64 {
 			return errReconnectBindings
 		}
 		seenNonce[r.Nonce] = true
@@ -382,7 +383,11 @@ func (b *Broker) acceptReconnectBindings(c *channel, conn net.Conn, raw []byte) 
 		requested[id] = true
 	}
 	request := envelope.reconnectBindingsRequest
-	fences, digest, e := reconnectBindingLineage(request.Pending, request.ScopeHash)
+	var retirementFence []ReconnectFence
+	if len(envelope.TargetRetirementAttempts) > 0 {
+		retirementFence = []ReconnectFence{{BrokerEpoch: request.BrokerEpoch, ChannelEpoch: request.ChannelEpoch, ScopeHash: request.ScopeHash}}
+	}
+	fences, digest, e := reconnectBindingLineage(request.Pending, request.ScopeHash, retirementFence...)
 	if e != nil {
 		return true
 	}

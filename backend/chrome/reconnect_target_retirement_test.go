@@ -11,13 +11,16 @@ import (
 )
 
 func TestReconnectUnknownTargetRetirementPreservesAuditAndRejectsChangedACK(t *testing.T) {
-	for _, mode := range []string{"valid", "inactivePrivacy", "wrongLease", "wrongFingerprint", "wrongIdentity", "knownOutcome", "otherHazard", "legacy"} {
+	for _, mode := range []string{"valid", "sameFence", "sameFenceWrongACK", "sameFenceWrongGeneration", "inactivePrivacy", "wrongLease", "wrongFingerprint", "wrongIdentity", "knownOutcome", "otherHazard", "legacy"} {
 		t.Run(mode, func(t *testing.T) {
 			g, p, ctx, c, conn := setupFixture(t)
 			b := g.broker
 			var retainedPrivacy *credentialPrivacyState
 			lease := Lease{ID: "original-lease", Generation: 1}
 			row := ReconnectBinding{Identity: Identity{ProfileChannel: c.grant.ProfileChannel, BrowserInstance: c.grant.BrowserInstance, TabID: 7, FrameID: 0, DocumentID: "old-document", Generation: 1}, Fence: ReconnectFence{"old-broker", "old-channel", c.scopeHash}, AttemptID: strings.Repeat("d", 64), Fingerprint: strings.Repeat("e", 64), DispatchState: "unknown", ControlLease: &lease}
+			if strings.HasPrefix(mode, "sameFence") {
+				row.Fence = ReconnectFence{b.epoch, c.epoch, c.scopeHash}
+			}
 			finished := make(chan error, 1)
 			b.mu.Lock()
 			if mode == "inactivePrivacy" {
@@ -43,6 +46,9 @@ func TestReconnectUnknownTargetRetirementPreservesAuditAndRejectsChangedACK(t *t
 			}
 			b.mu.Unlock()
 			q := reconnectBindingsRequest{"reconnectBindings", c.executorChallenge, strings.Repeat("a", 64), b.epoch, c.epoch, c.scopeHash, time.Now().Add(2 * time.Second).UnixMilli(), reconnectPendingFixture(c.scopeHash)}
+			if strings.HasPrefix(mode, "sameFence") {
+				q.Pending, _ = json.Marshal(map[string]any{"version": 1, "phase": "pending", "nonce": strings.Repeat("f", 64), "oldFence": row.Fence, "newFence": row.Fence, "history": []any{}})
+			}
 			wire, _ := json.Marshal(q)
 			var request map[string]any
 			_ = json.Unmarshal(wire, &request)
@@ -81,9 +87,13 @@ func TestReconnectUnknownTargetRetirementPreservesAuditAndRejectsChangedACK(t *t
 				}
 				ack := Reply{RequestID: command.RequestID, AttemptID: row.AttemptID, Identity: row.Identity, ControlLease: &lease, FingerprintVersion: 2, FingerprintSHA256: row.Fingerprint, RetiredAuthorityQuiesced: true, DispatchState: "unknown", EffectState: "unknown"}
 				switch mode {
-				case "wrongLease":
+				case "wrongLease", "sameFenceWrongACK":
 					copied := lease
 					copied.ID = "other"
+					ack.ControlLease = &copied
+				case "sameFenceWrongGeneration":
+					copied := lease
+					copied.Generation++
 					ack.ControlLease = &copied
 				case "wrongFingerprint":
 					ack.FingerprintSHA256 = strings.Repeat("f", 64)
@@ -101,7 +111,7 @@ func TestReconnectUnknownTargetRetirementPreservesAuditAndRejectsChangedACK(t *t
 					t.Fatal(e)
 				}
 			}
-			positive := mode == "valid" || mode == "legacy" || mode == "inactivePrivacy"
+			positive := mode == "valid" || mode == "sameFence" || mode == "legacy" || mode == "inactivePrivacy"
 			if positive {
 				if !strings.Contains(string(raw), "reconnectBindingsCommitReady") {
 					t.Fatal("operational ACK did not unblock commit")
@@ -119,7 +129,7 @@ func TestReconnectUnknownTargetRetirementPreservesAuditAndRejectsChangedACK(t *t
 				t.Fatal("bounded reconnect did not finish")
 			}
 			b.mu.Lock()
-			if mode == "valid" || mode == "inactivePrivacy" {
+			if mode == "valid" || mode == "sameFence" || mode == "inactivePrivacy" {
 				if retainedPrivacy != nil && (c.privacy != retainedPrivacy || c.privacy.active) {
 					t.Fatal("metadata recovery erased or activated old private state")
 				}
