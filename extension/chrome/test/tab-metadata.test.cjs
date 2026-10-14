@@ -10,6 +10,32 @@ function fixture(){
 }
 test('exact background tab origin/path comparison ignores private query fragment and title',async()=>{const f=fixture(),r=await f.match();assert.equal(r.available,true);assert.equal(r.matchesExpectedOrigin,true);assert.equal(r.pathChecked,true);assert.equal(r.matchesExpectedPath,true);assert.ok(!JSON.stringify(r).includes('PRIVATE-CANARY'));assert.ok(!JSON.stringify(r).includes('/public/error'));assert.equal(f.state.updates,0);assert.equal(f.state.focuses,0);const mismatch=await f.match({...f.query,expectedOrigin:'https://other.test'});assert.equal(mismatch.available,true);assert.equal(mismatch.pathChecked,true);assert.equal(mismatch.matchesExpectedOrigin,false);assert.equal(mismatch.matchesExpectedPath,false)});
 test('path validation is canonical and bounded, metadata errors are value-free',async()=>{const f=fixture();for(const value of ['/../x','/%2e%2e/x','/x/%2E','/%00','/%0a','/%7f','/%C2%85','/x?key=value','/x#y','//foreign','/x\\y','/x\u0001','/%zz'])assert.equal(f.safePath('https://fixture.test',value),false,value);for(const value of ['','/','/public/error','/encoded%20path'])assert.equal(f.safePath('https://fixture.test',value),true);f.state.pending='https://fixture.test/new?PRIVATE-CANARY';const r=await f.match();assert.equal(r.reason,'pendingNavigation');assert.equal(r.pathChecked,false);assert.ok(!JSON.stringify(r).includes('PRIVATE-CANARY'))});
+test('stable committed URL metadata remains readable while resources load without authorizing document access',async()=>{
+ const f=fixture(),get=f.api.tabs.get;f.api.tabs.get=async(...args)=>({...await get(...args),status:'loading'});
+ const result=await f.match();
+ assert.equal(result.available,true);assert.equal(result.matchesExpectedOrigin,true);assert.equal(result.matchesExpectedPath,true);assert.equal(result.reason,'none');
+ assert.equal(f.state.reads,2);assert.equal(f.state.updates+f.state.focuses,0);assert.deepEqual(f.state.saved,{});
+ assert.ok(!JSON.stringify(result).includes('PRIVATE-CANARY'));
+ f.state.pending='https://other.test/provisional?PRIVATE-CANARY';
+ const pending=await f.match();assert.equal(pending.available,false);assert.equal(pending.reason,'pendingNavigation');assert.equal(pending.pathChecked,false);
+});
+test('loading URL metadata still refuses changing targets permission or ownership across samples',async()=>{
+ for(const mode of ['url','window','pending','permission','authority']){
+  const f=fixture(),get=f.api.tabs.get;let reads=0;
+  f.api.tabs.get=async(...args)=>{
+   if(++reads===2){
+    if(mode==='url')f.state.url='https://fixture.test/changed?PRIVATE-CANARY';
+    if(mode==='window')f.state.move=true;
+    if(mode==='pending')f.state.pending='https://other.test/provisional?PRIVATE-CANARY';
+    if(mode==='permission')f.state.permitted=false;
+    if(mode==='authority')f.state.current=false;
+   }
+   return {...await get(...args),status:'loading'};
+  };
+  const result=await f.match();assert.equal(result.available,false,mode);assert.equal(result.pathChecked,false,mode);assert.equal(f.state.updates+f.state.focuses,0);
+  assert.ok(!JSON.stringify(result).includes('PRIVATE-CANARY'));
+ }
+});
 test('activation changes only exact tab active state and window focus, never repeats receipt',async()=>{const f=fixture(),r=await f.activate();assert.equal(r.dispatchState,'dispatched');assert.equal(r.tabId,7);assert.equal(f.state.updates,1);assert.equal(f.state.focuses,1);assert.ok(!JSON.stringify(r).includes('PRIVATE-CANARY'));assert.ok(!JSON.stringify(f.state.saved).includes('/public/error'));assert.equal((await f.activate({...f.command,requestId:'c'.repeat(64)})).dispatchState,'dispatched');assert.equal(f.state.updates,1);assert.equal(f.state.focuses,1)});
 test('partial activation and lost persisted receipt remain unknown and never replay',async()=>{for(const flag of ['loseTab','loseWindow','failReceipt']){const f=fixture();f.state[flag]=true;const r=await f.activate();assert.equal(r.dispatchState,'unknown');f.state[flag]=false;assert.equal((await f.activate()).dispatchState,'unknown');assert.equal(f.state.updates,1);const next=await f.activate({...f.command,attemptId:'d'.repeat(64)});assert.equal(next.errorCode,'unknownEffect');assert.equal(f.state.updates,1)}});
 test('permission, target origin, moved window and stale authority deny before activation',async()=>{for(const flag of ['permitted','current','move','origin']){const f=fixture();if(flag==='origin')f.state.url='https://foreign.test/PRIVATE-CANARY';else f.state[flag]=flag==='move';const r=await f.activate();assert.equal(r.dispatchState,'notDispatched');assert.equal(f.state.updates,0);assert.equal(f.state.focuses,0);assert.ok(!JSON.stringify(r).includes('PRIVATE-CANARY'))}});
