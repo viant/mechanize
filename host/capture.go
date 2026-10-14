@@ -62,6 +62,13 @@ func (h *Host) CaptureWindow(ctx context.Context, requested auth.Principal, surf
 	if surface.ProcessID != 0 && surface.ProcessID != int(pid) {
 		return data.ArtifactReference{}, native.CapturedImage{}, errors.New("capture PID differs from narrowed native process")
 	}
+	// Ordinary observation starts a new capture interval. Drain only this
+	// caller/session's unused frame before admitting another observe lease;
+	// foreign, creating, used and uncertain intervals retain their barriers.
+	binding, _ := auth.ConsentBindingFromContext(ctx)
+	if err := h.retireUnusedWindowFrame(ctx, p, binding.SessionID); err != nil {
+		return data.ArtifactReference{}, native.CapturedImage{}, &native.CaptureError{Cause: err, CleanupConfirmed: !errors.Is(err, ErrNativeControlCleanupUnknown), DispatchState: "notDispatched", Phase: "reserve", CauseCode: windowFrameFailureCode(err)}
+	}
 	lease, err := h.AuthorizeOperation(ctx, p, surface, false, consent.Observe)
 	if err != nil {
 		return data.ArtifactReference{}, native.CapturedImage{}, err
