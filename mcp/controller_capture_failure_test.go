@@ -145,3 +145,22 @@ func TestControllerCanonicalCaptureRetainedPublication(t *testing.T) {
 		}
 	}
 }
+
+func TestFrameCaptureClosedPhaseSurvivesControllerProjection(t *testing.T) {
+	for _, cleanup := range []bool{true, false} {
+		for _, phase := range []string{"controlConsent", "admission", "nativeCapture"} {
+			input, _ := captureFailure(&native.CaptureError{Cause: &native.NativeError{Code: "PRIVATE_CANARY"}, DispatchState: "notDispatched", CleanupConfirmed: cleanup, Phase: phase, CauseCode: "consentCleanupUnconfirmed"}, data.ArtifactReference{})
+			out := projectControllerCaptureFailure(input.StructuredContent.(map[string]any))
+			body := out.StructuredContent.(map[string]any)
+			raw, _ := json.Marshal(out)
+			if body["capturePhase"] != phase || body["captureCause"] != "consentCleanupUnconfirmed" || body["cleanupConfirmed"] != cleanup || body["dispatchState"] != "notDispatched" || strings.Contains(string(raw), "PRIVATE_CANARY") {
+				t.Fatal("finite capture diagnosis lost", body)
+			}
+		}
+	}
+	input, _ := captureFailure(&native.CaptureError{Cause: &native.NativeError{Code: "PRIVATE_CANARY"}, DispatchState: "notDispatched", CleanupConfirmed: true, Phase: "PRIVATE_CANARY", CauseCode: "PRIVATE_CANARY"}, data.ArtifactReference{})
+	raw, _ := json.Marshal(input)
+	if strings.Contains(string(raw), "PRIVATE_CANARY") {
+		t.Fatal("unbounded capture metadata leaked")
+	}
+}

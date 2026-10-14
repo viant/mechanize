@@ -172,7 +172,9 @@ func projectControllerCaptureFailure(structured map[string]any) *schema.CallTool
 			}
 		}
 	}
-	out, _ := captureFailure(&native.CaptureError{Cause: cause, DispatchState: dispatch, CleanupConfirmed: cleanup}, data.ArtifactReference{})
+	phase, _ := structured["capturePhase"].(string)
+	category, _ := structured["captureCause"].(string)
+	out, _ := captureFailure(&native.CaptureError{Cause: cause, DispatchState: dispatch, CleanupConfirmed: cleanup, Phase: phase, CauseCode: category}, data.ArtifactReference{})
 	if !hasCleanup {
 		body := out.StructuredContent.(map[string]any)
 		delete(body, "cleanupConfirmed")

@@ -597,3 +597,29 @@ func TestWindowFrameExpiredPermitProjectsKnownNoInputThroughRuntime(t *testing.T
 		t.Fatal("known no-input expiry minted unresolved input", err)
 	}
 }
+
+func TestWindowFrameFailurePreservesClosedPhaseAndConfirmedCleanup(t *testing.T) {
+	for _, mode := range []string{"identity", "admission"} {
+		t.Run(mode, func(t *testing.T) {
+			h, f, _, ctx, surface := newWindowFrameHostFixture(t)
+			pid := int32(42)
+			expectedPhase, expectedCause := "identity", "staleFramePermit"
+			if mode == "identity" {
+				pid = 43
+			} else {
+				f.ready.Accessibility = false
+				expectedPhase = "admission"
+				expectedCause = "nativeUnqualified"
+			}
+			_, _, _, err := h.CaptureWindowFrame(ctx, f.principal, surface, pid, 17)
+			var capture *native.CaptureError
+			if !errors.As(err, &capture) {
+				t.Fatal("frame failure lacks cleanup provenance", err)
+			}
+			phase, cause := capture.Diagnostic()
+			if phase != expectedPhase || cause != expectedCause || !capture.CleanupConfirmed || capture.DispatchState != "notDispatched" {
+				t.Fatalf("frame phase/cleanup lost: %s %s %+v", phase, cause, capture)
+			}
+		})
+	}
+}

@@ -68,6 +68,22 @@ type CaptureError struct {
 	Cause            error
 	CleanupConfirmed bool
 	DispatchState    string
+	Phase            string
+	CauseCode        string
+}
+
+// Diagnostic accepts only closed frame-capture metadata, never provider text.
+func (e *CaptureError) Diagnostic() (string, string) {
+	switch e.Phase {
+	case "identity", "session", "reserve", "observeConsent", "controlConsent", "admission", "nativeCapture", "publication":
+	default:
+		return "", ""
+	}
+	switch e.CauseCode {
+	case "unavailable", "unauthorized", "cancelled", "deadline", "nativeCleanupUnknown", "nativeUnqualified", "consentCleanupUnconfirmed", "permissionRequired", "capabilityUnavailable", "staleFramePermit", "permissionDenied", "targetNotFound", "staleReference", "staleEpoch", "captureTooLarge", "captureOffDisplay", "captureAmbiguousDisplay", "captureUnqualified", "invalidScope", "staleLease", "invalidPermit", "frameEvidenceMismatch", "framePermitActive":
+		return e.Phase, e.CauseCode
+	}
+	return "", ""
 }
 
 func (e *CaptureError) Error() string { return "native capture failed" }

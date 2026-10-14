@@ -42,25 +42,46 @@ func framePermitRejected(message string) error {
 // publishes encrypted PNG/provenance, and returns a dedicated expiring permit.
 // An ordinary artifact ID is never interpreted as input authority.
 func (h *Host) CaptureWindowFrame(ctx context.Context, requested auth.Principal, surface model.Surface, pid int32, windowID uint32) (imageRef data.ArtifactReference, provenanceRef data.ArtifactReference, frame native.WindowFrameCapture, err error) {
+	phase := "identity"
+	primaryCode := ""
+	var record *windowFramePermit
+	defer func() {
+		if err == nil || imageRef.ID != "" {
+			return
+		}
+		clean := record == nil || record.cleanupErr == nil
+		if primaryCode == "" {
+			primaryCode = windowFrameFailureCode(err)
+		}
+		dispatch := "notDispatched"
+		var transport *native.TransportError
+		if errors.As(err, &transport) {
+			dispatch = transport.DispatchState
+		}
+		err = &native.CaptureError{Cause: err, CleanupConfirmed: clean, DispatchState: dispatch, Phase: phase, CauseCode: primaryCode}
+	}()
 	p, err := h.capturePrincipal(ctx, requested, surface)
 	if err != nil {
 		return imageRef, provenanceRef, frame, err
 	}
 	binding, ok := auth.ConsentBindingFromContext(ctx)
+	phase = "session"
 	if !ok || p.ClientID == "" || p.ClientID != requested.ClientID || !p.HasScope("desktop:control") || !p.HasScope("desktop:observe") || h.Runtime == nil || h.Runtime.CheckSession(ctx, p, binding.SessionID) != nil {
 		return imageRef, provenanceRef, frame, auth.ErrUnauthorized
 	}
+	phase = "identity"
 	if surface.ProcessID <= 0 || surface.ProcessID != int(pid) || surface.ProcessStartToken == "" || windowID == 0 || surface.ValidateProcessIdentity() != nil {
 		return imageRef, provenanceRef, frame, framePermitRejected("Exact native process birth and physical window required")
 	}
 	if h.nativeControl == nil || !h.nativeControl.options.WindowFrameClick || h.artifacts == nil || h.durable == nil {
 		return imageRef, provenanceRef, frame, captureUnsupported("Capture-bound window clicks are not enrolled")
 	}
+	phase = "session"
 	if err = h.Runtime.CheckSession(ctx, p, binding.SessionID); err != nil {
 		return imageRef, provenanceRef, frame, err
 	}
 	retained, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*native.WindowFramePermitLifetime)
-	record := &windowFramePermit{principal: p, binding: binding, surface: surface, cancel: cancel, done: make(chan struct{})}
+	record = &windowFramePermit{principal: p, binding: binding, surface: surface, cancel: cancel, done: make(chan struct{})}
 	owner := h.owner
 	if owner == nil {
 		owner = h.nativeControl.options.Owner
@@ -68,6 +89,7 @@ func (h *Host) CaptureWindowFrame(ctx context.Context, requested auth.Principal,
 	if owner != nil {
 		record.stopOwner = context.AfterFunc(owner, cancel)
 	}
+	phase = "reserve"
 	if err = h.reserveWindowFrame(ctx, p, record); err != nil {
 		cancel()
 		if record.stopOwner != nil {
@@ -80,15 +102,18 @@ func (h *Host) CaptureWindowFrame(ctx context.Context, requested auth.Principal,
 	succeeded := false
 	defer func() {
 		if !succeeded {
+			primaryCode = windowFrameFailureCode(err)
 			err = errors.Join(err, h.retireWindowFrame(record))
 			frame = native.WindowFrameCapture{}
 		}
 	}()
+	phase = "observeConsent"
 	observe, err := h.AuthorizeOperation(retained, p, surface, false, consent.Observe)
 	if err != nil {
 		return imageRef, provenanceRef, frame, err
 	}
 	defer observe.Release()
+	phase = "controlConsent"
 	record.lease, err = h.AuthorizeOperation(retained, p, surface, true, consent.Control)
 	if err != nil {
 		return imageRef, provenanceRef, frame, err
@@ -100,15 +125,18 @@ func (h *Host) CaptureWindowFrame(ctx context.Context, requested auth.Principal,
 	if ctx.Err() != nil || observe.Context.Err() != nil {
 		captureCancel()
 	}
+	phase = "admission"
 	record.admission, err = h.admitNativeControl(captureCtx, p)
 	if err != nil {
 		return imageRef, provenanceRef, frame, err
 	}
+	phase = "nativeCapture"
 	frame, err = record.admission.Gateway.CaptureWindowFrame(captureCtx, p, surface, windowID)
 	if err != nil {
 		return imageRef, provenanceRef, frame, err
 	}
 	record.frame = frame
+	phase = "publication"
 	imageRef, err = h.artifacts.publishBound(captureCtx, p, "image/png", bytes.NewReader(frame.PNG))
 	if err != nil {
 		return imageRef, provenanceRef, frame, err
@@ -362,4 +390,32 @@ func (h *Host) consumeWindowFrame(ctx context.Context, p auth.Principal, step mo
 		record.complete()
 	}
 	return lease, finish, nil
+}
+
+func windowFrameFailureCode(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline"
+	case errors.Is(err, auth.ErrUnauthorized):
+		return "unauthorized"
+	case errors.Is(err, ErrNativeControlCleanupUnknown):
+		return "nativeCleanupUnknown"
+	case errors.Is(err, ErrNativeControlUnqualified):
+		return "nativeUnqualified"
+	}
+	var detail *model.MechanizeError
+	if errors.As(err, &detail) {
+		if _, code := (&native.CaptureError{Phase: "identity", CauseCode: detail.Code}).Diagnostic(); code != "" {
+			return code
+		}
+	}
+	var failure *native.NativeError
+	if errors.As(err, &failure) {
+		if _, code := (&native.CaptureError{Phase: "nativeCapture", CauseCode: failure.Code}).Diagnostic(); code != "" {
+			return code
+		}
+	}
+	return "unavailable"
 }

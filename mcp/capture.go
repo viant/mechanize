@@ -116,6 +116,10 @@ func captureFailure(err error, ref data.ArtifactReference) (*schema.CallToolResu
 		r, rpcErr := failure(&model.MechanizeError{Code: code, Message: message, Stage: "capture", DispatchState: transport.DispatchState})
 		body := r.StructuredContent.(map[string]any)
 		body["cleanupConfirmed"] = transport.CleanupConfirmed
+		if phase, cause := transport.Diagnostic(); phase != "" {
+			body["capturePhase"] = phase
+			body["captureCause"] = cause
+		}
 		encoded, _ := result(body)
 		encoded.IsError = r.IsError
 		return encoded, rpcErr
