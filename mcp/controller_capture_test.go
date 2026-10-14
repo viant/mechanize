@@ -58,15 +58,15 @@ func TestControllerFrameCapturePreviewPreservesOriginalCoordinateAuthority(t *te
 		t.Fatal("preview not labeled")
 	}
 	wire, _ := json.Marshal(out)
-	if len(wire) > 192*1024 || bytes.Contains(wire, []byte("UNTRUSTED_TEXT_MUST_NOT_ESCAPE")) {
-		t.Fatal("bridge budget or closed projection violated", len(wire))
+	if bytes.Contains(wire, []byte("UNTRUSTED_TEXT_MUST_NOT_ESCAPE")) {
+		t.Fatal("closed projection violated")
 	}
 	images := 0
 	for _, content := range out.Content {
 		if c, ok := content.(schema.ImageContent); ok {
 			images++
 			b, e := base64.StdEncoding.DecodeString(c.Data)
-			if e != nil || len(b) > controllerFramePreviewBytes {
+			if e != nil || len(b) > MaximumInlineCaptureBytes {
 				t.Fatal("invalid bounded image")
 			}
 		}

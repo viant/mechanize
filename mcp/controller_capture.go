@@ -1,22 +1,21 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"image/png"
+	"math"
 	"strings"
 
 	"github.com/viant/mcp-protocol/schema"
 	native "github.com/viant/mechanize/backend/darwin"
 	"github.com/viant/mechanize/data"
 )
-
-// Canonical screenshots retain MaximumInlineCaptureBytes and use the existing
-// negotiated chunk transport. One-use frame previews keep their smaller budget.
-const controllerFramePreviewBytes = 96 * 1024
 
 // Frame coordinates retain their original pixel space. The preview only renders
 // evidence; clients map preview pixels to Metadata.Width/Height before a click.
@@ -103,7 +102,28 @@ func projectControllerCapture(ctx context.Context, name string, encoded []byte, 
 		return controllerRejected("unknown"), nil
 	}
 	m := frame.Metadata
-	preview, err := BuildCapturePreview(ctx, source, native.CaptureMetadata{Width: m.Width, Height: m.Height, Bytes: len(source), Bounds: m.Bounds, Scale: m.Scale, CoordinateSpace: "globalLogicalPoints"}, controllerFramePreviewBytes)
+	if len(source) <= MaximumInlineCaptureBytes {
+		// A frame within the canonical image budget remains original pixel
+		// evidence. Validate its dimensions and logical mapping without applying
+		// the display derivative's resolution or raster limits.
+		finite := func(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
+		b := m.Bounds
+		if m.Width <= 0 || m.Height <= 0 || !finite(m.Scale) || m.Scale <= 0 || m.Scale > 16 || !finite(b.X) || !finite(b.Y) || !finite(b.Width) || !finite(b.Height) || b.Width <= 0 || b.Height <= 0 || math.Abs(b.Width*m.Scale-float64(m.Width)) > 1 || math.Abs(b.Height*m.Scale-float64(m.Height)) > 1 {
+			return controllerRejected("unknown"), nil
+		}
+		config, e := png.DecodeConfig(&previewReader{ctx: ctx, Reader: bytes.NewReader(source)})
+		if e != nil || config.Width != m.Width || config.Height != m.Height {
+			return controllerRejected("unknown"), nil
+		}
+		frame.ImageReturned = true
+		out, rpc := result(controllerFrameCapture{WindowFrameCaptureResult: frame, ImageIsPreview: false})
+		if rpc != nil {
+			return nil, errors.New("controller capture unavailable")
+		}
+		out.Content = append(out.Content, schema.ImageContent{Type: "image", MimeType: "image/png", Data: image.Data})
+		return out, nil
+	}
+	preview, err := BuildCapturePreview(ctx, source, native.CaptureMetadata{Width: m.Width, Height: m.Height, Bytes: len(source), Bounds: m.Bounds, Scale: m.Scale, CoordinateSpace: "globalLogicalPoints"}, MaximumInlineCaptureBytes)
 	if err != nil {
 		return controllerRejected("unknown"), nil
 	}

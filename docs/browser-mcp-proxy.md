@@ -63,10 +63,13 @@ Capture requests require a controller-owned automation session and retain the
 host's normal consent and Vault protection checks. The human permission console
 is excluded as a capture or action target.
 
-Browser responses stay below the native messaging result budget. A frame capture
-returns a display preview of at most 96 KiB encoded image bytes, plus the original
-metadata and encrypted artifact references. `imageIsPreview` and `preview` identify
-that derivative. Preview creation does not extend the 30-second capture permit.
+Frame captures use the existing negotiated chunk transport and canonical 2 MiB
+inline image budget. A verified original PNG within that budget is returned with
+`imageIsPreview: false`. Larger originals use a display preview of at most 2 MiB
+encoded image bytes. `imageIsPreview` and `preview` identify that derivative and
+its mapping; metadata and encrypted artifact references retain their original
+identities. Use the returned `metadata.expiresAt`; preview creation does not
+extend the original capture permit.
 
 `window.clickFrame` still consumes original integer frame pixels, not preview
 pixels or global coordinates. Convert a point selected in the preview as follows:
