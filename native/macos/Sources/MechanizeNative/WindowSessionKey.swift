@@ -83,8 +83,7 @@ private func qualifySessionWindow(pid: pid_t, uid: uid_t, birth: String, bundle:
     let requestedLayer = windows.first(where: { $0.id == windowID })?.layer ?? -1
     let topID = owned.first?.id ?? 0
     let candidate = requireForeground ? owned.first : owned.first(where: { $0.id == windowID })
-    let higherOwnedInputWindow = owned.prefix(while: { $0.id != windowID }).contains(where: { supportedSessionInputWindowLayer($0.layer) })
-    guard (requireForeground || !higherOwnedInputWindow), owned.allSatisfy({ $0.alpha.isFinite && $0.alpha > 0 && $0.alpha <= 1 }), let first = candidate, first.id == windowID, supportedSessionInputWindowLayer(first.layer), windows.filter({ $0.id == windowID }).count == 1,
+    guard owned.allSatisfy({ $0.alpha.isFinite && $0.alpha > 0 && $0.alpha <= 1 }), let first = candidate, first.id == windowID, supportedSessionInputWindowLayer(first.layer), windows.filter({ $0.id == windowID }).count == 1,
           first.bounds.minX.isFinite, first.bounds.minY.isFinite, first.bounds.maxX.isFinite, first.bounds.maxY.isFinite,
           first.bounds.width > 0, first.bounds.height > 0 else { throw NativeFailure("windowKeyboardUnqualified", "Requested window is not a supported top owned window (requestedLayer=\(requestedLayer), topWindowId=\(topID))") }
     try runtime.refresh(); try check()

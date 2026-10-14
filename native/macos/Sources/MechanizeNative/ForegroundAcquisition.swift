@@ -224,11 +224,15 @@ struct NativeForegroundTarget {
   try budget.check()
  }
  // Frame clicks already require fresh pixels and the public mouse-down
- // recipient proof. Match their existing supported-input-layer stacking rule;
- // an unrelated non-input Chrome window must not force AXWindows enumeration.
- // Keyboard routes retain the stricter highest-owned-window rule.
+ // recipient proof. Select their exact supported physical window; unrelated
+ // owned windows do not establish interception at the intended click point.
+ // Keyboard routes retain the highest-owned-window rule.
  static func physicalWindowReady(_ rows:[SessionKeyWindow],pid:pid_t,windowID:UInt32,pointerDelivery:Bool)->Bool {
-  rows.first{$0.pid==pid&&$0.visible&&$0.alpha>0&&(!pointerDelivery || supportedSessionInputWindowLayer($0.layer))}?.id==windowID
+  if pointerDelivery {
+   let matches=rows.filter{$0.id==windowID}
+   return matches.count==1 && matches[0].pid==pid && matches[0].visible && matches[0].alpha.isFinite && matches[0].alpha>0 && matches[0].alpha<=1 && supportedSessionInputWindowLayer(matches[0].layer)
+  }
+  return rows.first{$0.pid==pid&&$0.visible&&$0.alpha>0}?.id==windowID
  }
  func windowReady(_ budget:Budget)throws->Bool {
   if let semanticRecipient {

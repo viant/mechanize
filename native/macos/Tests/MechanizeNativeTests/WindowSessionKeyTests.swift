@@ -38,7 +38,9 @@ final class WindowSessionKeyTests: XCTestCase {
         XCTAssertThrowsError(try qualifyWindowFrameTarget(pid: 42, uid: 501, birth: "100:1", bundle: "com.fixture.app", windowID: 100, check: {}, runtime: r))
         XCTAssertThrowsError(try qualifyWindowFrameTarget(pid: 42, uid: 501, birth: "100:2", bundle: "com.fixture.app", windowID: 99, check: {}, runtime: r))
         for layer in [NSWindow.Level.normal.rawValue, NSWindow.Level.floating.rawValue, NSWindow.Level.modalPanel.rawValue] {
-            XCTAssertThrowsError(try qualifyWindowFrameTarget(pid: 42, uid: 501, birth: "100:1", bundle: "com.fixture.app", windowID: 99, check: {}, runtime: runtime([window(100, layer: layer), window()])))
+            let covered = runtime([window(100, layer: layer), window()])
+            try qualifyWindowFrameTarget(pid: 42, uid: 501, birth: "100:1", bundle: "com.fixture.app", windowID: 99, check: {}, runtime: covered)
+            XCTAssertThrowsError(try qualify(covered))
         }
     }
     func testStaleForeignHiddenLayeredDuplicateBehindOrInvalidGeometryCannotPost() {

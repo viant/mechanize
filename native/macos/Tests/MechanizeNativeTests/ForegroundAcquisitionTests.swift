@@ -75,16 +75,22 @@ extension ForegroundAcquisitionTests {
 }
 
 extension ForegroundAcquisitionTests {
- func testPointerPreparationIgnoresNonInputLayerButRetainsModalAndKeyboardBarriers()throws {
+ func testPointerPreparationSelectsExactWindowWhileKeyboardRetainsTopWindowBarrier()throws {
   let bounds=CGRect(x:0,y:0,width:800,height:600)
   func window(_ id:UInt32,_ layer:Int,_ pid:pid_t=42)->SessionKeyWindow {SessionKeyWindow(id:id,pid:pid,layer:layer,visible:true,alpha:1,bounds:bounds)}
   let utility=window(8,101),main=window(7,0)
   XCTAssertTrue(NativeForegroundTarget.physicalWindowReady([utility,main],pid:42,windowID:7,pointerDelivery:true))
   XCTAssertFalse(NativeForegroundTarget.physicalWindowReady([utility,main],pid:42,windowID:7,pointerDelivery:false))
-  for layer in [0,3,8] {XCTAssertFalse(NativeForegroundTarget.physicalWindowReady([window(9,layer),main],pid:42,windowID:7,pointerDelivery:true))}
+  for layer in [0,3,8] {
+   XCTAssertTrue(NativeForegroundTarget.physicalWindowReady([window(9,layer),main],pid:42,windowID:7,pointerDelivery:true))
+   XCTAssertFalse(NativeForegroundTarget.physicalWindowReady([window(9,layer),main],pid:42,windowID:7,pointerDelivery:false))
+  }
   XCTAssertFalse(NativeForegroundTarget.physicalWindowReady([utility],pid:42,windowID:7,pointerDelivery:true))
+  for rows in [[window(7,0,77)],[main,main],[window(7,101)]] {
+   XCTAssertFalse(NativeForegroundTarget.physicalWindowReady(rows,pid:42,windowID:7,pointerDelivery:true))
+  }
   var activations=0,raises=0,reserves=0
-  let runtime=ForegroundAcquisitionRuntime(validate:{},ready:{NativeForegroundTarget.physicalWindowReady([utility,main],pid:42,windowID:7,pointerDelivery:true)},activate:{activations+=1;return true},needsRaise:{true},raise:{raises+=1;throw NativeFailure("incompleteObservation","Unsupported unrelated AXWindows entry")},pause:{_ in})
+  let runtime=ForegroundAcquisitionRuntime(validate:{},ready:{NativeForegroundTarget.physicalWindowReady([window(9,8),main],pid:42,windowID:7,pointerDelivery:true)},activate:{activations+=1;return true},needsRaise:{true},raise:{raises+=1;throw NativeFailure("incompleteObservation","Unsupported unrelated AXWindows entry")},pause:{_ in})
   try acquireNativeForeground(Budget(milliseconds:100),runtime:runtime,reserve:{reserves+=1},publish:{_ in})
   XCTAssertEqual(activations,0);XCTAssertEqual(raises,0);XCTAssertEqual(reserves,0)
  }
