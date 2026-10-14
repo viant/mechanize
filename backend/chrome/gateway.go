@@ -410,6 +410,12 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 		b.mu.Unlock()
 		return Reply{}, browserError("requestCapacity", "Too many pending Chrome commands", "notDispatched")
 	}
+	// Repeat the optional refresh check at actual admission: an input owner
+	// may have started after QueryReceipt selected its original attempt.
+	if !mutation && command.Action == "receipt.query" && receiptQueryOwnerActiveLocked(c, command) {
+		b.mu.Unlock()
+		return Reply{}, browserError("receiptUnavailable", "Original input reply lane is still owned", "unknown")
+	}
 	p := &pending{command: command, mutation: mutation, done: make(chan Reply, 1), publicReadContext: ctx}
 	c.pending[command.RequestID] = p
 	if mutation {
