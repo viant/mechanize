@@ -43,6 +43,16 @@ lifetime on unrelated status calls.
 Use the native API syntax in `mechanize-desktop` and `mechanize_describe`; do not
 invent arguments. Verify the new page state before continuing.
 
+If a frame reports `captureCause: windowKeyboardUnqualified`, `sessionUnqualified`
+or `foregroundRefreshUnavailable`, the physical-window route did not qualify.
+A popup or changed foreground window can make that route unsuitable. Inspect
+the dispatch and cleanup fields first. When a fresh `focusedElement` observation
+identifies the intended exact native recipient, use its advertised `fill` or
+`pressSessionKey` method instead of repeatedly requesting the main-window route.
+These methods belong to the exact element locator, not directly to
+`focusedElement()`. They retain their own ownership and focus checks; unavailable
+focused-element evidence is not permission to guess a target or replay input.
+
 `privateDOMUnavailable` restricts the web DOM route. It does not by itself forbid
 native screenshots, accessibility or pointer input. On a visibly signed-in
 page, use those advertised native tools for ordinary navigation and public form
