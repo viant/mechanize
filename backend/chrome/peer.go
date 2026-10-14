@@ -58,6 +58,9 @@ func (b *Broker) verifyChannelProcess(ctx context.Context, c *channel, revokeInv
 	if len(revokeInvalid) == 1 {
 		revoke = revokeInvalid[0]
 	}
+	if proof, ok := ctx.Value(controlAdmissionProcessKey{}).(*controlAdmissionProcess); ok && proof != nil && proof.channel == c && b.verifyPeerIdentity != nil {
+		return b.checkAdmissionProcessIdentity(ctx, c, proof, revoke)
+	}
 	return b.checkChannelProcess(ctx, c, revoke)
 }
 

@@ -180,6 +180,11 @@ func (g *Gateway) admitControlOnce(ctx context.Context, p auth.Principal, surfac
 	if err != nil {
 		return ControlAdmission{}, err
 	}
+	ctx, err = g.admissionProcessContext(ctx, candidate, channel)
+	if err != nil {
+		return ControlAdmission{}, err
+	}
+
 	g.controlMu.Lock()
 	record := g.controlRecordLocked(candidate)
 	retiring, needsObservation := record != nil && record.retiring, record == nil
