@@ -7,6 +7,7 @@ export const pageEvents=[
   'Page.loadEventFired','Page.domContentEventFired','Page.frameStoppedLoading',
   'Page.javascriptDialogOpening','Page.javascriptDialogClosed','Inspector.detached','Inspector.targetCrashed',
 ];
+const failureCodes=new Set(["playwrightAuthorityChanged", "playwrightAuthorityDenied", "playwrightAuthorityRequired", "playwrightBindingChanged", "playwrightBindingDenied", "playwrightCDPDenied", "playwrightDocumentChanged", "playwrightTargetChanged", "playwrightTargetDenied", "playwrightTargetUnpinned", "playwrightAttemptReplay", "playwrightBusy", "playwrightCommandDenied", "playwrightEnvelopeDenied", "playwrightFingerprintMismatch", "playwrightFrameTooLarge", "playwrightInputReplay", "playwrightInputSequenceDenied", "playwrightInputUncertain", "playwrightJournalInvalid", "playwrightReadInputDenied", "playwrightReceiptCapacity", "playwrightReceiptDenied", "playwrightReceiptFinal", "playwrightReceiptUncertain", "playwrightRedactionDenied", "playwrightRequestReplay", "playwrightPrivateDOMDenied", "playwrightDeadline", "playwrightRelayDenied", "playwrightUnavailable"]);
 export const isInputBoundary=(method,params={})=>method==='Input.insertText'||method==='Input.dispatchMouseEvent'&&params.type==='mousePressed'||method==='Input.dispatchKeyEvent'&&['rawKeyDown','keyDown','char'].includes(params.type);
 export function bounded(promise,deadline){
   let timer;return Promise.race([Promise.resolve(promise),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('Scoped deadline exceeded'),{code:'playwrightDeadline',dispatchState:'unknown'})),Math.max(1,deadline-Date.now()));})]).finally(()=>clearTimeout(timer));
@@ -17,7 +18,7 @@ export async function createScopedRelay(adapter,{deadlineUnixMs,onDispatch=()=>{
   const initial=await bounded(adapter.send('Page.getFrameTree',{},deadlineUnixMs),deadlineUnixMs);
   const targetId=initial.frameTree?.frame?.id,sessionId=randomBytes(16).toString('hex');
   const targetInfo={targetId,browserContextId:'mechanize-scoped-context',type:'page',title:'',url:adapter.origin,attached:true,canAccessOpener:false};
-  let closed=false,closePromise,rootFrameId=initial.frameTree?.frame?.id,mutation=false,dispatched=false,sequence=Promise.resolve();
+  let failure,closed=false,closePromise,rootFrameId=initial.frameTree?.frame?.id,mutation=false,dispatched=false,sequence=Promise.resolve();
   if(!rootFrameId)throw Error('Bound main frame required');
   const transport={send(message){
     sequence=sequence.then(async()=>{
@@ -25,15 +26,17 @@ export async function createScopedRelay(adapter,{deadlineUnixMs,onDispatch=()=>{
       try{
         if(!Number.isSafeInteger(message.id)||message.id<=0||typeof message.method!=='string'||Object.keys(message).some(k=>!['id','method','params','sessionId'].includes(k)))throw Error('Invalid CDP envelope');
         const result=await route(message);emit({id:message.id,result,...(message.sessionId?{sessionId:message.sessionId}:{})});
-      }catch{
-        emit({id:message.id,error:{code:-32000,message:'Scoped Playwright relay unavailable'},...(message.sessionId?{sessionId:message.sessionId}:{})});
+      }catch(error){
+        rememberFailure(error,'relay.send');
+        // Deliver this one terminal response before close suppresses queued events.
+        try{emit({id:message.id,error:{code:-32000,message:'Scoped Playwright relay unavailable'},...(message.sessionId?{sessionId:message.sessionId}:{})},true);}catch{}
         // Playwright may queue move/down/up concurrently. Stop the whole relay
         // on a preparation error before any already queued input can dispatch.
         void close().catch(()=>{});
       }
     });
   },close(){void close().catch(()=>{});}};
-  const emit=value=>{if(!closed&&Buffer.byteLength(JSON.stringify(value))<=512*1024)queueMicrotask(()=>{if(!closed)transport.onmessage?.(value);});};
+  const emit=(value,terminal=false)=>{if(!closed&&Buffer.byteLength(JSON.stringify(value))<=512*1024){if(terminal)transport.onmessage?.(value);else queueMicrotask(()=>{if(!closed)transport.onmessage?.(value);});}};
   const unsubscribe=adapter.onEvent(event=>{
     if(closed||!pageEvents.includes(event.method))return;
     const p=event.params||{};
@@ -43,7 +46,10 @@ export async function createScopedRelay(adapter,{deadlineUnixMs,onDispatch=()=>{
     if(event.method==='Page.lifecycleEvent'&&p.frameId!==rootFrameId)return;
     emit({method:event.method,params:p,sessionId});
   });
-  const deadlineTimer=setTimeout(()=>{void close().catch(()=>{});},Math.max(1,deadlineUnixMs-Date.now()));
+  const deadlineTimer=setTimeout(()=>{rememberFailure({code:'playwrightDeadline'},'relay.deadline');void close().catch(()=>{});},Math.max(1,deadlineUnixMs-Date.now()));
+  function rememberFailure(error,stage){
+    failure??=Object.freeze({code:failureCodes.has(error?.code)?error.code:'playwrightUnavailable',stage});
+  }
   function close(){
     if(closePromise)return closePromise;
     closed=true;clearTimeout(deadlineTimer);
@@ -79,5 +85,5 @@ export async function createScopedRelay(adapter,{deadlineUnixMs,onDispatch=()=>{
     }
     return result;
   }
-  return {transport,targetId,beginMutation(){mutation=true;},close};
+  return {transport,targetId,beginMutation(){mutation=true;},failure:()=>failure,close};
 }

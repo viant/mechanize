@@ -94,7 +94,7 @@ export class PlaywrightEngine {
         result={dispatchState:'notDispatched',effectState:'none',value};
       }
     }catch(error){
-      result={dispatchState:dispatched?'unknown':'notDispatched',effectState:dispatched?'unknown':'none',errorCode:error?.code?.startsWith('playwright')?error.code:error instanceof playwrightErrors.TimeoutError?'playwrightDeadline':'playwrightUnavailable'};
+      result={dispatchState:dispatched?'unknown':'notDispatched',effectState:dispatched?'unknown':'none',errorCode:relay?.failure()?.code??(error?.code?.startsWith('playwright')?error.code:error instanceof playwrightErrors.TimeoutError?'playwrightDeadline':'playwrightUnavailable')};
     }finally{
       if(recorded){
         const unavailable=()=>({dispatchState:dispatched?'unknown':'notDispatched',effectState:dispatched?'unknown':'none',errorCode:'playwrightReceiptUncertain'});

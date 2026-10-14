@@ -34,7 +34,7 @@ test('real Chrome loading source retirement uses committed document absence whil
     const lease={id:'fixture-lease',generation:1};privateAdmission={port,identity:fixtureBase.sourceIdentity};documentControlLeases.set(fixtureSource.id+':'+frame.documentId,lease);
     fixtureFrames.length=0;await receive({...fixtureBase,mode:'capture',controlLease:lease,deadlineUnixMs:Date.now()+2000});const r=fixtureFrames.find(f=>f.type==='credentialScopeResult');
     if(!r?.ready)throw Error('fixture capture unavailable');fixtureBase.loginRouteSHA256=r.loginRouteSHA256;
-    await chrome.storage.session.set({'receipt:fixture-retained':{dispatchState:'unknown',attemptId:'fixture-retained'}});unknownAttempts.add('fixture-retained');
+    await chrome.storage.session.set({'receipt:fixture-retained':{dispatchState:'unknown',attemptId:'fixture-retained'}});retainUnknown('fixture-retained');
     for(const [obj,key]of [[chrome.tabs,'sendMessage'],[chrome.scripting,'executeScript'],[chrome.tabs,'update'],[chrome.tabs,'remove'],[chrome.debugger,'sendCommand']])obj[key]=async()=>{fixtureForbidden++;throw Error('forbidden')};
     return {captured:true};
    };

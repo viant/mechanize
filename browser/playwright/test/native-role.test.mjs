@@ -55,7 +55,7 @@ async function executeCase(browser,item,mode='normal'){
   const command={requestId:'role-guard',action:click?'element.press':'read',identity,brokerEpoch:'fixture',channelEpoch:'fixture',scopeHash:'a'.repeat(64),deadlineUnixMs:Date.now()+5000,locator:{strategy:'role',value:role,exact:true,...(name===undefined?{}:{name})},...(click?{attemptId:'role-attempt',controlLease:{id:'fixture-lease',generation:1},fingerprintVersion:2}:{args:{attribute:'text'}})};
   if(click)command.fingerprintSHA256=(await fingerprint.mutationV2(command)).sha256;
   const result=await new PlaywrightEngine(host).execute(command);
-  assert.equal(result.errorCode,mode==='normal'?undefined:'playwrightUnavailable',JSON.stringify({role,failure,code:result.errorCode,inputs}));
+  assert.equal(result.errorCode,mode==='normal'?undefined:'playwrightTargetChanged',JSON.stringify({role,failure,code:result.errorCode,inputs}));
   assert.equal(inputs,click&&mode==='normal'?1:0,role);
   if(click&&mode==='normal'&&['radio','checkbox'].includes(role))assert.equal(await locator.isChecked(),true);
   if(mode!=='normal')assert.equal(failure,'playwrightTargetChanged');

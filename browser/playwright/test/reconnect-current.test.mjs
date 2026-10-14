@@ -58,9 +58,9 @@ test('real Chrome reconnect keeps ordinary tabs and original journal while requi
     await chrome.storage.local.set({mechanizeReconnect:journal});fixtureLargeOriginal=JSON.stringify((await chrome.storage.local.get('mechanizeReconnect')).mechanizeReconnect);return new TextEncoder().encode(fixtureLargeOriginal).length;
    };
    globalThis.fixtureArchiveSummary=async()=>{
-    const journal=(await chrome.storage.local.get('mechanizeReconnect')).mechanizeReconnect,ref=journal.recovery.originalPendingRef;
-    const archived=ref&&(await chrome.storage.local.get(reconnectPendingArchivePrefix+ref.digest))[reconnectPendingArchivePrefix+ref.digest];
-    return {archived:!!ref,preserved:archived?.pendingJSON===fixtureLargeOriginal,hashMatches:!!ref&&await reconnectPendingDigest(archived?.pendingJSON||'')===ref.digest,historyCount:journal.history.length};
+    const journal=(await chrome.storage.local.get('mechanizeReconnect')).mechanizeReconnect,ref=journal.audit;
+    const archived=ref&&(await chrome.storage.local.get(reconnectAuditPrefix+ref.digest))[reconnectAuditPrefix+ref.digest];
+    return {archived:!!ref,preserved:archived?.journalJSON===fixtureLargeOriginal,hashMatches:!!ref&&await reconnectPendingDigest(archived?.journalJSON||'')===ref.digest,historyCount:journal.history.length+(archived?JSON.parse(archived.journalJSON).history.length:0)};
    };
    globalThis.fixtureRecover=async label=>{
     closeNativeConnection();await connectNativeOnce();fixtureFrames.length=0;
@@ -68,7 +68,8 @@ test('real Chrome reconnect keeps ordinary tabs and original journal while requi
     await receive({type:'processQualified',brokerEpoch:label,channelEpoch:label,scopeHash:'a'.repeat(64),trustScope:'desktop',scopeQualified:true,profileQualified:false,executorQualified:false,fixtureOnly:false,executorChallenge:label,mutationFingerprintVersion:2,reconnectBindingsVersion:1});
     const journal=(await chrome.storage.local.get('mechanizeReconnect')).mechanizeReconnect;
     await verifyReconnectArchives(journal);
-    return {connected:Boolean(port),attention:fixtureFrames.filter(f=>f.type==='attention').map(f=>f.error?.code),prepared:fixtureFrames.some(f=>f.type==='executorPrepared'),phase:reconnectDiagnosticPhase,reason:reconnectDiagnosticReason,inventoryReason:reconnectInventoryReason,originalRetained:JSON.stringify(reconnectOriginalPending(journal.recovery)||journal)===before,adopted:journal.phase==='adopted',generation:journal.history.at(-1)?.executors[0]?.identity.documentGeneration||0};
+    const audit=journal.audit&&(await chrome.storage.local.get(reconnectAuditPrefix+journal.audit.digest))[reconnectAuditPrefix+journal.audit.digest];
+    return {connected:Boolean(port),attention:fixtureFrames.filter(f=>f.type==='attention').map(f=>f.error?.code),prepared:fixtureFrames.some(f=>f.type==='executorPrepared'),phase:reconnectDiagnosticPhase,reason:reconnectDiagnosticReason,inventoryReason:reconnectInventoryReason,originalRetained:audit?audit.journalJSON===before:JSON.stringify(reconnectOriginalPending(journal.recovery)||journal)===before,adopted:journal.phase==='adopted',generation:journal.history.at(-1)?.executors[0]?.identity.documentGeneration||0};
    };
   `;
   await writeFile(join(extension,'worker.js'),boot+'\n'+source+'\n'+probe);
