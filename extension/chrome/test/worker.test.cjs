@@ -2768,7 +2768,7 @@ test('extension reload maintenance gates new native renderer dispatch while its 
 
 test('native hello advertises bounded DOM select separately from fingerprint and Playwright versions',async()=>{
  const f=await metadataActivationFixture();f.disconnect();await f.connect();
- const hello=f.messages.find(m=>m.type==='hello');assert.equal(hello.selectOptionVersion,1);assert.equal(hello.privacySourceRetirementVersion,1);assert.equal(hello.workerBuild,34);
+ const hello=f.messages.find(m=>m.type==='hello');assert.equal(hello.selectOptionVersion,1);assert.equal(hello.privacySourceRetirementVersion,1);assert.equal(hello.workerBuild,35);
  assert.equal(hello.checkOptionVersion,undefined);assert.equal(hello.uncheckOptionVersion,undefined);assert.equal(f.state.deliveries,0);
 });
 

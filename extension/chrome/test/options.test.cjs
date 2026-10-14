@@ -546,3 +546,11 @@ test('Options renders only closed missing-receipt hashes and never raw identity 
  try{doc.getElementById('read-connection-diagnostics').click();await new Promise(r=>setImmediate(r));assert.ok(doc.getElementById('connection-diagnostics-detail').getAttribute('aria-label').includes('a'.repeat(64)));assert.equal(f.saved.length,0);
  response.diagnostics.missingReceiptSources.hashes=['PRIVATE_CANARY'];doc.getElementById('read-connection-diagnostics').click();await new Promise(r=>setImmediate(r));assert.equal(doc.getElementById('connection-diagnostics-detail').textContent,'');assert.ok(!doc.body.textContent.includes('PRIVATE_CANARY'));}finally{f.page.window.close();}
 });
+test('Options exposes originless inventory bound counts and rejects open metadata',async()=>{
+ const base={version:3,journalVersion:1,grantRelation:'new',phase:'journal',reason:'inventoryChanged',inventoryReason:'frameLimitExceeded',credentialProtection:true,lifecyclePending:false,retirementPending:false,reconnectJournal:'adopted'};
+ let response={diagnostics:{...base,inventoryLimit:{bound:'censusTotal',count:306,limit:200}}};const f=fixture(()=>response),doc=f.page.window.document;
+ try{
+ doc.getElementById('read-connection-diagnostics').click();await new Promise(r=>setImmediate(r));assert.match(doc.getElementById('connection-diagnostics-detail').textContent,/Inventory bound: censusTotal\. Observed: 306\. Limit: 200/);assert.equal(f.saved.length,0);
+ response={diagnostics:{...base,inventoryLimit:{bound:'PRIVATE_CANARY',count:306,limit:200}}};doc.getElementById('read-connection-diagnostics').click();await new Promise(r=>setImmediate(r));assert.equal(doc.getElementById('connection-diagnostics-detail').textContent,'');assert.ok(!doc.body.textContent.includes('PRIVATE_CANARY'));
+ }finally{f.page.window.close();}
+});

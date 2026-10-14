@@ -2,6 +2,8 @@
 // reset, reconnect, or input authority. Usable before a website executor exists.
 globalThis.MechanizeSetupMetadata = (() => {
   const INVENTORY_REASONS=Object.freeze(["none","tabQueryUnavailable","tabListInvalid","tabLimitExceeded","tabMetadataInvalid","tabIDInvalid","tabIDDuplicate","tabURLUnavailable","tabURLInvalid","pendingNavigation","incognitoTab","discardedTab","nonSetupTab","frameQueryUnavailable","frameListUnavailable","frameLimitExceeded","frameMetadataInvalid","frameIDInvalid","frameIDDuplicate","frameParentInvalid","frameDocumentUnavailable","frameError","frameLifecycleInactive","rootLifecycleMissing","rootLifecyclePrerender","rootLifecycleCached","rootLifecyclePendingDeletion","rootLifecycleInvalid","rootFrameTypeMissing","rootFrameTypeDenied","childLifecycleMissing","childLifecyclePrerender","childLifecycleCached","childLifecyclePendingDeletion","childLifecycleInvalid","childFrameTypeMissing","childFrameTypeDenied","rootFrameTypeOuterMost","rootFrameTypeSubFrame","rootFrameTypeFenced","rootFrameTypeInvalid","childFrameTypeOuterMost","childFrameTypeSubFrame","childFrameTypeFenced","childFrameTypeInvalid","frameTypeDenied","frameRootURLDenied","builtInRootURLDenied","tabSchemeDenied","rootFrameURLInvalid","childFrameURLInvalid","rootFrameUserinfoDenied","childFrameUserinfoDenied","rootFrameSchemeDenied", "rootFrameError", "builtInRootFrameError", "childSourceIdentityUnavailable","rootFrameOriginNotGranted","childFrameOriginNotGranted","rootTabOriginMismatch","frameChildURLDenied","frameRootMissing","inactiveRootParentDenied","frameParentDocumentMismatch","frameParentMissing","frameCycle","inventoryDrift"]);
+  const INVENTORY_BOUNDS=Object.freeze(['setupFrames','perTabFrames','censusTotal','eligibleDocuments','orphanEvidence','inventoryBytes']);
+  const validInventoryLimit=value=>Boolean(value&&Object.keys(value).sort().join()==='bound,count,limit'&&INVENTORY_BOUNDS.includes(value.bound)&&Number.isSafeInteger(value.count)&&value.count>=0&&value.count<=4294967295&&Number.isSafeInteger(value.limit)&&value.limit>0&&value.limit<=(value.bound==='inventoryBytes'?262144:4096)&&value.count>value.limit);
   const LIMIT = 1024 * 1024, MAX_NODES = 50000;
   let revision = 0;
   chrome.storage?.onChanged?.addListener(() => { revision++; });
@@ -74,6 +76,7 @@ globalThis.MechanizeSetupMetadata = (() => {
     const sameFence = (a,b) => a && b && ["brokerEpoch", "channelEpoch", "scopeHash"].every(key => typeof a[key] === "string" && a[key] !== "" && a[key] === b[key]);
     const old = sameFence(journal?.oldFence, local.lastGrant), next = sameFence(journal?.newFence, local.lastGrant);
     return {version: 3, phase: current.phase, reason: current.reason,...(missingReceiptSources?{missingReceiptSources}:{}),...(current.reason==='inventoryChanged'&&INVENTORY_REASONS.includes(current.inventoryReason)?{inventoryReason:current.inventoryReason}:{}),
+      ...(current.reason==='inventoryChanged'&&validInventoryLimit(current.inventoryLimit)?{inventoryLimit:{...current.inventoryLimit}}:{}),
       credentialProtection: current.privatePending || protectedState(local.mechanizeProtectedOrigins) || protectedState(session.mechanizeProtectedOrigins),
       lifecyclePending: current.lifecyclePending || session.mechanizeLifecycleInhibited !== undefined && session.mechanizeLifecycleInhibited !== false,
       retirementPending: local.mechanizeRetirementV1 !== undefined,
@@ -106,5 +109,5 @@ globalThis.MechanizeSetupMetadata = (() => {
     return {type: "setupMetadata", requestId: command.requestId, nonce: command.nonce,
       brokerEpoch: command.brokerEpoch, channelEpoch: command.channelEpoch, scopeHash: command.scopeHash, metadata};
   }
-  return Object.freeze({snapshot, installLocal, respond, INVENTORY_REASONS});
+  return Object.freeze({snapshot, installLocal, respond, INVENTORY_REASONS, validInventoryLimit});
 })();

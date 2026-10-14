@@ -107,12 +107,12 @@ func inactivePrivacyControlPlaneFrameLocked(c *channel, raw []byte) bool {
 			decoder.DisallowUnknownFields()
 			if key == "documents" {
 				var rows []Document
-				if decoder.Decode(&rows) != nil || len(rows) > 200 {
+				if decoder.Decode(&rows) != nil || len(rows) > MaxInventoryDocuments {
 					return false
 				}
 			} else {
 				var rows []credentialCandidate
-				if decoder.Decode(&rows) != nil || len(rows) > 200 {
+				if decoder.Decode(&rows) != nil || len(rows) > MaxInventoryDocuments {
 					return false
 				}
 			}

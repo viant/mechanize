@@ -18,6 +18,9 @@ import (
 
 const MaxFrameBytes = 256 * 1024
 
+// Total documents/candidates in one complete inventory; the independent frame byte budget remains unchanged.
+const MaxInventoryDocuments = 1024
+
 type Identity struct {
 	ProfileChannel  string `json:"profileChannel"`
 	BrowserInstance string `json:"browserInstance"`

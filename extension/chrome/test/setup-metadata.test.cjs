@@ -90,3 +90,12 @@ test('own Options diagnostics expose bounded missing source hashes only in the o
  for(const bad of [{...state.missingReceiptSources,documentId:'PRIVATE_CANARY'},{...state.missingReceiptSources,hashes:['PRIVATE_CANARY']},{...state.missingReceiptSources,truncated:true},{...state.missingReceiptSources,count:201},{...state.missingReceiptSources,hashes:['a'.repeat(64),'a'.repeat(64)],count:2}]){state.missingReceiptSources=bad;const reply=await f.send({type:'connectionDiagnosticsLocal'},sender);assert.equal(reply.error,'connectionDiagnosticsUnavailable');assert.ok(!JSON.stringify(reply).includes('PRIVATE_CANARY'));}
  state.missingReceiptSources={version:1,count:1,hashes:['a'.repeat(64)],truncated:false};state.phase='inventory';assert.equal((await f.send({type:'connectionDiagnosticsLocal'},sender)).error,'connectionDiagnosticsUnavailable');assert.equal(await f.send({type:'connectionDiagnosticsLocal'},{...sender,url:'https://public.test'}),undefined);assert.deepEqual(f.calls,{tabs:0,writes:0});
 });
+test('local inventory limit diagnostics contain only closed bound and numeric counts',async()=>{
+ const f=fixture(),state={phase:'journal',reason:'inventoryChanged',inventoryReason:'frameLimitExceeded',privatePending:false,lifecyclePending:false,inventoryLimit:{bound:'censusTotal',count:306,limit:200}};f.api.installLocal(()=>f.state,()=>state);
+ const sender={id:'a'.repeat(32),url:`chrome-extension://${'a'.repeat(32)}/options.html`,origin:`chrome-extension://${'a'.repeat(32)}`,frameId:0,tab:{id:1}};
+ assert.deepEqual(JSON.parse(JSON.stringify((await f.send({type:'connectionDiagnosticsLocal'},sender)).diagnostics.inventoryLimit)),state.inventoryLimit);
+ for(const value of [{bound:'PRIVATE_CANARY',count:306,limit:200},{bound:'censusTotal',count:306,limit:200,url:'PRIVATE_CANARY'},{bound:'censusTotal',count:-1,limit:200},{bound:'censusTotal',count:306,limit:0}]){
+ state.inventoryLimit=value;const d=(await f.send({type:'connectionDiagnosticsLocal'},sender)).diagnostics;assert.equal(Object.hasOwn(d,'inventoryLimit'),false);assert.ok(!JSON.stringify(d).includes('PRIVATE_CANARY'));
+ }
+ state.inventoryLimit={bound:'censusTotal',count:306,limit:200};state.reason='none';assert.equal(Object.hasOwn((await f.send({type:'connectionDiagnosticsLocal'},sender)).diagnostics,'inventoryLimit'),false);assert.deepEqual(f.calls,{tabs:0,writes:0});
+});

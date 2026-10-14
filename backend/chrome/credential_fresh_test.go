@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,7 +16,7 @@ import (
 	"github.com/viant/mechanize/vault"
 )
 
-func credentialFreshFixture(t *testing.T, mode string) (*Gateway, auth.Principal, context.Context, ControlAuthority, vault.Binding, *atomic.Int32) {
+func credentialFreshFixture(t *testing.T, mode string, builds ...int) (*Gateway, auth.Principal, context.Context, ControlAuthority, vault.Binding, *atomic.Int32) {
 	t.Helper()
 	g, p, ctx, conn, c, doc := credentialAdmissionFixture(t)
 	calls := &atomic.Int32{}
@@ -23,6 +24,14 @@ func credentialFreshFixture(t *testing.T, mode string) (*Gateway, auth.Principal
 	if pinned {
 		g.broker.mu.Lock()
 		c.workerBuild = 22
+		if len(builds) > 0 {
+			c.workerBuild = builds[0]
+		}
+		g.broker.mu.Unlock()
+	}
+	if !pinned && len(builds) > 0 {
+		g.broker.mu.Lock()
+		c.workerBuild = builds[0]
 		g.broker.mu.Unlock()
 	}
 	go func() {
@@ -262,4 +271,34 @@ func TestPrivateRecipientNavigationIDPreservesLegacyAndBindsNonce(t *testing.T) 
 	if first == legacy || first == CredentialNavigationID(a) {
 		t.Fatal("private recipient nonce omitted from binding")
 	}
+}
+
+func TestReviewedWorkerCredentialRecipientCompatibility(t *testing.T) {
+	for _, build := range []int{34, 35} {
+		for _, mode := range []string{"pinnedGeneration", "pinnedWrongNonce"} {
+			t.Run(fmt.Sprintf("build%d/%s", build, mode), func(t *testing.T) {
+				g, p, ctx, a, binding, calls := credentialFreshFixture(t, mode, build)
+				if !fingerprintV2Hash.MatchString(a.PrivateRecipientID) {
+					t.Fatal("reviewed worker omitted recipient nonce")
+				}
+				actual, err := g.FreshCredentialBinding(ctx, p, a, binding, func(context.Context) error { return nil })
+				if mode == "pinnedGeneration" {
+					if err != nil || actual != binding {
+						t.Fatal("exact recipient rejected", err)
+					}
+				} else if err == nil || actual != (vault.Binding{}) {
+					t.Fatal("wrong recipient accepted")
+				}
+				if calls.Load() != 1 {
+					t.Fatal("recipient verification replayed or skipped")
+				}
+			})
+		}
+	}
+	t.Run("futureBuild36", func(t *testing.T) {
+		_, _, _, a, _, _ := credentialFreshFixture(t, "ready", 36)
+		if a.PrivateRecipientID != "" {
+			t.Fatal("unreviewed worker received recipient capability")
+		}
+	})
 }

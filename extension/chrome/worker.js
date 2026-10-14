@@ -183,7 +183,7 @@ const setupState = () => {
   return {activeCommands: setupActiveCommands, unknownAttempts: unknownAttempts.size,
     mutationBusy, lifecycleInhibited: Boolean(lifecycleGuardId), nativeConnected: Boolean(port), executorQualified: Boolean(grant)};
 };
-let reconnectDiagnosticPhase = "idle", reconnectDiagnosticReason = "none", reconnectInventoryReason="none", reconnectJournalDiagnostic=null,reconnectRecoveryDiagnostic=null,reconnectMissingReceiptSources=null,reconnectMissingDocuments=[];
+let reconnectDiagnosticPhase = "idle", reconnectDiagnosticReason = "none", reconnectInventoryReason="none", reconnectJournalDiagnostic=null,reconnectRecoveryDiagnostic=null,reconnectMissingReceiptSources=null,reconnectMissingDocuments=[], reconnectInventoryLimitDiagnostic=null;
 // Safe authenticated status projection: exactly the vocabulary exposed by the
 // extension's local setup metadata, with no storage, identity, or error text.
 const reconnectPhases = new Set(["idle", "scope", "barriers", "journal", "inventory", "inspect", "prepare", "adopt", "commit"]);
@@ -191,7 +191,7 @@ const reconnectReasons = new Set(["none", "portChanged", "deadline", "busy", "un
 const reconnectAttention = value => value?.type === 'attention' && value.error?.code === 'storedFenceMismatch' &&
   reconnectPhases.has(reconnectDiagnosticPhase) && reconnectReasons.has(reconnectDiagnosticReason) ?
   {...value,...(reconnectRecoveryDiagnostic?{reconnectRecovery:{...reconnectRecoveryDiagnostic}}:{}),reconnectPhase:reconnectDiagnosticPhase,reconnectReason:reconnectDiagnosticReason,...(reconnectDiagnosticReason==='inventoryChanged'&&MechanizeSetupMetadata.INVENTORY_REASONS.includes(reconnectInventoryReason)?{reconnectInventoryReason}:{}),...(reconnectDiagnosticReason==='journalChanged'&&reconnectJournalDiagnostic?{reconnectJournal:{...reconnectJournalDiagnostic}}:{})} : value;
-MechanizeSetupMetadata.installLocal(setupState, () => ({phase: reconnectDiagnosticPhase, reason: reconnectDiagnosticReason,inventoryReason:reconnectInventoryReason,
+MechanizeSetupMetadata.installLocal(setupState, () => ({phase: reconnectDiagnosticPhase, reason: reconnectDiagnosticReason,inventoryReason:reconnectInventoryReason, inventoryLimit:reconnectInventoryLimitDiagnostic,
   privatePending: Boolean(privatePending || privateAdmission || privateFlow || privatePrivacy || privateAttempts.size || privateRedactions.length || protectedOrigins.size),
   missingReceiptSources: reconnectMissingReceiptSources,
   lifecyclePending: Boolean(lifecycleGuardId)}));
@@ -240,7 +240,8 @@ function suspendDiscardedTab(tab) {
   playwrightWorker.invalidate(held=>held.identity.tabId===tab.id);
   return true;
 }
-const MAX_INVENTORY_DOCUMENTS = 200;
+const MAX_INVENTORY_DOCUMENTS = 1024;
+const MAX_RECONNECT_FENCES = 202;
 async function inventory(enrollment, qualification) {
   const read=operation=>qualification?qualificationRead(qualification,operation):operation();
   if (privatePending) return {documents: [], truncated: true};
@@ -263,6 +264,7 @@ async function inventory(enrollment, qualification) {
       continue;
     }
     const frames=await read(()=>chrome.webNavigation.getAllFrames({tabId:tab.id}))||[];
+    if(frames.length>200){reconnectInventoryLimitDiagnostic={bound:'perTabFrames',count:frames.length,limit:200};return {documents:result,truncated:true};}
     for (const frame of frames) {
       // Chrome error documents can retain an https URL while their privileged
       // error page cannot host an executor. Fenced frames likewise prohibit
@@ -272,7 +274,7 @@ async function inventory(enrollment, qualification) {
       if (nonExecutableTreeFrame(frame,frames)) continue;
       if (!allowedOrigin(frame.url, enrollment) || isProtectedURL(frame.url,{profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,tabId:tab.id,frameId:frame.frameId,documentId:frame.documentId})&&!privacyDocument({tabId:tab.id,frameId:frame.frameId,documentId:frame.documentId}) || !frame.documentId) continue;
       result.push({profileChannel: enrollment.profileChannel, browserInstance: enrollment.browserInstance, tabId: tab.id, frameId: frame.frameId, documentId: frame.documentId, documentGeneration: documents.get(`${tab.id}:${frame.documentId}`)?.documentGeneration || 1, mutationFingerprintVersion: documentFingerprintVersions.get(`${tab.id}:${frame.documentId}`) || 1, origin: new URL(frame.url).origin, title: privacySanitize(tab.title || "").slice(0, 256), titleTruncated: privacySanitize(tab.title || "").length > 256});
-      if (result.length > MAX_INVENTORY_DOCUMENTS) return {documents: result, truncated: true};
+      if (result.length > MAX_INVENTORY_DOCUMENTS){reconnectInventoryLimitDiagnostic={bound:'eligibleDocuments',count:result.length,limit:MAX_INVENTORY_DOCUMENTS};return {documents: result, truncated: true};}
     }
   }
   return {documents: result, truncated: false,...(credentialCandidates.length?{credentialCandidates}:{})};
@@ -820,7 +822,11 @@ function reconnectJournalRefuse(reason){
   if(reconnectJournalDiagnostic)reconnectJournalDiagnostic.reason=closed;
   const error=reconnectRefuse('journalChanged');Object.defineProperty(error,'journalReason',{value:closed});return error;
 }
-const reconnectInventoryRefuse = reason => {reconnectInventoryReason=MechanizeSetupMetadata.INVENTORY_REASONS.includes(reason)?reason:"none";return reconnectRefuse("inventoryChanged");};
+const reconnectInventoryRefuse = (reason,bound,count,limit) => {
+ reconnectInventoryReason=MechanizeSetupMetadata.INVENTORY_REASONS.includes(reason)?reason:"none";
+ reconnectInventoryLimitDiagnostic=MechanizeSetupMetadata.validInventoryLimit({bound,count,limit})?{bound,count,limit}:null;
+ return reconnectRefuse("inventoryChanged");
+};
 // Chrome errors may contain private URLs. Classify locally and export only one
 // closed code; never retain or transmit the original error or message.
 function injectionFailureReason(error) {
@@ -876,7 +882,7 @@ function reconnectAuditReferenceValid(ref,scope){
 }
 function reconnectAuditMatches(ref,value){return value&&ref.version===value.version&&ref.phase===value.phase&&ref.format===(value.format||'legacy')&&ref.nonce===value.nonce&&sameReconnectFence(ref.oldFence,value.oldFence)&&sameReconnectFence(ref.newFence,value.newFence);}
 function activeReconnectShape(record){
- if(!activeReconnectJournal(record)||record.version!==1||record.recovery!==undefined||record.archive!==undefined||!Array.isArray(record.history)||record.history.length!==(record.phase==='pending'?0:1)||!Array.isArray(record.recoveryFences)||record.recoveryFences.length<1||record.recoveryFences.length>MAX_INVENTORY_DOCUMENTS+2)return false;
+ if(!activeReconnectJournal(record)||record.version!==1||record.recovery!==undefined||record.archive!==undefined||!Array.isArray(record.history)||record.history.length!==(record.phase==='pending'?0:1)||!Array.isArray(record.recoveryFences)||record.recoveryFences.length<1||record.recoveryFences.length>MAX_RECONNECT_FENCES)return false;
  const seen=new Set();for(const fence of record.recoveryFences){if(!reconnectFenceValid(fence)||fence.scopeHash!==record.oldFence?.scopeHash)return false;const key=JSON.stringify(fence);if(seen.has(key))return false;seen.add(key);}
  return record.recoveryFences.some(fence=>sameReconnectFence(fence,record.newFence))&&
   (record.audit===undefined||reconnectAuditReferenceValid(record.audit,record.oldFence?.scopeHash));
@@ -1160,7 +1166,7 @@ async function reconnectTabFrames(tabId,qualification){
  if(![...forest.values()].includes(null))return first;
  if(qualification){
   for(const f of first)if(!forest.get(f.frameId)&&!observed.some(n=>n.tabId===tabId&&n.frameId===f.frameId&&n.documentId===f.documentId))observed.push({tabId,frameId:f.frameId,documentId:f.documentId});
-  if(observed.length>200)throw reconnectInventoryRefuse('frameLimitExceeded');
+  if(observed.length>200)throw reconnectInventoryRefuse('frameLimitExceeded','orphanEvidence',observed.length,200);
   qualification.orphanFrameEvidence=observed;
  }
  const second=await read();
@@ -1175,7 +1181,8 @@ async function reconnectInternalTabCensus(tab,qualification){
   if(!tab||tab.status!=="complete"||tab.pendingUrl||tab.incognito||tab.discarded)throw reconnectInventoryRefuse("tabURLUnavailable");
   let frames;
   try{frames=await reconnectTabFrames(tab.id,qualification);}catch(error){if(error?.code==='storedFenceMismatch'||error?.code==='inventoryChanged')throw error;throw reconnectInventoryRefuse("frameQueryUnavailable");}
-  if(!Array.isArray(frames)||!frames.length||frames.length>200)throw reconnectInventoryRefuse("frameListUnavailable");
+  if(!Array.isArray(frames)||!frames.length)throw reconnectInventoryRefuse("frameListUnavailable");
+  if(frames.length>200)throw reconnectInventoryRefuse("frameListUnavailable","perTabFrames",frames.length,200);
   const byFrame=new Map(),documents=new Set();
   for(const f of frames){
     if(!f||!Number.isSafeInteger(f.frameId)||f.frameId<0||byFrame.has(f.frameId)||!Number.isSafeInteger(f.parentFrameId))throw reconnectInventoryRefuse("frameMetadataInvalid");
@@ -1193,7 +1200,7 @@ async function reconnectInternalTabCensus(tab,qualification){
   return frames.map(f=>({tabId:tab.id,frameId:f.frameId,documentId:f.documentId,parentFrameId:f.parentFrameId,origin:null,executable:false,protected:false,...(!forest.get(f.frameId)?{parentageIncomplete:true}:{}),...(inactiveExecutorFrame(f)?{documentLifecycle:f.documentLifecycle}:{}),...(f.frameType==='fenced_frame'||f.frameId>0&&f.frameType==='outermost_frame'?{frameType:f.frameType}:{})})).sort((a,b)=>a.frameId-b.frameId);
 }
 async function emptyReconnectInventory(knownTabs,qualification) {
-  reconnectInventoryReason="none";
+  reconnectInventoryReason="none";reconnectInventoryLimitDiagnostic=null;
   let tabs;try{tabs=knownTabs===undefined?await chrome.tabs.query({}):knownTabs;}catch{throw reconnectInventoryRefuse("tabQueryUnavailable");}
   if(!Array.isArray(tabs))throw reconnectInventoryRefuse("tabListInvalid");
   if(tabs.length>200)throw reconnectInventoryRefuse("tabLimitExceeded");
@@ -1215,7 +1222,7 @@ async function emptyReconnectInventory(knownTabs,qualification) {
       let frames;
       try{frames=await reconnectTabFrames(tab.id,qualification);}catch(error){if(error?.code==='storedFenceMismatch'||error?.code==='inventoryChanged')throw error;throw reconnectInventoryRefuse("frameQueryUnavailable");}
       if(!Array.isArray(frames)||!frames.length)throw reconnectInventoryRefuse("frameListUnavailable");
-      if(frames.length>32)throw reconnectInventoryRefuse("frameLimitExceeded");
+      if(frames.length>32)throw reconnectInventoryRefuse("frameLimitExceeded","setupFrames",frames.length,32);
       const byFrame=new Map();let requiresBindingCensus=false;
       for(const frame of frames){
         if(!frame||typeof frame!=='object')throw reconnectInventoryRefuse("frameMetadataInvalid");
@@ -1349,7 +1356,7 @@ async function reconnectDiscardedTabCensus(tab,qualification){
  suspendDiscardedTab(tab);
  let frames;try{frames=await qualificationRead(qualification,()=>chrome.webNavigation.getAllFrames({tabId:tab.id}));}catch{qualificationCurrent(qualification);frames=null;}
  if(frames!==null&&frames!==undefined&&!Array.isArray(frames))throw reconnectInventoryRefuse('frameListUnavailable');
- frames=frames||[];if(frames.length>200)throw reconnectInventoryRefuse('frameLimitExceeded');
+ frames=frames||[];if(frames.length>200)throw reconnectInventoryRefuse('frameLimitExceeded','perTabFrames',frames.length,200);
  const result=[{tabId:tab.id,discarded:true,identityUnknown:true,origin:null,executable:false,protected:false}],ids=new Set();
  for(const frame of frames){
   if(!frame||!Number.isSafeInteger(frame.frameId)||frame.frameId<0||ids.has(frame.frameId))throw reconnectInventoryRefuse('frameIDInvalid');ids.add(frame.frameId);
@@ -1383,7 +1390,8 @@ async function reconnectCurrentCensus(enrollment,qualification){
   }
   if(!['http:','https:'].includes(url.protocol))throw reconnectInventoryRefuse('tabSchemeDenied');
   const frames=await reconnectTabFrames(tab.id,qualification);
-  if(!Array.isArray(frames)||!frames.length||frames.length>200)throw reconnectInventoryRefuse('frameListUnavailable');
+  if(!Array.isArray(frames)||!frames.length)throw reconnectInventoryRefuse('frameListUnavailable');
+  if(frames.length>200)throw reconnectInventoryRefuse('frameListUnavailable','perTabFrames',frames.length,200);
   const forest=reconnectFrameForest(frames,true);
   const frameIDs=new Set();let roots=0;
   for(const f of frames){
@@ -1427,7 +1435,7 @@ async function reconnectCurrentCensus(enrollment,qualification){
   if(roots!==1)throw reconnectInventoryRefuse('frameRootMissing');
 
  }
- if(result.length>200)throw reconnectInventoryRefuse('frameLimitExceeded');
+ if(result.length>MAX_INVENTORY_DOCUMENTS)throw reconnectInventoryRefuse('frameLimitExceeded','censusTotal',result.length,MAX_INVENTORY_DOCUMENTS);
  return result.sort((a,b)=>a.tabId-b.tabId||(a.frameId??-1)-(b.frameId??-1));
 }
 function reconnectRows(rows,enrollment,scopeHash){
@@ -1480,7 +1488,7 @@ async function reconnectMatchReceipts(rows,census,renderer,session){
  // and journal receipts remain untouched; absence never proves business success.
 }
 async function prepareNativeReconnect(previous,candidate,enrollment,command,ownPort,qualification) {
-  reconnectDiagnosticPhase = "scope"; reconnectDiagnosticReason = "none";reconnectInventoryReason="none";reconnectJournalDiagnostic=null;reconnectRecoveryDiagnostic=null;reconnectMissingReceiptSources=null;reconnectMissingDocuments=[];
+  reconnectDiagnosticPhase = "scope"; reconnectDiagnosticReason = "none";reconnectInventoryReason="none";reconnectInventoryLimitDiagnostic=null;reconnectJournalDiagnostic=null;reconnectRecoveryDiagnostic=null;reconnectMissingReceiptSources=null;reconnectMissingDocuments=[];
   if(!ownPort || reconnectPorts.has(ownPort) || qualifiedNativePorts.has(ownPort) || command.type!=="processQualified" || command.fixtureOnly!==false ||
     previous.leaseRequired!==true || previous.mutationFingerprintVersion!==2 || candidate.mutationFingerprintVersion!==2 ||
     previous.scopeHash!==candidate.scopeHash || previous.trustScope!==candidate.trustScope || previous.scopeQualified!==true ||
@@ -1566,7 +1574,7 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
        reconnectRecoveryDiagnostic.unavailableExecutors=Math.min(200,Math.max(1,unavailable.size));throw reconnectInventoryRefuse('childSourceIdentityUnavailable');
       }
       if(privateSources.size)throw reconnectRefuse('privateProtection');if(unknown.size)throw reconnectRefuse('unknownReceipts');if(unavailable.size)throw reconnectRefuse('executorRefused');
-      reconnectInventoryReason="none";
+      reconnectInventoryReason="none";reconnectInventoryLimitDiagnostic=null;
     }
   }
   const originalJournal=reconnectCanonical(journal);
@@ -1583,7 +1591,10 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
   }
   reconnectDiagnosticPhase = "inventory";
   const snapshot=await inventory(enrollment,qualification);
-  if(snapshot.truncated || snapshot.documents.length>MAX_INVENTORY_DOCUMENTS)throw reconnectInventoryRefuse("frameLimitExceeded");
+  if(snapshot.truncated || snapshot.documents.length>MAX_INVENTORY_DOCUMENTS){
+   const bound=reconnectInventoryLimitDiagnostic||{bound:'eligibleDocuments',count:snapshot.documents.length,limit:MAX_INVENTORY_DOCUMENTS};
+   throw reconnectInventoryRefuse("frameLimitExceeded",bound.bound,bound.count,bound.limit);
+  }
   const stable=items=>JSON.stringify(items.map(i=>({tabId:i.tabId,frameId:i.frameId,documentId:i.documentId,origin:i.origin})).sort((a,b)=>a.tabId-b.tabId||a.frameId-b.frameId));
   const inventoryKey=stable(snapshot.documents);
   const sourceInventory={version:1,kind:"eligibleDocuments",documents:snapshot.documents.map(item=>Object.fromEntries(["profileChannel","browserInstance","tabId","frameId","documentId","documentGeneration","origin"].map(key=>[key,item[key]])))};
@@ -2033,6 +2044,9 @@ async function receiveCommand(command, qualification) {
       candidate.leaseRequired = command.type === "processQualified";
       const snapshot = await inventory(await qualificationRead(qualification,config),qualification);
       if (snapshot.truncated) { replyTo({type: "attention", error: MechanizeProtocol.error("inventoryIncomplete", "Complete root inventory required")}); return; }
+      const inventoryMessage={type: "documents", ...snapshot, capabilities: [...MechanizeProtocol.actions], inputSemantics: chrome.runtime.getManifest().permissions?.includes("debugger") ? "Browser protocol pointer input v1; DOM text and selection" : "DOM activation; isTrusted=false", unsupported: ["browser-protocol credential input", "browser-protocol text input", "file selection", "custom editors", "closed shadow roots", "network response bodies", "capture", "tab open/close", "production signed-parent enrollment"]};
+      const inventoryBytes=new TextEncoder().encode(JSON.stringify(privacySanitize(inventoryMessage))).length;
+      if(inventoryBytes>MechanizeProtocol.MAX_BYTES)throw reconnectInventoryRefuse('frameLimitExceeded','inventoryBytes',inventoryBytes,MechanizeProtocol.MAX_BYTES);
       if(port!==commandPort)throw reconnectFail();
       const emptyRecovery=Boolean(reconnectRecord)&&savedReconnect?.phase==="pending";
       const verifyCommit=Boolean(reconnectRecord)&&(emptyRecovery||Boolean(reconnectRecord.archive||reconnectRecord.recovery||reconnectRecord.audit||qualification.retirementSnapshot));
@@ -2068,7 +2082,7 @@ async function receiveCommand(command, qualification) {
       // Complete awaited setup before acknowledging renderer qualification. An
       // empty inventory remains explicitly empty; it proves no available tab.
       if (command.type === "processQualified") replyTo({type: "executorPrepared", executorChallenge: command.executorChallenge, mutationFingerprintVersion});
-      replyTo({type: "documents", ...snapshot, capabilities: [...MechanizeProtocol.actions], inputSemantics: chrome.runtime.getManifest().permissions?.includes("debugger") ? "Browser protocol pointer input v1; DOM text and selection" : "DOM activation; isTrusted=false", unsupported: ["browser-protocol credential input", "browser-protocol text input", "file selection", "custom editors", "closed shadow roots", "network response bodies", "capture", "tab open/close", "production signed-parent enrollment"]});
+      replyTo(inventoryMessage);
       // Failure-generation dedup lasts across port loss and failed proofs. Only
       // committed authenticated qualification starts a new recovery budget.
       if(command.type==='processQualified')missingReceiptRecoveryEvents.clear();
@@ -2296,7 +2310,7 @@ async function connect(){
 async function connectNativeOnce(token,valid=()=>true) {
   if (port) return;
   connectionAttention = "enrollmentUnavailable"; startupFailurePort = null;metadataStartupBarrier=null;
-  reconnectDiagnosticPhase="scope";reconnectDiagnosticReason="none";reconnectInventoryReason="none";reconnectJournalDiagnostic=null;
+  reconnectDiagnosticPhase="scope";reconnectDiagnosticReason="none";reconnectInventoryReason="none";reconnectInventoryLimitDiagnostic=null;reconnectJournalDiagnostic=null;
   try {
     let enrollment;
     try{enrollment=await config();}
@@ -2305,7 +2319,7 @@ async function connectNativeOnce(token,valid=()=>true) {
       throw error;
     }
     try{
-    reconnectDiagnosticPhase="journal";reconnectDiagnosticReason="none";reconnectInventoryReason="none";reconnectJournalDiagnostic=null;
+    reconnectDiagnosticPhase="journal";reconnectDiagnosticReason="none";reconnectInventoryReason="none";reconnectInventoryLimitDiagnostic=null;reconnectJournalDiagnostic=null;
     const reconnect=await chrome.storage.local.get(reconnectKey),last=await chrome.storage.local.get("lastGrant");
     captureReconnectJournal(reconnect[reconnectKey],last.lastGrant);
     await verifyReconnectArchives(reconnect[reconnectKey]);
@@ -2391,7 +2405,7 @@ async function connectNativeOnce(token,valid=()=>true) {
     }catch{metadataStartupBarrier='inventoryUnavailable';}
     // This fixed metadata hello is independent of secret/document visibility.
     // No retained document or input payload is replayed on a replacement port.
-    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,playwrightTargetRetirementVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:34,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
+    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,playwrightTargetRetirementVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:35,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
 
   } catch {
     if (lifecycleGuardId) connectionAttention = "lifecycleInhibited";
