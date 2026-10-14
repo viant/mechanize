@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/viant/mechanize/auth"
@@ -452,12 +453,27 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 		attempted bool
 	}
 	written := make(chan writeResult, 1)
+	const writeStarted, writeStopped, writeComplete = 1, 2, 3
+	var writePhase atomic.Uint32
+	cleanupUnsent := func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if c.pending[command.RequestID] == p {
+			delete(c.pending, command.RequestID)
+		}
+		if mutation && c.attempts[command.AttemptID].RequestID == command.RequestID {
+			delete(c.attempts, command.AttemptID)
+			delete(c.unknown, command.AttemptID)
+		}
+	}
 	metadataPhase = "Write"
 	go func() {
 		c.writeMu.Lock()
 		defer c.writeMu.Unlock()
-		_ = conn.SetWriteDeadline(deadline)
-		err := b.verifyChannelProcess(ctx, c)
+		err := ctx.Err()
+		if err == nil {
+			err = b.verifyChannelProcess(ctx, c)
+		}
 		if err == nil {
 			for _, check := range beforeSend {
 				if err = check(); err != nil {
@@ -479,11 +495,25 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 				err = scopeFailure("scopeChanged")
 			}
 		}
-		attempted := err == nil
-		if attempted {
-			err = WriteFrame(conn, command)
+		if err == nil {
+			err = ctx.Err()
 		}
-		_ = conn.SetWriteDeadline(time.Time{})
+		// Cancellation and the first possible frame byte have one owner. A
+		// cancelled pre-write guard may drain later, but can never post late.
+		attempted := err == nil && writePhase.CompareAndSwap(0, writeStarted)
+		if attempted {
+			_ = conn.SetWriteDeadline(deadline)
+			err = WriteFrame(conn, command)
+			if err == nil {
+				writePhase.Store(writeComplete)
+			}
+			_ = conn.SetWriteDeadline(time.Time{})
+		} else {
+			writePhase.CompareAndSwap(0, writeStopped)
+			if err == nil {
+				err = ctx.Err()
+			}
+		}
 		written <- writeResult{err: err, attempted: attempted}
 	}()
 	var err error
@@ -494,16 +524,24 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 		}
 		err = outcome.err
 		if err != nil && !outcome.attempted {
-			b.mu.Lock()
-			delete(c.pending, command.RequestID)
-			if mutation {
-				delete(c.attempts, command.AttemptID)
-				delete(c.unknown, command.AttemptID)
-			}
-			b.mu.Unlock()
+			cleanupUnsent()
 			return Reply{}, dispatchGateFailure(err)
 		}
 	case <-ctx.Done():
+		if writePhase.CompareAndSwap(0, writeStopped) || writePhase.Load() == writeStopped {
+			metadataPhase = "PreWrite"
+			cleanupUnsent()
+			return Reply{}, dispatchGateFailure(ctx.Err())
+		}
+		if writePhase.Load() == writeComplete {
+			metadataPhase = "Ack"
+			if !mutation {
+				b.mu.Lock()
+				delete(c.pending, command.RequestID)
+				b.mu.Unlock()
+			}
+			return Reply{}, browserError("cancelled", "Chrome dispatch cancelled; late original receipt remains reconcilable", uncertain(mutation))
+		}
 		conn.Close()
 		return Reply{}, browserError("cancelled", "Chrome transport cancelled; reconcile original attempt", uncertain(mutation))
 	}
