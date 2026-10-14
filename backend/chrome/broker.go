@@ -631,7 +631,7 @@ func (b *Broker) serve(conn net.Conn) {
 			continue
 		}
 		privateFrame := false
-		if !scopedPublicFrameLocked(c, data) && !scopedInventoryFrameLocked(c, data) {
+		if !scopedPublicFrameLocked(c, data) && !scopedInventoryFrameLocked(c, data) && !inactivePrivacyControlPlaneFrameLocked(c, data) {
 			if discardQuarantinedInventory(c, data) {
 				b.mu.Unlock()
 				continue

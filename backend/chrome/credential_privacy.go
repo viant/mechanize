@@ -471,7 +471,7 @@ func (g *Gateway) guardCredentialPrivacy(ctx context.Context, p auth.Principal, 
 }
 func (b *Broker) guardPrivacyCommand(ctx context.Context, c *channel, command Command, mutation bool) error {
 	b.mu.Lock()
-	if publicReadPermitLocked(ctx, c, command, mutation) != nil || scopeDisjointLocked(c, command.Identity) {
+	if publicReadPermitLocked(ctx, c, command, mutation) != nil || scopeDisjointLocked(c, command.Identity) || !mutation && inactivePrivacyReplacementLocked(c) && reconnectTargetRetirementLocked(c, command) {
 		b.mu.Unlock()
 		return nil
 	}

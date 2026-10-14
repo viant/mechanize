@@ -423,7 +423,8 @@ func (b *Broker) acceptReconnectBindings(c *channel, conn net.Conn, raw []byte) 
 			}
 			b.mu.Lock()
 			defer b.mu.Unlock()
-			if b.closed || b.channels[channelKey(scope.ProfileChannel, scope.BrowserInstance)] != c || c.processEvidence == nil || c.processEvidence != evidence || c.conn != conn || c.reconnectBindings != x || c.executorChallenge != request.ExecutorChallenge || b.epoch != request.BrokerEpoch || c.epoch != request.ChannelEpoch || c.scopeHash != request.ScopeHash || !channelScopeQualified(c) || c.executorQualified != x.published || c.lifecycleInhibited || !reconnectRetirementPendingOnlyLocked(c) || len(c.unknown) > 0 && !targetRetirement || c.playwright != nil || c.privateFlow != nil || c.privacy != nil || c.privateInspection != nil || c.privateCredential != nil || c.privateAdvance != nil || c.privacyPending != nil || c.manualPending != nil {
+			privacyBlocked := c.privacy != nil && (c.privacy.active || c.privacy.conn == conn)
+			if b.closed || b.channels[channelKey(scope.ProfileChannel, scope.BrowserInstance)] != c || c.processEvidence == nil || c.processEvidence != evidence || c.conn != conn || c.reconnectBindings != x || c.executorChallenge != request.ExecutorChallenge || b.epoch != request.BrokerEpoch || c.epoch != request.ChannelEpoch || c.scopeHash != request.ScopeHash || !channelScopeQualified(c) || c.executorQualified != x.published || c.lifecycleInhibited || !reconnectRetirementPendingOnlyLocked(c) || len(c.unknown) > 0 && !targetRetirement || c.playwright != nil || c.privateFlow != nil || privacyBlocked || c.privateInspection != nil || c.privateCredential != nil || c.privateAdvance != nil || c.privacyPending != nil || c.manualPending != nil {
 				return errReconnectBindings
 			}
 			return nil

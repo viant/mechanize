@@ -11,14 +11,19 @@ import (
 )
 
 func TestReconnectUnknownTargetRetirementPreservesAuditAndRejectsChangedACK(t *testing.T) {
-	for _, mode := range []string{"valid", "wrongLease", "wrongFingerprint", "wrongIdentity", "knownOutcome", "otherHazard", "legacy"} {
+	for _, mode := range []string{"valid", "inactivePrivacy", "wrongLease", "wrongFingerprint", "wrongIdentity", "knownOutcome", "otherHazard", "legacy"} {
 		t.Run(mode, func(t *testing.T) {
 			g, p, ctx, c, conn := setupFixture(t)
 			b := g.broker
+			var retainedPrivacy *credentialPrivacyState
 			lease := Lease{ID: "original-lease", Generation: 1}
 			row := ReconnectBinding{Identity: Identity{ProfileChannel: c.grant.ProfileChannel, BrowserInstance: c.grant.BrowserInstance, TabID: 7, FrameID: 0, DocumentID: "old-document", Generation: 1}, Fence: ReconnectFence{"old-broker", "old-channel", c.scopeHash}, AttemptID: strings.Repeat("d", 64), Fingerprint: strings.Repeat("e", 64), DispatchState: "unknown", ControlLease: &lease}
 			finished := make(chan error, 1)
 			b.mu.Lock()
+			if mode == "inactivePrivacy" {
+				retainedPrivacy = &credentialPrivacyState{active: false, published: true}
+				c.privacy = retainedPrivacy
+			}
 			if mode != "legacy" {
 				c.playwrightTargetRetirementVersion = 1
 			}
@@ -96,7 +101,7 @@ func TestReconnectUnknownTargetRetirementPreservesAuditAndRejectsChangedACK(t *t
 					t.Fatal(e)
 				}
 			}
-			positive := mode == "valid" || mode == "legacy"
+			positive := mode == "valid" || mode == "legacy" || mode == "inactivePrivacy"
 			if positive {
 				if !strings.Contains(string(raw), "reconnectBindingsCommitReady") {
 					t.Fatal("operational ACK did not unblock commit")
@@ -114,7 +119,10 @@ func TestReconnectUnknownTargetRetirementPreservesAuditAndRejectsChangedACK(t *t
 				t.Fatal("bounded reconnect did not finish")
 			}
 			b.mu.Lock()
-			if mode == "valid" {
+			if mode == "valid" || mode == "inactivePrivacy" {
+				if retainedPrivacy != nil && (c.privacy != retainedPrivacy || c.privacy.active) {
+					t.Fatal("metadata recovery erased or activated old private state")
+				}
 				if !c.executorQualified || c.unknown[row.AttemptID] || c.receipts[row.AttemptID].DispatchState != "unknown" || c.receipts[row.AttemptID].EffectState != "unknown" {
 					t.Fatal("retirement resolved business uncertainty")
 				}
