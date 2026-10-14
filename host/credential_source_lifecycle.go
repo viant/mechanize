@@ -11,18 +11,24 @@ import (
 	"strings"
 )
 
+type credentialSupersededSourceBrowser interface {
+	VerifyCredentialSourceSuperseded(context.Context, auth.Principal, chrome.CredentialProtectionScope) error
+}
+
 type credentialControllerIdleBrowser interface {
 	VerifyCredentialSourceIdle(context.Context, auth.Principal) error
 }
 
-// Explicit Prepare may retire an idle controller's privacy protection only.
+// Explicit Prepare may retire an idle predecessor's privacy protection only.
+// Non-controller predecessors require completed runtime close or authenticated
+// executor supersession across restart before the independent source-absence proof.
 // The real successor remains the actor; no old delivery capability is restored.
 func (s *credentialService) retireIdleControllerSource(ctx context.Context, p auth.Principal, snapshot durable.CredentialProtection) error {
 	h := s.host
 	backend := h.credentialScopeBrowser()
 	owners, ok := backend.(credentialControllerIdleBrowser)
 	binding, bound := auth.ConsentBindingFromContext(ctx)
-	if !ok || !bound || !snapshot.Scope.Exact() || !strings.HasPrefix(snapshot.Scope.ClientID, "controller:") {
+	if !ok || !bound || !snapshot.Scope.Exact() {
 		return errOtherCredentialScopeHeld
 	}
 	s.mu.Lock()
@@ -37,9 +43,30 @@ func (s *credentialService) retireIdleControllerSource(ctx context.Context, p au
 			return errOtherCredentialScopeHeld
 		}
 	}
+	controllerOwner := strings.HasPrefix(snapshot.Scope.ClientID, "controller:")
+	var superseded credentialSupersededSourceBrowser
+	var originalSource chrome.CredentialProtectionScope
+	if !controllerOwner && old == nil {
+		var supported bool
+		superseded, supported = backend.(credentialSupersededSourceBrowser)
+		if !supported {
+			return errOtherCredentialScopeHeld
+		}
+		scope := snapshot.Scope
+		originalSource = chrome.CredentialProtectionScope{PreparationID: scope.PreparationID, Origin: scope.Origin, Identity: chrome.Identity{ProfileChannel: scope.ProfileChannel, BrowserInstance: scope.BrowserInstance, TabID: scope.TabID, FrameID: scope.FrameID, DocumentID: scope.DocumentID, Generation: uint64(scope.DocumentGeneration)}, ChromeStartToken: scope.ChromeStartToken, BrokerEpoch: scope.BrokerEpoch, ChannelEpoch: scope.ChannelEpoch, ScopeHash: scope.ScopeHash, LoginRouteSHA256: scope.LoginRouteSHA256}
+	}
 	inputIdle := func(c context.Context) error {
 		if c.Err() != nil || h.Runtime.CheckSession(c, p, binding.SessionID) != nil {
 			return errPrivateCredential
+		}
+		if !controllerOwner {
+			if old != nil {
+				if old.done == nil || old.done.Err() == nil || h.Runtime.CheckPredecessorSessionStopped(c, p, old.actor.Namespace, old.actor.ClientID, old.consent.SessionID) != nil {
+					return errOtherCredentialScopeHeld
+				}
+			} else if e := superseded.VerifyCredentialSourceSuperseded(c, p, originalSource); e != nil {
+				return e
+			}
 		}
 		return owners.VerifyCredentialSourceIdle(c, p)
 	}
@@ -53,7 +80,7 @@ func (s *credentialService) retireIdleControllerSource(ctx context.Context, p au
 	}
 	defer revoke()
 	prep, children, e := h.durable.LoadCredentialRecovery(sealed, p, snapshot.Scope.PreparationID)
-	if e != nil || prep.Namespace != snapshot.Scope.Namespace || prep.ClientID != snapshot.Scope.ClientID || prep.Origin != snapshot.Scope.Origin || prep.PreparationID != snapshot.Scope.PreparationID || !(prep.ProtectionState == "held" && prep.Revision == 1 || prep.ProtectionState == "closed" && prep.Revision == 2) {
+	if e != nil || !controllerOwner && old != nil && prep.SessionID != old.consent.SessionID || prep.Namespace != snapshot.Scope.Namespace || prep.ClientID != snapshot.Scope.ClientID || prep.Origin != snapshot.Scope.Origin || prep.PreparationID != snapshot.Scope.PreparationID || !(prep.ProtectionState == "held" && prep.Revision == 1 || prep.ProtectionState == "closed" && prep.Revision == 2) {
 		return errOtherCredentialScopeHeld
 	}
 	snapshot.Preparation, snapshot.Attempts = prep, children

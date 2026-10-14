@@ -19,14 +19,18 @@ import (
 // Host, consent, Vault lease transitions and Datly are real. Only browser privacy
 // qualification/absence is supplied by this inert fixture; no OS/page is touched.
 func TestIdleConnectedControllerSourceHandoffPreservesReceipts(t *testing.T) {
-	for _, mode := range []string{"privacyReady", "unknown"} {
+	for _, mode := range []string{"privacyReady", "unknown", "closedNoncontroller", "closedNoncontrollerUnknown", "liveNoncontroller", "canceledLiveNoncontroller", "closedNoncontrollerPresent", "closedNoncontrollerBusy", "closedNoncontrollerRestart", "closedNoncontrollerRestartReady", "closedNoncontrollerRestartUnknown", "closedNoncontrollerRestartPresent", "closedNoncontrollerRestartAmbiguous"} {
 		t.Run(mode, func(t *testing.T) {
 			fixtureMode := "known"
-			if mode == "unknown" {
+			if mode == "unknown" || mode == "closedNoncontrollerUnknown" || mode == "closedNoncontrollerRestartUnknown" {
 				fixtureMode = "unknown"
 			}
-			credentialHostFixtureFlow(t, fixtureMode, credentialHostFixtureHooks{clientID: "controller:" + strings.Repeat("a", 64), successorClientID: "controller:" + strings.Repeat("f", 64), exercise: func(t *testing.T, h *Host, ctx context.Context, p auth.Principal, ref gateway.CredentialRefInput, input gateway.CredentialPrepareInput, f *credentialBrowserFixture, reads *atomic.Int64) {
-				if _, e := h.CredentialApply(ctx, p, ref); e != nil && mode != "unknown" {
+			originalClient := "controller:" + strings.Repeat("a", 64)
+			if strings.Contains(mode, "Noncontroller") {
+				originalClient = "synthetic-operator"
+			}
+			credentialHostFixtureFlow(t, fixtureMode, credentialHostFixtureHooks{clientID: originalClient, successorClientID: "controller:" + strings.Repeat("f", 64), exercise: func(t *testing.T, h *Host, ctx context.Context, p auth.Principal, ref gateway.CredentialRefInput, input gateway.CredentialPrepareInput, f *credentialBrowserFixture, reads *atomic.Int64) {
+				if _, e := h.CredentialApply(ctx, p, ref); e != nil && fixtureMode != "unknown" {
 					t.Fatal(e)
 				}
 				old := f.session
@@ -46,6 +50,35 @@ func TestIdleConnectedControllerSourceHandoffPreservesReceipts(t *testing.T) {
 					old.dom = &credentialDOMState{}
 					old.state = "privacyReady"
 				}
+				if strings.HasPrefix(mode, "closedNoncontroller") {
+					if e := h.Runtime.Close(ctx, input.SessionID); e != nil {
+						t.Fatal(e)
+					}
+				}
+				if mode == "canceledLiveNoncontroller" {
+					old.cancel()
+					old.protected.Retire()
+				}
+				if strings.Contains(mode, "Restart") {
+					h.credentials.mu.Lock()
+					delete(h.credentials.pending, old.id)
+					h.credentials.mu.Unlock()
+					oldRuntime := h.Runtime
+					replacement, e := integration.NewWithOptions(func(context.Context, auth.Principal, model.Step, map[string]model.Value) (integration.StepResult, error) {
+						t.Fatal("restart fixture posted input")
+						return integration.StepResult{}, nil
+					}, integration.Options{OnSessionClose: h.cancelOwnedSession})
+					if e != nil {
+						t.Fatal(e)
+					}
+					h.Runtime = replacement
+					defer func() { _ = replacement.Shutdown(context.Background()); h.Runtime = oldRuntime }()
+					h.vaultExposure, e = vault.NewGuardedExposureGate(func(context.Context) error { return nil })
+					if e != nil {
+						t.Fatal(e)
+					}
+
+				}
 				beforePrep, before := credentialLifecycleSnapshot(t, h, ctx, p, ref.PreparationID)
 				fills, submits, admissions, vaultReads := f.fills, f.submits, f.admissions, reads.Load()
 				f.scopeAbsent = func(c context.Context, s chrome.CredentialProtectionScope) error {
@@ -56,11 +89,26 @@ func TestIdleConnectedControllerSourceHandoffPreservesReceipts(t *testing.T) {
 					if actor.ClientID == p.ClientID {
 						t.Fatal("handoff impersonated original client")
 					}
+					if mode == "closedNoncontrollerPresent" || mode == "closedNoncontrollerRestartPresent" {
+						return chrome.ErrCredentialSourcePresent
+					}
+					if mode == "closedNoncontrollerRestartAmbiguous" {
+						return errPrivateCredential
+					}
 					return c.Err()
 				}
 				backend := &idleHandoffBrowserFixture{credentialBrowserFixture: f}
+				backend.busy = mode == "closedNoncontrollerBusy"
+				backend.superseded = strings.Contains(mode, "Restart") && mode != "closedNoncontrollerRestart"
 				h.credentials.browserFixture = backend
 				result, successor, newSession := prepareForeignLifecycleFixture(t, h, p, input, "controller:"+strings.Repeat("f", 64))
+				if mode == "liveNoncontroller" || mode == "canceledLiveNoncontroller" || mode == "closedNoncontrollerPresent" || mode == "closedNoncontrollerBusy" || mode == "closedNoncontrollerRestart" || mode == "closedNoncontrollerRestartPresent" || mode == "closedNoncontrollerRestartAmbiguous" {
+					afterPrep, after := credentialLifecycleSnapshot(t, h, ctx, p, ref.PreparationID)
+					if result.State != "needsNativeAction" || afterPrep != beforePrep || !reflect.DeepEqual(after, before) || f.fills != fills || f.submits != submits || f.admissions != admissions {
+						t.Fatal("unproven predecessor protection removed", mode, result.AttentionCode)
+					}
+					return
+				}
 				if result.State != "awaitingPreflight" {
 					t.Fatal("idle connected previous preparation remains globally held", result.AttentionCode)
 				}
@@ -105,7 +153,8 @@ func TestIdleConnectedControllerSourceHandoffPreservesReceipts(t *testing.T) {
 
 type idleHandoffBrowserFixture struct {
 	*credentialBrowserFixture
-	busy bool
+	busy       bool
+	superseded bool
 }
 
 func (f *idleHandoffBrowserFixture) VerifyCredentialSourceIdle(ctx context.Context, p auth.Principal) error {
@@ -114,6 +163,14 @@ func (f *idleHandoffBrowserFixture) VerifyCredentialSourceIdle(ctx context.Conte
 	}
 	return ctx.Err()
 }
+func (f *idleHandoffBrowserFixture) VerifyCredentialSourceSuperseded(ctx context.Context, p auth.Principal, s chrome.CredentialProtectionScope) error {
+	actual, e := auth.FromContext(ctx)
+	if e != nil || actual.ClientID != p.ClientID || actual.ClientID == f.session.actor.ClientID || s.PreparationID != f.session.id || s.BrokerEpoch != "broker" || s.ChromeStartToken != "chrome-birth" || !f.superseded {
+		return errOtherCredentialScopeHeld
+	}
+	return ctx.Err()
+}
+
 func (f *idleHandoffBrowserFixture) VerifyControllerOwnerAbsent(context.Context, auth.Principal, string) error {
 	return errOtherCredentialScopeHeld
 }

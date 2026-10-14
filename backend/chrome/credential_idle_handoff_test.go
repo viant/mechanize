@@ -228,3 +228,48 @@ func TestOwnedSourceProofRPCIsIdleOnlyUnderExactCurrentProcessPin(t *testing.T) 
 		})
 	}
 }
+
+func TestRestartSourceSupersessionRequiresAuthenticatedQuiescentReplacement(t *testing.T) {
+	for _, mode := range []string{"valid", "sameEpoch", "sameChannelFence", "wrongBirth", "wrongNativeHost", "wrongScope", "unqualified", "inventoryIncomplete", "pending", "unknown", "privateInput", "lifecycle"} {
+		t.Run(mode, func(t *testing.T) {
+			f, c, ctx := publicReadFixture(t)
+			b := f.g.broker
+			b.mu.Lock()
+			source := CredentialProtectionScope{PreparationID: strings.Repeat("a", 64), Identity: Identity{ProfileChannel: "p1", BrowserInstance: "b1", TabID: 7, DocumentID: "original-login", Generation: 1}, Origin: "https://fixture.test", ChromeStartToken: c.processEvidence.ChromeParent.StartToken, BrokerEpoch: "predecessor-broker", ChannelEpoch: "predecessor-channel", ScopeHash: c.scopeHash}
+			switch mode {
+			case "sameEpoch":
+				source.BrokerEpoch = b.epoch
+			case "sameChannelFence":
+				source.ChannelEpoch = c.epoch
+			case "wrongBirth":
+				source.ChromeStartToken = "different-birth"
+			case "wrongNativeHost":
+				copied := *c.processEvidence
+				copied.NativeHost.StartToken = "wrong-native-birth"
+				c.processEvidence = &copied
+			case "wrongScope":
+				source.ScopeHash = "different-scope"
+			case "unqualified":
+				c.executorQualified = false
+			case "inventoryIncomplete":
+				c.inventoryComplete = false
+			case "pending":
+				c.pending["other"] = &pending{}
+			case "unknown":
+				c.unknown["other"] = true
+			case "privateInput":
+				c.privateCredential = &credentialDeliveryPending{}
+			case "lifecycle":
+				c.lifecycleInhibited = true
+			}
+			b.mu.Unlock()
+			err := f.g.VerifyCredentialSourceSuperseded(ctx, f.p, source)
+			if (err == nil) != (mode == "valid") {
+				t.Fatal("incorrect predecessor eligibility", mode, err)
+			}
+			if f.mutations.Load() != 0 {
+				t.Fatal("supersession query posted input")
+			}
+		})
+	}
+}

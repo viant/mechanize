@@ -10,6 +10,14 @@ import (
 )
 
 func TestSourceLifecycleSealRetiresOnlyOriginalProtection(t *testing.T) {
+	testSourceLifecycleSeal(t, "controller:"+strings.Repeat("a", 64))
+}
+
+func TestNonControllerSourceLifecycleSealPreservesUnknown(t *testing.T) {
+	testSourceLifecycleSeal(t, "synthetic-operator")
+}
+
+func testSourceLifecycleSeal(t *testing.T, sourceClient string) {
 	p, _ := auth.NewPrincipal("fixture", "", "lifecycle", []string{"desktop:control"})
 	p.ClientID = "successor"
 	ctx := auth.WithPrincipal(context.Background(), p)
@@ -20,7 +28,7 @@ func TestSourceLifecycleSealRetiresOnlyOriginalProtection(t *testing.T) {
 	binding := auth.ConsentBinding{SessionID: "current", GrantID: "grant", Purpose: "current preparation"}
 	ctx = auth.WithConsentBinding(ctx, binding)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	scope := CredentialProtectionScopeRecord{Namespace: p.Namespace, ClientID: "controller:" + strings.Repeat("a", 64), PreparationID: strings.Repeat("b", 64), Origin: "https://fixture.invalid", ProfileChannel: "profile", BrowserInstance: "browser", TabID: 7, DocumentID: "old-document", DocumentGeneration: 1, ChromeStartToken: "old-birth", BrokerEpoch: "old-broker", ChannelEpoch: "old-channel", ScopeHash: strings.Repeat("c", 64), LoginRouteSHA256: strings.Repeat("d", 64), CreatedAt: now}
+	scope := CredentialProtectionScopeRecord{Namespace: p.Namespace, ClientID: sourceClient, PreparationID: strings.Repeat("b", 64), Origin: "https://fixture.invalid", ProfileChannel: "profile", BrowserInstance: "browser", TabID: 7, DocumentID: "old-document", DocumentGeneration: 1, ChromeStartToken: "old-birth", BrokerEpoch: "old-broker", ChannelEpoch: "old-channel", ScopeHash: strings.Repeat("c", 64), LoginRouteSHA256: strings.Repeat("d", 64), CreatedAt: now}
 	valid := atomic.Bool{}
 	valid.Store(true)
 	guard := func(c context.Context) error {

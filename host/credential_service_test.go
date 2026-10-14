@@ -131,7 +131,7 @@ func credentialHostFixtureFlow(t *testing.T, mode string, hooks ...credentialHos
 	if _, e = h.consent.NativeRPC(human, "decide", decide); e != nil {
 		t.Fatal(e)
 	}
-	if strings.HasPrefix(fixtureClient, "controller:") {
+	if strings.HasPrefix(fixtureClient, "controller:") || strings.HasPrefix(hook.successorClientID, "controller:") {
 		// Fake only the externally verified controller-port lifetime. The real
 		// consent service, grants and actual actor context remain exercised.
 		h.consent.options.ControllerPolicy = func(c context.Context, actor auth.Principal) (context.Context, time.Time, func(), error) {

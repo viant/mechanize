@@ -3,6 +3,8 @@ package chrome
 import (
 	"context"
 	"github.com/viant/mechanize/auth"
+	"github.com/viant/mechanize/auth/nativepeer"
+	"net"
 	"strings"
 )
 
@@ -48,6 +50,10 @@ func (g *Gateway) VerifyCredentialSourceIdle(ctx context.Context, p auth.Princip
 	b := g.broker
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return b.credentialSourceIdleLocked(ctx, p)
+}
+
+func (b *Broker) credentialSourceIdleLocked(ctx context.Context, p auth.Principal) error {
 	if b.closed {
 		return scopeFailure("scopeChanged")
 	}
@@ -87,4 +93,40 @@ func ownedCleanupScopeRPC(ctx context.Context, p auth.Principal, b *Broker, c *c
 		}
 	}
 	return false
+}
+
+// VerifyCredentialSourceSuperseded proves retirement of the predecessor's browser
+// input authority across a host restart. A different epoch alone is insufficient:
+// the same signed Chrome birth must have accepted the current qualified fence and
+// reconciled its input lane. Exact source absence is still proved separately.
+func (g *Gateway) VerifyCredentialSourceSuperseded(ctx context.Context, p auth.Principal, source CredentialProtectionScope) error {
+	if !validProtectionScope(source) || source.BrokerEpoch == "" || source.ChannelEpoch == "" || source.ScopeHash == "" || g == nil || g.broker == nil {
+		return scopeFailure("scopeChanged")
+	}
+	if e := g.VerifyCredentialSourceIdle(ctx, p); e != nil {
+		return e
+	}
+	b := g.broker
+	b.mu.Lock()
+	c := b.channels[channelKey(source.Identity.ProfileChannel, source.Identity.BrowserInstance)]
+	valid := c != nil && c.grant.Principal.Namespace == p.Namespace && c.conn != nil && c.processEvidence != nil && c.processEvidence.ChromeParent.StartToken == source.ChromeStartToken && !c.fixtureOnly && channelScopeQualified(c) && c.executorQualified && c.inventoryComplete && b.epoch != source.BrokerEpoch && c.epoch != source.ChannelEpoch && c.scopeHash == source.ScopeHash && allowedOrigin(c.grant, source.Origin)
+	var conn net.Conn
+	var evidence *nativepeer.ChromeProcessEvidence
+	if valid {
+		conn = c.conn
+		evidence = c.processEvidence
+	}
+	b.mu.Unlock()
+	if !valid || b.checkCredentialScopeProcess(ctx, c) != nil {
+		return scopeFailure("scopeChanged")
+	}
+	if e := g.VerifyCredentialSourceIdle(ctx, p); e != nil {
+		return e
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed || c.conn != conn || c.processEvidence != evidence || !c.executorQualified || !c.inventoryComplete || !channelScopeQualified(c) || b.epoch == source.BrokerEpoch || c.epoch == source.ChannelEpoch || c.scopeHash != source.ScopeHash {
+		return scopeFailure("scopeChanged")
+	}
+	return b.credentialSourceIdleLocked(ctx, p)
 }

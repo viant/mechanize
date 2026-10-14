@@ -16,13 +16,16 @@ type credentialSourceLifecycleAuthority struct {
 	active  atomic.Bool
 }
 
-// WithCredentialSourceLifecycleAuthority reads only one retained predecessor controller's
+// WithCredentialSourceLifecycleAuthority reads only one retained predecessor's
 // original metadata. The successor actor is unchanged. Protection closure still
 // requires the separate complete-child source-absence seal; no input is granted.
+// For a non-controller predecessor the host guard also proves its exact retained
+// runtime owner/session has stopped, or an authenticated replacement executor has
+// superseded its original fence. Cancellation or map/epoch absence alone is insufficient.
 func WithCredentialSourceLifecycleAuthority(ctx context.Context, scope CredentialProtectionScopeRecord, guard func(context.Context) error) (context.Context, func(), error) {
 	p, e := auth.FromContext(ctx)
 	binding, bound := auth.ConsentBindingFromContext(ctx)
-	if e != nil || p.Validate() != nil || !p.HasScope("desktop:control") || p.ClientID == "" || p.Namespace != scope.Namespace || p.ClientID == scope.ClientID || !strings.HasPrefix(scope.ClientID, "controller:") || !deliveryHex.MatchString(strings.TrimPrefix(scope.ClientID, "controller:")) || scope.Validate() != nil || auth.NativeHuman(ctx) || !bound || binding.SessionID == "" || binding.GrantID == "" || binding.Purpose == "" || guard == nil || !credentialDeliveryGuard(ctx, guard) {
+	if e != nil || p.Validate() != nil || !p.HasScope("desktop:control") || p.ClientID == "" || p.Namespace != scope.Namespace || p.ClientID == scope.ClientID || scope.ClientID == "" || strings.HasPrefix(scope.ClientID, "controller:") && !deliveryHex.MatchString(strings.TrimPrefix(scope.ClientID, "controller:")) || scope.Validate() != nil || auth.NativeHuman(ctx) || !bound || binding.SessionID == "" || binding.GrantID == "" || binding.Purpose == "" || guard == nil || !credentialDeliveryGuard(ctx, guard) {
 		return nil, nil, ErrCredentialDeliveryAuthority
 	}
 	if _, e = RequireScope(ctx, p.Namespace); e != nil {
