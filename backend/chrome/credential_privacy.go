@@ -402,7 +402,7 @@ func (g *Gateway) verifyCredentialPrivacy(ctx context.Context, p auth.Principal,
 		return errCredentialPrivacy
 	}
 	b.mu.Lock()
-	wasChanged := s.changed && c.privacy == s && s.published && c.conn == s.conn && privacyOperationIdleLocked(ctx, c)
+	wasChanged := s.changed && c.privacy == s && s.published && c.conn == s.conn && privacyOperationIdleLocked(ctx, c, identitySnapshot)
 	b.mu.Unlock()
 	if wasChanged {
 		if g.privacyChannel(ctx, p, s) != nil {
@@ -411,7 +411,7 @@ func (g *Gateway) verifyCredentialPrivacy(ctx context.Context, p auth.Principal,
 		return ErrCredentialPrivacyDocumentChanged
 	}
 	b.mu.Lock()
-	valid := c.privacy == s && s.active && s.published && c.conn == s.conn && privacyOperationIdleLocked(ctx, c)
+	valid := c.privacy == s && s.active && s.published && c.conn == s.conn && privacyOperationIdleLocked(ctx, c, identitySnapshot)
 	expected := s.identity
 	b.mu.Unlock()
 	if !valid {

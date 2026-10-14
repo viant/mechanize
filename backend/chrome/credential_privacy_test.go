@@ -498,3 +498,136 @@ func TestCredentialPrivacyNegativeIsClosedCorrelatedAndGrantsNoAuthority(t *test
 		})
 	}
 }
+
+func TestPublishedPrivacyOrdinaryAdmissionScopesPendingHealth(t *testing.T) {
+	for _, mode := range []string{"otherRead", "sameRead", "unboundInput", "unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			g, p, ctx, source, submit := privacyFixture(t)
+			defer g.Close()
+			g.broker.mu.Lock()
+			c := g.broker.channels[channelKey(source.Document.ProfileChannel, source.Document.BrowserInstance)]
+			g.broker.mu.Unlock()
+			armed := false
+			var current Identity
+			admit := func(context.Context) error {
+				if !armed {
+					return nil
+				}
+				g.controlMu.Lock()
+				fresh := testFirstControl(g)
+				created := fresh != nil && fresh.Lease.ID != source.Lease.ID
+				g.controlMu.Unlock()
+				if created {
+					target := current
+					action := "read"
+					if mode == "otherRead" {
+						target.TabID += 10
+						target.DocumentID = "unrelated-public-document"
+					}
+					if mode == "unboundInput" {
+						target = Identity{}
+						action = "element.press"
+					}
+					g.broker.mu.Lock()
+					if mode == "unknown" {
+						c.unknown["unbound-unknown"] = true
+					} else {
+						c.pending["concurrent-work"] = &pending{command: Command{RequestID: "concurrent-work", Action: action, Identity: target}}
+					}
+					g.broker.mu.Unlock()
+				}
+				return nil
+			}
+			proof, err := g.QualifyCredentialPrivacy(ctx, p, source, submit, admit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			routing, ok := proof.Authority()
+			if !ok {
+				t.Fatal("privacy proof missing")
+			}
+			current = routing.Document.Identity
+			surface := model.Surface{Kind: "web", Origin: routing.Document.Origin, TabID: routing.Document.QualifiedTabID()}
+			clear := func() {
+				g.broker.mu.Lock()
+				delete(c.pending, "concurrent-work")
+				delete(c.unknown, "unbound-unknown")
+				g.broker.mu.Unlock()
+			}
+			defer clear()
+			armed = true
+			next, err := g.AdmitControlWithStatus(ctx, p, surface)
+			armed = false
+			if mode == "otherRead" {
+				if err != nil || !next.Created || !next.Confirmed {
+					t.Fatalf("unrelated read stranded fresh ordinary admission: created=%v confirmed=%v err=%v", next.Created, next.Confirmed, err)
+				}
+				if retired, err := g.RetireControl(ctx, p, next.Authority); err != nil || !retired {
+					t.Fatal("unrelated read prevented exact ordinary cleanup", err)
+				}
+			} else {
+				if err == nil || next.Confirmed {
+					t.Fatal("current-target/unbound hazard admitted control")
+				}
+				if retired, err := g.RetireControl(ctx, p, next.Authority); err == nil || retired {
+					t.Fatal("unconfirmed target health permitted retirement")
+				}
+				clear()
+				if retired, err := g.RetireControl(ctx, p, next.Authority); err != nil || !retired {
+					t.Fatal("exact authority not recoverable after fixture hazard settles", err)
+				}
+			}
+		})
+	}
+}
+
+func TestPublishedPrivacyIdleCannotBorrowAnotherTarget(t *testing.T) {
+	a := Identity{ProfileChannel: "profile", BrowserInstance: "browser", TabID: 7, FrameID: 0, DocumentID: "public-private-source", Generation: 1}
+	b := a
+	b.TabID = 8
+	b.DocumentID = "other-controlled-document"
+	c := &channel{privacy: &credentialPrivacyState{identity: a, active: true, published: true}, pending: map[string]*pending{"input-b": {mutation: true, command: Command{RequestID: "input-b", Action: "element.press", Identity: b, ControlLease: &Lease{ID: "b", Generation: 1}}}}, unknown: map[string]bool{}}
+	if privacyOperationIdleLocked(context.Background(), c) {
+		t.Fatal("unbound caller borrowed another document's privacy state")
+	}
+	if privacyOperationIdleLocked(context.Background(), c, b) {
+		t.Fatal("actual input target ignored behind another document's privacy proof")
+	}
+	if !privacyOperationIdleLocked(context.Background(), c, a) {
+		t.Fatal("unrelated target acquired a global hold on exact published privacy")
+	}
+}
+
+func TestPublishedPrivacyKeepsOwnPlaywrightOperationExclusion(t *testing.T) {
+	i := Identity{ProfileChannel: "profile", BrowserInstance: "browser", TabID: 7, FrameID: 0, DocumentID: "published-public", Generation: 1}
+	p := principal(t, "published-owner")
+	p.ClientID = "actor"
+	consent := auth.ConsentBinding{SessionID: "session", GrantID: "grant", Purpose: "fixture"}
+	command := Command{RequestID: "own-request", AttemptID: "own-attempt", Action: "element.press", Identity: i, ControlLease: &Lease{ID: "lease", Generation: 1}, BrokerEpoch: "broker", ChannelEpoch: "channel", ScopeHash: "scope", FingerprintSHA256: strings.Repeat("a", 64)}
+	e := &playwrightExecution{command: command, actor: p, consent: consent}
+	c := &channel{epoch: "channel", scopeHash: "scope", playwright: e, privacy: &credentialPrivacyState{identity: i, active: true, published: true}, pending: map[string]*pending{"own-request": {playwright: true, command: command}}, unknown: map[string]bool{}}
+	ctx := context.WithValue(auth.WithConsentBinding(auth.WithPrincipal(context.Background(), p), consent), playwrightPrivacyKey{}, e)
+	if !privacyOperationIdleLocked(ctx, c, i) {
+		t.Fatal("published target branch hid existing owned-operation proof")
+	}
+	if privacyOperationIdleLocked(context.Background(), c, i) {
+		t.Fatal("unowned caller ignored in-flight input")
+	}
+	c.unknown["own-attempt"] = true
+	if privacyOperationIdleLocked(ctx, c, i) {
+		t.Fatal("missing original input boundary became continuation proof")
+	}
+	e.inputPossible = true
+	if !privacyOperationIdleLocked(ctx, c, i) {
+		t.Fatal("original owned input cannot finish with immutable unknown receipt")
+	}
+	c.unknown["unbound-other"] = true
+	if privacyOperationIdleLocked(ctx, c, i) {
+		t.Fatal("unbound unknown receipt ignored")
+	}
+	delete(c.unknown, "unbound-other")
+	e.revoked = true
+	if privacyOperationIdleLocked(ctx, c, i) {
+		t.Fatal("revoked original operation admitted")
+	}
+}

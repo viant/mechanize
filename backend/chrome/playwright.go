@@ -657,7 +657,17 @@ func (b *Broker) acceptPlaywrightFrame(c *channel, conn net.Conn, raw []byte) bo
 // exact already admitted local operation to recheck its published DOM privacy
 // guard while its own transport/receipt is in flight. Other pending/unknown
 // work remains a barrier; JSON/MCP callers cannot construct this context token.
-func privacyOperationIdleLocked(ctx context.Context, c *channel) bool {
+func privacyOperationIdleLocked(ctx context.Context, c *channel, target ...Identity) bool {
+	// Published privacy retains redaction, not a global input lane. Ordinary
+	// admission uses the same exact-target health as control/retirement. Private
+	// delivery and unbound hazards retain the existing conservative exclusion.
+	published := c.privacy != nil && c.privacy.active && c.privacy.published
+	ordinary := c.privateInspection == nil && c.privateCredential == nil &&
+		c.privateAdvance == nil && c.privateFlow == nil && c.privacyPending == nil
+	if len(target) == 1 && published && ordinary && target[0] == c.privacy.identity &&
+		!pendingForTargetLocked(c, target[0]) && !domUnknownForTargetLocked(c, target[0]) {
+		return true
+	}
 	if len(c.pending) == 0 && !domUnknownBlockedLocked(c) {
 		return true
 	}

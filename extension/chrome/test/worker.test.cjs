@@ -1346,6 +1346,18 @@ test('private same-document promotion survives an existing pooled debugger attac
  const qualification=privacyFrame();await f.receive(qualification);const proof=f.messages.at(-1);assert.equal(proof.ready,true);assert.equal(proof.retiredAuthorityQuiesced,true);assert.equal(proof.redactionReady,true);
  await f.receive({...qualification,type:'credentialPrivacyCommit',identity:proof.identity,requestId:'e'.repeat(64)});const committed=f.messages.at(-1);assert.equal(committed.ready,true);
  await f.receive(command('private-integration-observe','observe',{identity:committed.identity,attemptId:undefined,locator:undefined}));const observed=f.messages.find(m=>m.requestId==='private-integration-observe');assert.ok(observed&&!observed.error);
+
+ f.state.url=f.state.frameURL=w.location.href;f.state.tabStatus='complete';f.state.inventoryTabs=[{id:7,url:f.state.url,status:'complete'}];
+ const scopeRequest={type:'credentialScope',requestId:'0'.repeat(64),mode:'publicRead',preparationId:'1'.repeat(64),sourceIdentity:{...committed.identity,documentId:'',documentGeneration:0},sourceOrigin:'https://fixture.example.test',loginRouteSHA256:'',...grant,deadlineUnixMs:Date.now()+4000,targetTabId:7,targetOrigin:'https://fixture.example.test'};
+ await f.receive(scopeRequest);const scoped=f.messages.find(m=>m.requestId===scopeRequest.requestId);assert.ok(scoped?.ready&&scoped.publicDocument?.public,`classified post-login public scope reason=${scoped?.reason||'missing'} keys=${Object.keys(scoped||{}).join(',')}`);
+ await f.receive(command('classified-integration-observe','observe',{identity:scoped.publicDocument.identity,publicRead:true,attemptId:undefined,locator:undefined}));
+ const publicObservation=f.messages.find(m=>m.requestId==='classified-integration-observe');assert.ok(publicObservation&&!publicObservation.error,'classified post-login observation');
+const publicLease={id:'ordinary-public-lease',generation:3};
+ await f.receive(command('ordinary-integration-acquire','executor.acquire',{identity:publicObservation.identity,attemptId:undefined,locator:undefined,controlLease:publicLease}));
+ const acquired=f.messages.find(m=>m.requestId==='ordinary-integration-acquire');assert.ok(acquired&&acquired.validated===true,'ordinary acquisition after committed public observe');assert.equal(acquired.controlLease.id,publicLease.id);assert.equal(acquired.controlLease.generation,publicLease.generation);
+ await f.receive(command('private-integration-retire','executor.retire',{identity:acquired.identity,attemptId:undefined,locator:undefined,controlLease:publicLease}));
+ const retired=f.messages.find(m=>m.requestId==='private-integration-retire');assert.ok(retired&&retired.retiredAuthorityQuiesced===true,`exact ordinary retirement after private login: ${retired?.error?.code||'missing'} message=${retired?.error?.message||'missing'} keys=${Object.keys(retired||{}).join(',')}`);
+
  assert.equal(submits,1);assert.equal(debug.current(),true);assert.deepEqual(f.state.debuggerAttaches.map(v=>v.tabId),[8]);assert.equal(f.state.debuggerInputs.filter(v=>v.method.startsWith('Input.')).length,0);assert.ok(!JSON.stringify([f.messages,f.storage,f.sessionState]).includes('CANARY'));
 });
 test('explicit reconnect retries an unqualified native port while preserving dormant origin quarantine',async()=>{
