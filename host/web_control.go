@@ -318,7 +318,7 @@ func (m *WebControlManager) Prepare(ctx context.Context, p auth.Principal, step 
 	stage := "executor"
 	defer func() {
 		if returnErr != nil {
-			returnErr = automation.NewStepPreparationFailureWithCleanup(stage, webPreparationCause(returnErr), webPreparationCleanupStatus(returnErr), returnErr)
+			returnErr = automation.NewStepPreparationFailureDetail(stage, webPreparationCause(returnErr), webPreparationCleanupStatus(returnErr), webPreparationSubstage(returnErr), returnErr)
 		}
 	}()
 	if !m.beginWork() {

@@ -14,6 +14,30 @@ import (
 // into closed metadata and never include joined error text.
 type webPreparationCleanupFailure struct{ primary, cleanup error }
 
+type webPreparationSubstageFailure struct {
+	substage string
+	cause    error
+}
+
+func (e *webPreparationSubstageFailure) Error() string {
+	return "Web provider qualification unavailable"
+}
+func (e *webPreparationSubstageFailure) Unwrap() error { return e.cause }
+func webPreparationAt(substage string, err error) error {
+	return &webPreparationSubstageFailure{substage: substage, cause: err}
+}
+func webPreparationSubstage(err error) string {
+	var cleanup *webPreparationCleanupFailure
+	if errors.As(err, &cleanup) {
+		return webPreparationSubstage(cleanup.primary)
+	}
+	var primary *webPreparationSubstageFailure
+	if errors.As(err, &primary) {
+		return primary.substage
+	}
+	return ""
+}
+
 func (e *webPreparationCleanupFailure) Error() string { return "Web preparation cleanup unconfirmed" }
 func (e *webPreparationCleanupFailure) Unwrap() []error {
 	return []error{e.primary, e.cleanup, ErrWebControlCleanupUnknown}

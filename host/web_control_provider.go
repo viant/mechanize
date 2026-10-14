@@ -200,10 +200,10 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 					mu.Lock()
 					entries[a.Lease.ID] = providerAuthority{authority: a, owned: true}
 					mu.Unlock()
-					return WebControlReadiness{}, retireUnpublished(ctx, p, a, errors.Join(err, fmt.Errorf("%w: provider.admission", ErrWebControlUnqualified)))
+					return WebControlReadiness{}, retireUnpublished(ctx, p, a, webPreparationAt("admission", errors.Join(err, ErrWebControlUnqualified)))
 				}
 				// A failed requalification does not own or revoke another prepared step.
-				return WebControlReadiness{}, errors.Join(err, fmt.Errorf("%w: provider.admission", ErrWebControlUnqualified))
+				return WebControlReadiness{}, webPreparationAt("admission", errors.Join(err, ErrWebControlUnqualified))
 			}
 			if known && existing.uncertain {
 				return WebControlReadiness{}, ErrWebControlCleanupUnknown
@@ -225,7 +225,7 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 			mu.Unlock()
 			pin, pinErr := gateway.PinControlRead(ctx, p, a)
 			if pinErr != nil {
-				pinErr = errors.Join(pinErr, fmt.Errorf("%w: provider.readPin", ErrWebControlUnqualified))
+				pinErr = webPreparationAt("readPin", errors.Join(pinErr, ErrWebControlUnqualified))
 			}
 			if len(bound) != 0 && (a.MutationFingerprintVersion != 2 || a.Document.MutationFingerprintVersion != 2) {
 				pinErr = fmt.Errorf("%w: provider.fingerprintNegotiation", ErrWebControlUnqualified)

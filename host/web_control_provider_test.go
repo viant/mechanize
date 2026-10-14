@@ -109,7 +109,7 @@ func TestProductionProviderRetiresOnlyNewUnpublishedPinFailure(t *testing.T) {
 	pinErr := errors.New("pin unavailable")
 	f := &providerGatewayFixture{pinErr: pinErr}
 	provider := newProductionWebControlProvider(f)
-	if _, err := provider.Qualify(ctx, p, s); !errors.Is(err, pinErr) || errors.Is(err, ErrWebControlCleanupUnknown) {
+	if _, err := provider.Qualify(ctx, p, s); !errors.Is(err, pinErr) || errors.Is(err, ErrWebControlCleanupUnknown) || webPreparationSubstage(err) != "readPin" {
 		t.Fatalf("confirmed exact retirement not preserved %v", err)
 	}
 	if f.held != nil || f.retireCalls != 1 || f.pinCalls != 1 {
@@ -169,7 +169,11 @@ func TestProductionProviderRetainsAmbiguousAcquireAndCleanup(t *testing.T) {
 				f.retireErr = errors.New("retirement unconfirmed")
 			}
 			provider := newProductionWebControlProvider(f)
-			if _, err := provider.Qualify(ctx, p, s); !errors.Is(err, ErrWebControlCleanupUnknown) || f.held == nil {
+			wantSubstage := "readPin"
+			if name == "acquire" {
+				wantSubstage = "admission"
+			}
+			if _, err := provider.Qualify(ctx, p, s); !errors.Is(err, ErrWebControlCleanupUnknown) || f.held == nil || webPreparationSubstage(err) != wantSubstage {
 				t.Fatalf("uncertainty discarded %v", err)
 			}
 			if name == "acquire" && (f.pinCalls != 0 || f.retireCalls != 1) {

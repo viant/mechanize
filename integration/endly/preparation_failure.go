@@ -5,12 +5,16 @@ import "errors"
 // PreparationDiagnostic names only finite local provider stages and causes.
 // It contains no target, argument, process identity, content or error text.
 type PreparationDiagnostic struct {
-	Stage   string `json:"stage"`
-	Cause   string `json:"cause"`
-	Cleanup string `json:"cleanup,omitempty"`
+	Stage    string `json:"stage"`
+	Cause    string `json:"cause"`
+	Cleanup  string `json:"cleanup,omitempty"`
+	Substage string `json:"substage,omitempty"`
 }
 
 func (d PreparationDiagnostic) valid() bool {
+	if d.Substage != "" && d.Substage != "admission" && d.Substage != "readPin" {
+		return false
+	}
 	if d.Cleanup != "" && d.Cleanup != "unconfirmed" {
 		return false
 	}
@@ -47,10 +51,16 @@ func NewStepPreparationFailure(stage, cause string, err error) error {
 // NewStepPreparationFailureWithCleanup preserves the original finite failure
 // and reports retirement uncertainty independently, before any dispatch.
 func NewStepPreparationFailureWithCleanup(stage, cause, cleanup string, err error) error {
+	return NewStepPreparationFailureDetail(stage, cause, cleanup, "", err)
+}
+
+// NewStepPreparationFailureDetail retains a closed provider substage without
+// projecting error text or changing the primary cause/cleanup classification.
+func NewStepPreparationFailureDetail(stage, cause, cleanup, substage string, err error) error {
 	if err == nil {
 		return nil
 	}
-	diagnostic := PreparationDiagnostic{Stage: stage, Cause: cause, Cleanup: cleanup}
+	diagnostic := PreparationDiagnostic{Stage: stage, Cause: cause, Cleanup: cleanup, Substage: substage}
 	if !diagnostic.valid() {
 		return err
 	}

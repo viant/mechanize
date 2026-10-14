@@ -25,7 +25,7 @@ import (
 // Real manager preparation, durable admission, Endly and canonical controller;
 // only the external renderer qualification is supplied. No page input occurs.
 func TestWebPreparationFailureReachesOwnedControllerBeforeAnyIntent(t *testing.T) {
-	for _, kind := range []string{"qualify", "cancelled", "unauthorized", "newLease", "changedCleanup"} {
+	for _, kind := range []string{"qualify", "cancelled", "unauthorized", "newLease", "changedCleanup", "admission", "readPin"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newWebControlFixture(t)
 			f.principal.ClientID = "controller:diagnostic"
@@ -43,6 +43,8 @@ func TestWebPreparationFailureReachesOwnedControllerBeforeAnyIntent(t *testing.T
 			case "changedCleanup":
 				cause = newWebPreparationCleanupFailure(&model.MechanizeError{Code: "staleAuthority", Message: "PRIVATE_CANARY original metadata change", DispatchState: "notDispatched"}, context.DeadlineExceeded)
 				expectedCause = "leaseChanged"
+			case "admission", "readPin":
+				cause = newWebPreparationCleanupFailure(webPreparationAt(kind, errors.New("PRIVATE_CANARY original provider error")), context.DeadlineExceeded)
 			case "newLease":
 				cause = nil
 				f.ready.NewlyAcquired = false
@@ -125,10 +127,16 @@ func TestWebPreparationFailureReachesOwnedControllerBeforeAnyIntent(t *testing.T
 			}
 			detail := failure["preparation"].(map[string]any)
 			expectedFields := 2
-			if kind == "changedCleanup" {
+			if kind == "changedCleanup" || kind == "admission" || kind == "readPin" {
 				expectedFields = 3
 				if detail["cleanup"] != "unconfirmed" {
 					t.Fatal("cleanup outcome not preserved", detail)
+				}
+			}
+			if kind == "admission" || kind == "readPin" {
+				expectedFields++
+				if detail["substage"] != kind {
+					t.Fatal("primary substage lost during cleanup", detail)
 				}
 			}
 			if detail["stage"] != expectedStage || detail["cause"] != expectedCause || len(detail) != expectedFields {

@@ -74,3 +74,17 @@ func TestPreparationCleanupIsOptionalClosedAndIndependentOfOriginalCause(t *test
 		t.Fatal("existing constructor changed")
 	}
 }
+
+func TestPreparationSubstageIsClosedAndPreservesOriginalError(t *testing.T) {
+	original := errors.New("PRIVATE_CANARY primary error")
+	for _, substage := range []string{"admission", "readPin"} {
+		failure := NewStepPreparationFailureDetail("qualify", "unavailable", "unconfirmed", substage, original)
+		projection := CaptureStepPreparationFailure(failure)
+		if projection == nil || !projection.Valid() || projection.Preparation.Substage != substage || projection.Preparation.Cause != "unavailable" || projection.Preparation.Cleanup != "unconfirmed" || !errors.Is(failure, original) || strings.Contains(failure.Error(), "PRIVATE_CANARY") {
+			t.Fatal("primary diagnostic changed", projection)
+		}
+	}
+	if CaptureStepPreparationFailure(NewStepPreparationFailureDetail("qualify", "unavailable", "unconfirmed", "PRIVATE_CANARY", original)) != nil {
+		t.Fatal("unbounded provider details accepted")
+	}
+}
