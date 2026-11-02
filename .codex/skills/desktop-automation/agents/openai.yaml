@@ -1,0 +1,4 @@
+interface:
+  display_name: "Desktop Automation"
+  short_description: "Computer Use first with qualified Mechanize fallback"
+  default_prompt: "Use $desktop-automation to complete this UI task with Computer Use first, using Mechanize privately for credentials or qualified Office fallback when needed."
