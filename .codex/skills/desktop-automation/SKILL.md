@@ -5,7 +5,7 @@ description: "Operate websites and desktop apps with Computer Use first, using M
 
 # Desktop automation
 
-Use Computer Use first for ordinary browser and native-app interaction. This skill controls executor selection and verification; domain skills still own the business task. It does not replace the RFP feasibility or pricing/presentation skills, nor turn a file-generation request into a GUI requirement.
+Use Computer Use first for ordinary browser and native-app interaction. This skill controls executor selection and verification; separate domain skills own the business task. It does not turn a file-generation request into a GUI requirement. Keep examples synthetic and business-neutral; client data, workflow-specific rules and case evidence belong outside the Mechanize repository.
 
 ## Select the next operation
 
@@ -39,6 +39,6 @@ Distinguish app grants, macOS permissions, browser connection, process identity 
 
 Verify business outcomes and saved content, not just tool success. Poll the same live operation after a timeout; never replay an uncertain submit, save, export or credential submission. Keep unsuccessful attempts visible and resume at the first unfinished verified boundary.
 
-When comparing Computer Use with Mechanize, use identical inputs, output requirements and review gates. Time preparation, operation completion, save/export, reopen, review and recovery. Report warm/cold setup and sample size. Formula correctness, editable native objects and fidelity are acceptance gates, not optional speed tradeoffs. A small cell or slide test does not establish full-document reliability. Use the RFP pinpoint skill only for the RFP-specific benchmark.
+When comparing Computer Use with Mechanize, use identical synthetic inputs, output requirements and review gates. Time preparation, operation completion, save/export, reopen, review and recovery. Report warm/cold setup and sample size. Formula correctness, editable native objects and fidelity are acceptance gates, not optional speed tradeoffs. A small cell or slide test does not establish full-document reliability. Keep task-specific benchmark contracts in their separate domain workspace.
 
 At handoff, name the actual executor per stage and the remaining limitations. Say “verified for this operation and environment,” not “fully reliable” without matching end-to-end evidence. Preserve user-owned files and keep test copies separate.
