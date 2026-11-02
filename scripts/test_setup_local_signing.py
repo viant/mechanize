@@ -41,7 +41,7 @@ class LocalSigningTests(unittest.TestCase):
             return ('1) ' + self.fingerprint + ' "Mechanize Local Development"\n').encode() if self.identity_ready else b"0 valid identities found\n"
         if args[:2] == ["openssl", "genpkey"]:
             Path(args[args.index("-out") + 1]).write_bytes(b"private-key-canary")
-        elif args[:2] == ["openssl", "pkey"]:
+        elif args[:2] == ["openssl", "rsa"]:
             Path(args[args.index("-out") + 1]).write_bytes(Path(args[args.index("-in") + 1]).read_bytes())
         elif args[:2] == ["openssl", "req"]:
             Path(args[args.index("-out") + 1]).write_bytes(b"public certificate")

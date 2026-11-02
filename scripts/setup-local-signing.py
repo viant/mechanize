@@ -36,7 +36,7 @@ def write_state(path, value):
 def valid_identity(fingerprint):
     output = run(["security", "find-identity", "-v", "-p", "codesigning"])
     return fingerprint.upper().encode() in [value.upper() for value in re.findall(
-        rb'^\s*\d+\) ([0-9A-Fa-f]{40}) "', output, re.M)]
+        rb'^\s*\d+\) ([0-9A-Fa-f]{40}) "[^"\n]*"[ \t]*$', output, re.M)]
 
 
 def owned_directory(path):
@@ -82,7 +82,7 @@ def setup(create=False):
         run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:3072", "-out", str(private_key)])
         private_key.chmod(0o600)
         native_key = root / (".native-key-" + uuid.uuid4().hex + ".pem")
-        run(["openssl", "pkey", "-in", str(private_key), "-traditional", "-out", str(native_key)])
+        run(["openssl", "rsa", "-in", str(private_key), "-out", str(native_key)])
         native_key.chmod(0o600)
         os.replace(native_key, private_key)
         run(["openssl", "req", "-new", "-x509", "-key", str(private_key), "-sha256", "-days", "3650",

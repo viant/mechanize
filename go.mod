@@ -8,9 +8,9 @@ require (
 	github.com/viant/afs v1.30.1-0.20260914155934-90e95d483861
 	github.com/viant/datly v1.1.1-0.20261012150720-636d0bfdcbba
 	github.com/viant/endly v0.89.1-0.20261004025400-cfbe7fb225b9
-	github.com/viant/jsonrpc v0.25.0
-	github.com/viant/mcp v0.24.1-0.20261009143306-aaed6cdc2d48
-	github.com/viant/mcp-protocol v0.19.1-0.20261008202502-046707df5ed9
+	github.com/viant/jsonrpc v0.25.1-0.20261017043720-5809a36c92af
+	github.com/viant/mcp v0.24.1
+	github.com/viant/mcp-protocol v0.19.1-0.20261014173008-af92f34f304b
 	github.com/viant/scy v0.35.1-0.20260914041206-699e6c909726
 	github.com/viant/sqlx v0.26.1-0.20261012000356-69034efb5257
 	github.com/viant/x v0.5.1-0.20260915043005-1bc42b9eef47

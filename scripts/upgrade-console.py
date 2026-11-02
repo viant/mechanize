@@ -26,6 +26,8 @@ import tempfile
 import time
 import uuid
 
+import development_signing
+
 
 def safe(path):
     p = Path(path).absolute()
@@ -296,6 +298,7 @@ def perform(cleanup):
     parser.add_argument('--apply', action='store_true'); parser.add_argument('--rollback')
     parser.add_argument('--broker-pid', type=int); parser.add_argument('--idle-verified', action='store_true')
     parser.add_argument('--interactive-enrollment', action='store_true')
+    parser.add_argument('--skip-swift-tests', action='store_true', help='Explicitly skip Swift tests when XCTest is unavailable; release build and signature checks still run')
     parser.add_argument('--listen', default='127.0.0.1:4987')
     args = parser.parse_args()
     if os.uname().sysname != 'Darwin' or not re.fullmatch(r'127\.0\.0\.1:[0-9]{1,5}', args.listen):
@@ -371,14 +374,17 @@ def perform(cleanup):
     for path, key in [(root / 'mechanize', 'MechanizeBrokerRequirement'), (active_helper, 'MechanizeHelperRequirement')]:
         run('codesign', '--verify', '--strict', '--test-requirement', '=' + plist[key], str(path))
     env = os.environ.copy(); env['MECHANIZE_BROKER_REQUIREMENT'] = plist['MechanizeBrokerRequirement']
-    run('swift', 'test', '--package-path', str(console), timeout=180)
+    if not args.skip_swift_tests:
+        run('swift', 'test', '--package-path', str(console), timeout=180)
     run('sh', str(console / 'build-app.sh'), env=env, timeout=180)
     staged = console / 'dist' / app.name
     plist = retain_review_enrollment(plist, plistlib.loads((staged / 'Contents/Info.plist').read_bytes()), app)
     account = 'com.viant.mechanize.consent:' + str(os.getuid()) + ':' + uuid.uuid4().hex
     plist['MechanizeEnrollmentAccount'] = account
     (staged / 'Contents/Info.plist').write_bytes(plistlib.dumps(plist))
-    run('codesign', '--force', '--sign', '-', '--identifier', 'com.viant.mechanize.consent', str(staged))
+    signer = development_signing.select_identity(None)
+    run('codesign', *development_signing.signing_arguments(signer, 'com.viant.mechanize.consent'), str(staged))
+    development_signing.verify_certificate(staged, signer)
     req = requirement(staged)
     if not args.apply:
         print(json.dumps({'preflightPassed': True, 'stage': str(stage), 'consoleRequirement': req, 'installedFilesChanged': False})); return

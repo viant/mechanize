@@ -114,7 +114,7 @@ import Security
     }
     var body: some Scene {
         Window("Mechanize", id: "main") { ConsentView(model: model) }
-            .defaultSize(width: 760, height: 620)
+            .defaultSize(width: 900, height: 620)
         MenuBarExtra { MenuBarPanel(model: model) } label: {
             if let icon = Self.menuBarIcon() {
                 Image(nsImage: icon).renderingMode(.original).accessibilityLabel("Mechanize")
@@ -267,17 +267,33 @@ struct ConsentView: View {
             }
             Text(model.message).font(.caption).foregroundStyle(model.connected ? .primary : .secondary).lineLimit(2).textSelection(.enabled)
             RuntimeUpgradeSelectionView(selection: model.runtimeUpgrade)
-            TabView(selection: $selectedTab) {
-                RequestsTab(model: model).tabItem { Label("Requests", systemImage: "hand.raised") }.tag("requests")
-                BrowsersTab(model: model).tabItem { Label("Browsers", systemImage: "globe") }.tag("browsers")
-                ApplicationsTab(model: model).tabItem { Label("Applications", systemImage: "app.badge") }.tag("applications")
-                ActivityTab(model: model).tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }.tag("activity")
-                PermissionsTab(model: model).tabItem { Label("Permissions", systemImage: "lock.shield") }.tag("permissions")
-                VaultTab(openPermissions: { selectedTab = "permissions" }).tabItem { Label("Vault", systemImage: "key.horizontal") }.tag("vault")
-                SettingsTab(model: model).tabItem { Label("Settings", systemImage: "gearshape") }.tag("settings")
+            Picker("Section", selection: $selectedTab) {
+                Text("Requests").tag("requests")
+                Text("Browsers").tag("browsers")
+                Text("Applications").tag("applications")
+                Text("Activity").tag("activity")
+                Text("Permissions").tag("permissions")
+                Text("Vault").tag("vault")
+                Text("Settings").tag("settings")
             }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("mechanize.sectionPicker")
+            .fixedSize(horizontal: false, vertical: true)
+            Group {
+                switch selectedTab {
+                case "browsers": BrowsersTab(model: model)
+                case "applications": ApplicationsTab(model: model)
+                case "activity": ActivityTab(model: model)
+                case "permissions": PermissionsTab(model: model)
+                case "vault": VaultTab(openPermissions: { selectedTab = "permissions" })
+                case "settings": SettingsTab(model: model)
+                default: RequestsTab(model: model)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .padding(16)
+        .frame(minWidth: 820, minHeight: 480)
         .task {
             await model.connect()
             while !Task.isCancelled {

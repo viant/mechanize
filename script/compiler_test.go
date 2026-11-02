@@ -2,6 +2,7 @@ package script
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/viant/mechanize/model"
 	"reflect"
 	"strings"
@@ -112,8 +113,9 @@ func TestCapabilityFailureIsExplicit(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = (Registry{}).CheckCapabilities(p, map[string]bool{"native:attributeRead": true})
-	if err == nil || !strings.Contains(err.Error(), "native:testIdLocator") {
-		t.Fatalf("unsupported capability not rejected: %v", err)
+	var unavailable *CapabilityUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.Surface != "native" || unavailable.Capability != "testIdLocator" || unavailable.Locator != "testId" {
+		t.Fatalf("missing typed locator capability diagnostic: %v", err)
 	}
 }
 func TestStrictStructuredFrontend(t *testing.T) {

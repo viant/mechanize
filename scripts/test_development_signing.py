@@ -62,6 +62,12 @@ class SigningTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             signing.select_identity(fingerprint, run)
 
+    def test_rejects_identity_reported_with_trust_error(self):
+        fingerprint = "AB" * 20
+        run = mock.Mock(return_value=mock.Mock(stdout='  1) ' + fingerprint + ' "Development" (CSSMERR_TP_NOT_TRUSTED)\n'))
+        with self.assertRaises(ValueError):
+            signing.select_identity(fingerprint, run)
+
     def test_verifies_actual_leaf_and_rejects_wrong_or_missing_certificate(self):
         data = b"fixture leaf DER"
         fingerprint = hashlib.sha1(data).hexdigest().upper()

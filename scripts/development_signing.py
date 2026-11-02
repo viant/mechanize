@@ -45,7 +45,7 @@ def select_identity(fingerprint, run=subprocess.run):
         raise ValueError("Signing identity must be an exact certificate SHA-1 fingerprint")
     result = run(["security", "find-identity", "-v", "-p", "codesigning"],
                  check=True, capture_output=True, text=True)
-    identities = re.findall(r'^\s*\d+\) ([0-9A-Fa-f]{40}) "', result.stdout, re.MULTILINE)
+    identities = re.findall(r'^\s*\d+\) ([0-9A-Fa-f]{40}) "[^"\n]*"[ \t]*$', result.stdout, re.MULTILINE)
     fingerprint = fingerprint.upper()
     if fingerprint not in [value.upper() for value in identities]:
         raise ValueError("Requested signing certificate is not a valid local code-signing identity")
