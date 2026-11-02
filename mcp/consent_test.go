@@ -52,3 +52,29 @@ func TestPermissionToolCannotDecideOrAutoGrant(t *testing.T) {
 		t.Fatal("request automatically granted")
 	}
 }
+
+func TestPermissionToolReportsExistingApprovalWithoutPrompt(t *testing.T) {
+	p, _ := auth.NewPrincipal("fixture", "", "human", nil)
+	ctx := auth.WithPrincipal(context.Background(), p)
+	handler := protocol.WithDefaultHandler(ctx, func(base *protocol.DefaultHandler) error {
+		return RegisterConsent(base, func(context.Context, auth.Principal, string, consent.RequestInput) (consent.Request, error) {
+			return consent.Request{ID: "original-request", ExistingGrant: &consent.Grant{ID: "existing-human-grant", RequestID: "original-request", State: "active", Permanent: true}}, nil
+		})
+	})
+	s, err := server.New(server.WithNewHandler(handler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := s.AsClient(ctx)
+	if _, err = c.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r, err := c.CallTool(ctx, &schema.CallToolRequestParams{Name: "mechanize_permission_request", Arguments: map[string]any{"sessionId": "owned", "scope": map[string]any{"kind": "application", "bundleID": "fixture"}, "modes": []string{"observe"}, "purpose": "Inspect draft", "durationSeconds": 60}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := r.StructuredContent.(map[string]any)
+	if body["code"] != "permissionGranted" || body["grantID"] != "existing-human-grant" || body["dispatchState"] != "notDispatched" {
+		t.Fatalf("existing approval lost: %+v", body)
+	}
+}

@@ -112,6 +112,9 @@ type RequestInput struct {
 	DurationSeconds int    `json:"durationSeconds"`
 }
 type Request struct {
+	// ExistingGrant is broker-internal discovery, never a requester assertion or
+	// a persisted approval. The MCP boundary projects only its opaque reference.
+	ExistingGrant   *Grant    `json:"-"`
 	ID              string    `json:"id"`
 	VerifiedClient  Client    `json:"verifiedClient"`
 	Scope           Scope     `json:"scope"`

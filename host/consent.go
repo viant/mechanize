@@ -165,7 +165,7 @@ func (b *ConsentBroker) Request(ctx context.Context, p auth.Principal, session s
 	if e != nil {
 		return consent.Request{}, e
 	}
-	return s.CreateRequest(ctx, session, in)
+	return s.RequestOrReuse(ctx, session, in)
 }
 func (b *ConsentBroker) Authorize(ctx context.Context, p auth.Principal, op consent.Operation) (*consent.Lease, error) {
 	bound, releasePolicy, err := b.controllerPolicyContext(ctx, p)

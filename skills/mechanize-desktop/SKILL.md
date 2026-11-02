@@ -34,6 +34,14 @@ until the server reports the relevant authorization and the result is verified.
    requesting agent cannot grant itself access. Do not repeatedly resubmit
    denied requests. macOS system permissions and operator ceilings are separate
    requirements.
+
+   The request tool first reuses sufficient permanent or same-session approval
+   and returns `permissionGranted` with its existing `grantID`; it creates no
+   new approval. Otherwise an identical live pending request is reused without
+   extending its expiry. A fresh `permissionRequired` still needs the human's
+   native-panel decision. Cleanup/connection failures are not reasons to request
+   the same access again. Browser connection readiness is separate from tool
+   access, and neither is required for native Office operations.
 3. **Observe.** Call `mechanize_observe` for a granted `native` bundle ID or
    `web` origin. Treat observations as bounded and time-sensitive. Check
    `truncated`, `unavailable`, and the surface identity before relying on them. Visible controls

@@ -21,6 +21,7 @@ var ErrCleanupUnconfirmed = errors.New("existing consent is inhibited pending ex
 type Service struct {
 	options      Options
 	mu           sync.Mutex
+	requestMu    sync.Mutex
 	active       map[string]map[string]context.CancelFunc
 	blocked      map[string]bool
 	humanBlocked map[string]bool
@@ -322,6 +323,10 @@ func (s *Service) CreatePolicyGrant(ctx context.Context, sessionID string, in Re
 // owned session. Discovery never creates approval and Authorize rechecks authority
 // immediately before dispatch. The generated reader remains the persistence boundary.
 func (s *Service) FindPermanentGrant(ctx context.Context, op Operation) (*Grant, error) {
+	return s.findPermanentGrant(ctx, op, []Mode{op.Mode})
+}
+
+func (s *Service) findPermanentGrant(ctx context.Context, op Operation, requiredModes []Mode) (*Grant, error) {
 	c, err := s.client(ctx)
 	if err != nil {
 		return nil, err
@@ -352,19 +357,14 @@ func (s *Service) FindPermanentGrant(ctx context.Context, op Operation) (*Grant,
 		if !scope.Covers(op.Scope) {
 			continue
 		}
-		matched := false
-		for _, mode := range modes {
-			if mode == op.Mode {
-				matched = true
-			}
-		}
+		matched := coversModes(modes, requiredModes)
 		if !matched {
 			continue
 		}
 		if err = s.policy(ctx, c, r); err != nil {
 			continue
 		}
-		if err = s.options.Policy(ctx, c, op.Scope, []Mode{op.Mode}, r.DurationSeconds); err != nil {
+		if err = s.options.Policy(ctx, c, op.Scope, requiredModes, r.DurationSeconds); err != nil {
 			continue
 		}
 		if r.RevocationState == string(CleanupUnknown) {

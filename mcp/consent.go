@@ -43,6 +43,7 @@ func consentArgumentValidation(in *ConsentRequestInput) error {
 type PermissionRequired struct {
 	Code          string `json:"code"`
 	RequestID     string `json:"requestID"`
+	GrantID       string `json:"grantID,omitempty"`
 	DispatchState string `json:"dispatchState"`
 }
 
@@ -52,7 +53,7 @@ func RegisterConsent(base *protocol.DefaultHandler, request ConsentRequest) erro
 	if request == nil {
 		return nil
 	}
-	return protocol.RegisterTool[*ConsentRequestInput, *PermissionRequired](base.Registry, "mechanize_permission_request", "Request bounded consent from the verified human console. Returns permissionRequired and requestID; submission does not grant permission or dispatch an action.", func(ctx context.Context, in *ConsentRequestInput) (*schema.CallToolResult, *jsonrpc.Error) {
+	return protocol.RegisterTool[*ConsentRequestInput, *PermissionRequired](base.Registry, "mechanize_permission_request", "Reuse sufficient permanent approval or request bounded consent from the verified human console. Existing approval returns permissionGranted and grantID; a pending request returns permissionRequired and requestID. Never creates approval or dispatches input.", func(ctx context.Context, in *ConsentRequestInput) (*schema.CallToolResult, *jsonrpc.Error) {
 		if in == nil || in.SessionID == "" {
 			return failure(errors.New("owned session and consent scope required"))
 		}
@@ -66,6 +67,9 @@ func RegisterConsent(base *protocol.DefaultHandler, request ConsentRequest) erro
 		r, e := request(ctx, p, in.SessionID, consent.RequestInput{Scope: in.Scope, Modes: in.Modes, Purpose: in.Purpose, DurationSeconds: in.DurationSeconds})
 		if e != nil {
 			return failure(e)
+		}
+		if g := r.ExistingGrant; g != nil {
+			return result(PermissionRequired{Code: "permissionGranted", RequestID: g.RequestID, GrantID: g.ID, DispatchState: "notDispatched"})
 		}
 		return result(PermissionRequired{Code: "permissionRequired", RequestID: r.ID, DispatchState: "notDispatched"})
 	})
