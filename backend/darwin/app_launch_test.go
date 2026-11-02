@@ -94,6 +94,9 @@ func TestAppLaunchFencesAndUnknownReceiptNeverRetry(t *testing.T) {
 			if err == nil || result.DispatchState != test.wantState || len(fixture.calls) != test.wantCalls {
 				t.Fatalf("launch result %+v err %v calls %+v", result, err, fixture.calls)
 			}
+			if result.Value != nil {
+				t.Fatal("failed or missing launch receipt supplied recovery identity")
+			}
 		})
 	}
 }
@@ -119,6 +122,9 @@ func TestAppLaunchIndependentIdentityProofCannotBeForgedByReceipt(t *testing.T) 
 			result, err := gateway.Execute(ctx, p, appOpenStep(), nil)
 			if err == nil || result.DispatchState != "unknown" || result.VerificationState != "unknown" || len(fixture.calls) != 4 {
 				t.Fatalf("unproved effect %+v %v calls=%+v", result, err, fixture.calls)
+			}
+			if result.Value == nil || result.Value.Object["pid"].Number != 42 || result.Value.Object["startToken"].String != "fixture-start" {
+				t.Fatal("independent observation failure discarded the original launch receipt")
 			}
 			launches := 0
 			for _, request := range fixture.calls {

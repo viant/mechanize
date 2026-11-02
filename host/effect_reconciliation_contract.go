@@ -16,6 +16,7 @@ const nativeChromeExtensionsContract = "native.chrome.openExtensions.v1"
 const declaredEffectReconciliationContract = "plan.effect.reconcile"
 const declaredPostconditionReconciliationContract = "plan.postcondition.reconcile"
 const nativeQuitContract = "native.app.quit.v1"
+const nativeLaunchContract = "native.app.open.v1"
 const nativeFocusContract = "native.focus.v1"
 
 func validateNativeEffectReconciliationEnrollment(allowed []string) error {
@@ -24,7 +25,7 @@ func validateNativeEffectReconciliationEnrollment(allowed []string) error {
 	}
 	seen := map[string]bool{}
 	for _, id := range allowed {
-		if (id != nativeChromeExtensionsContract && id != declaredEffectReconciliationContract && id != declaredPostconditionReconciliationContract && id != nativeFocusContract && id != nativeQuitContract) || seen[id] {
+		if (id != nativeChromeExtensionsContract && id != declaredEffectReconciliationContract && id != declaredPostconditionReconciliationContract && id != nativeFocusContract && id != nativeQuitContract && id != nativeLaunchContract) || seen[id] {
 			return errors.New("unknown or duplicate native reconciliation enrollment")
 		}
 		seen[id] = true
@@ -49,6 +50,14 @@ func nativeEffectReconciliationResolver(allowed []string) func(context.Context, 
 			return durable.ReconciliationContract{}, configurationErr
 		}
 		surface := c.Step.Target.Surface
+		// Launch cannot carry a pre-existing PID. Its separately enrolled contract
+		// uses only the exact postlaunch identity retained in the original outcome.
+		if c.Step.Action == "app.open" {
+			if !enrolled[nativeLaunchContract] {
+				return durable.ReconciliationContract{}, errors.New("application launch reconciliation is not enrolled")
+			}
+			return launchReconciliation(c)
+		}
 		if surface.Kind != "native" || surface.BundleID == "" || surface.Origin != "" || surface.TabID != "" || surface.Title != "" || surface.ProcessID == 0 || surface.ValidateProcessIdentity() != nil || c.Step.Validate() != nil {
 			return durable.ReconciliationContract{}, errors.New("exact original native process fingerprint required")
 		}

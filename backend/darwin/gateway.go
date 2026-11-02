@@ -1163,6 +1163,16 @@ func (g *Gateway) openApp(ctx context.Context, p auth.Principal, step model.Step
 		result.DispatchState = "unknown"
 		return result, &model.MechanizeError{Code: "launchIdentityUnknown", Stage: "native", DispatchState: "unknown", EffectState: "unknown", Message: "Application launch receipt lacks the exact postlaunch process identity; reconcile before replay"}
 	}
+	// Retain the authenticated launch receipt even if the independent read below
+	// fails. This is continuity evidence, not verification; app.open cannot bind
+	// outputs, and reconciliation must still prove this exact process is alive.
+	result.Value = &model.Value{Kind: model.ObjectValue, Object: map[string]model.Value{
+		"bundleID":   {Kind: model.StringValue, String: identity.BundleID},
+		"pid":        {Kind: model.NumberValue, Number: int64(identity.PID)},
+		"launchTime": {Kind: model.StringValue, String: identity.LaunchTime},
+		"startToken": {Kind: model.StringValue, String: identity.StartToken},
+		"active":     {Kind: model.BoolValue, Bool: identity.Active},
+	}}
 	// Verify the action's narrow app-running effect through a separate public
 	// process enumeration after the receipt, never the receipt's own echo.
 	observed, observeErr := g.call(ctx, "apps.list", map[string]any{"expectedApp": step.Target.Surface.BundleID}, nil)
@@ -1196,13 +1206,6 @@ func (g *Gateway) openApp(ctx context.Context, p auth.Principal, step model.Step
 		result.DispatchState = "unknown"
 		return result, &model.MechanizeError{Code: "launchPostconditionUnknown", Stage: "verification", DispatchState: "unknown", EffectState: "unknown", Message: "Independent application observation differs from the launched process identity; reconcile before replay"}
 	}
-	result.Value = &model.Value{Kind: model.ObjectValue, Object: map[string]model.Value{
-		"bundleID":   {Kind: model.StringValue, String: identity.BundleID},
-		"pid":        {Kind: model.NumberValue, Number: int64(identity.PID)},
-		"launchTime": {Kind: model.StringValue, String: identity.LaunchTime},
-		"startToken": {Kind: model.StringValue, String: identity.StartToken},
-		"active":     {Kind: model.BoolValue, Bool: identity.Active},
-	}}
 	// Only the app-running lifecycle effect is verified independently. Mail
 	// content and the caller's business objective still require their own proof.
 	result.VerificationState = "verified"

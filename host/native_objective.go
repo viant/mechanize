@@ -43,6 +43,13 @@ func (h *Host) nativeObjective(c Config) (*objective.Evaluator, error) {
 		}
 		enrolled["native"] = adapter.Enrollment()
 		for _, contract := range c.NativeEffectReconciliation {
+			if contract == nativeLaunchContract {
+				process, err := objective.NewNativeProcessRunning(h.readNativeProcessRunning)
+				if err != nil {
+					return nil, err
+				}
+				enrolled["nativeLaunchProcess"] = process.Enrollment()
+			}
 			if contract == nativeQuitContract {
 				process, err := objective.NewNativeProcessExit(h.readNativeProcessExit)
 				if err != nil {

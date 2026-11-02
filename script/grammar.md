@@ -131,3 +131,15 @@ menu, and preserve unknown effects.
 `app("com.example.Editor", processId: 42, processStartToken: "1790000000:1").quit()` requests normal quit of that existing process. Omitting process identity requires exactly one running instance of the bundle. The `appQuit` capability requires an advertising helper and existing control consent/fence. Quit accepts no force flag, executable path, or launch arguments. A submission can remain unknown, including while an unsaved-document dialog is open; only independent confirmation that the original process exited verifies the action. Never replay an uncertain quit. Lifecycle submission invalidates old native references and capture permits.
 
 Quit observes exit for up to five seconds, bounded by the action's remaining deadline. A delayed exit can be adopted later through `mechanize_effect_reconcile` when the host enrolls `native.app.quit.v1` in `nativeEffectReconciliation`. This read-only contract requires an original plan that already contains the exact PID and birth token; it cannot adopt a bundle-only quit or revise the plan afterward. It uses observation consent and an authenticated read-only helper advertising `app.exitStatus`, so it does not require re-enabling uncertain control or sending another quit. A still-running process (including an unsaved-document dialog), unavailable observation, or mismatched identity leaves the effect unresolved. Reconciliation confirms only the original process's exit, not document saving or other business outcomes, and does not resume the plan or clear unrelated control barriers.
+
+Launch recovery is separately opt-in through `native.app.open.v1` in
+`nativeEffectReconciliation`. Unlike quit, `app.open` cannot specify a process
+that does not exist yet. If its authenticated launch reply supplies a process
+identity but independent verification fails, the original UNKNOWN outcome now
+retains that receipt. The enrolled contract uses observe consent and a complete
+read-only `apps.list` to verify the exact recorded bundle, PID and kernel birth.
+It requires exactly one matching bundle instance, preserves the original audit,
+and never launches, activates, resumes or claims business completion. Missing
+receipt identity (including old transport timeouts), PID reuse, a replacement
+instance, partial inventory or a changed business key leaves the effect
+unresolved. Current app presence alone cannot recover a lost launch reply.

@@ -22,6 +22,9 @@ func TestGeneratedLateEffectReconciliationNeverReplaysAndPreservesAudit(t *testi
 	p.ClientID = "fixture-client"
 	ctx := auth.WithPrincipal(context.Background(), p)
 	reads, dispatches, releases := 0, 0, 0
+	// Retained executor metadata must survive an UNKNOWN outcome and remain
+	// available to a host-enrolled contract without becoming a bound output.
+	receiptIdentity := model.Value{Kind: model.ObjectValue, Object: map[string]model.Value{"pid": {Kind: model.NumberValue, Number: 42}, "startToken": {Kind: model.StringValue, String: "1790000000:1"}}}
 	value := "not-ready"
 	adapter, _ := objective.NewNative(func(context.Context, auth.Principal, model.Selector, string) (model.Value, objective.NativeEvidence, error) {
 		reads++
@@ -31,10 +34,15 @@ func TestGeneratedLateEffectReconciliationNeverReplaysAndPreservesAudit(t *testi
 	b, err := New(Options{SourceRoot: filepath.Clean(filepath.Join(filepath.Dir(file), "../..")), StorageRoot: t.TempDir(), ObjectiveEvaluator: evaluator, LeaseEpoch: func(context.Context, auth.Principal) (int, error) { return 1, nil }, ReconciliationGuard: func(context.Context, auth.Principal, string) (func() error, error) {
 		return func() error { releases++; return nil }, nil
 	}, ResolveReconciliation: func(_ context.Context, _ auth.Principal, c ReconciliationContext) (ReconciliationContract, error) {
+		actual, _ := json.Marshal(c.Original.Value)
+		expected, _ := json.Marshal(receiptIdentity)
+		if string(actual) != string(expected) {
+			t.Fatal("original executor receipt metadata was lost or substituted")
+		}
 		return DeclaredReconciliation(c)
 	}}, func(context.Context, auth.Principal, model.Step, map[string]model.Value) (integration.StepResult, error) {
 		dispatches++
-		return integration.StepResult{DispatchState: "dispatched", VerificationState: "unknown"}, errors.New("fixture executor cleanup is unconfirmed")
+		return integration.StepResult{DispatchState: "dispatched", VerificationState: "unknown", Value: &receiptIdentity}, errors.New("fixture executor cleanup is unconfirmed")
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -143,6 +151,9 @@ func TestGeneratedLateEffectReconciliationNeverReplaysAndPreservesAudit(t *testi
 			var old integration.StepResult
 			if json.Unmarshal([]byte(*event.PayloadJson), &old) != nil || old.VerificationState != "unknown" {
 				t.Fatal("original receipt overwritten")
+			}
+			if old.Value == nil || old.Value.Object["pid"].Number != 42 || old.Value.Object["startToken"].String != "1790000000:1" {
+				t.Fatal("original receipt identity overwritten")
 			}
 		case "effect_reconciliation":
 			late++
