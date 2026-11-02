@@ -25,7 +25,7 @@ func TestControllerClosedRequest(t *testing.T) {
 			t.Fatalf("accepted %s=%v", tc.key, tc.value)
 		}
 	}
-	for _, origin := range []string{"http://localhost:3000", "https://steward.agently.viantinc.com"} {
+	for _, origin := range []string{"http://localhost:3000", "https://controller.example.test"} {
 		valid["origin"] = origin
 		raw, _ := json.Marshal(valid)
 		if r, ok := decodeControllerRequest(raw, now); !ok || r == nil {

@@ -12,7 +12,7 @@ function fixture(origin='http://localhost:3000') {
  const bridge=ctx.MechanizeController.install(chrome,{binding:()=>state.nativeReady?(state.binding||{brokerEpoch:'b',channelEpoch:'c',scopeHash:'h'}):null,send:m=>sent.push(m)});
  const p={name:'mechanize-controller-v1',sender:{url:origin+'/shell',origin,frameId:0,tab:{id:7},documentId:'d1'},postMessage:m=>{outward.push(m);if(m.type==='setupRefused'&&state.autoAcknowledge)events.message({type:'setupRefusedAck'});},disconnect:()=>{p.disconnected=true;state.disconnectOutward=outward.slice();},onMessage:event('message'),onDisconnect:event('disconnect')};
  const binding={brokerEpoch:'b',channelEpoch:'c',scopeHash:'h'};
- bridge.receive({type:'controllerPolicy',enabled:true,origins:['http://localhost:3000','https://steward.agently.viantinc.com'],...binding});
+ bridge.receive({type:'controllerPolicy',enabled:true,origins:['http://localhost:3000','https://controller.example.test'],...binding});
  const approve=async()=>{bridge.receive({type:'controllerApproval',sessionId:sent[0].sessionId,...binding});await new Promise(resolve=>setImmediate(resolve));sent.length=0;};
  return {events,sent,outward,p,bridge,approve,binding,state,timers};
 }
@@ -34,7 +34,7 @@ test('negotiation metadata cannot add native authority fields or loosen other re
  }
 });
 test('exact origins independent of website permission',()=>{
- for(const origin of ['https://fixture.example.test','http://localhost:3001','https://steward.viantinc.com','https://evil.steward.agently.viantinc.com']) {const f=fixture(origin);f.events.external(f.p);assert.equal(f.p.disconnected,true);}
+ for(const origin of ['https://fixture.example.test','http://localhost:3001','https://other-controller.example.test','https://evil.controller.example.test']) {const f=fixture(origin);f.events.external(f.p);assert.equal(f.p.disconnected,true);}
 });
 test('approval bound to a live document; native responses are projected',async()=>{
  const f=fixture();f.events.external(f.p);
@@ -50,7 +50,7 @@ test('unapproved pages cannot call and reconnect requires approval',async()=>{
 });
 test('native disconnection revokes sessions',()=>{const f=fixture();f.events.external(f.p);f.bridge.reset();assert.equal(f.p.disconnected,true)});
 test('successful reply correlates once; duplicate requests revoke',async()=>{
- const f=fixture('https://steward.agently.viantinc.com');f.events.external(f.p);
+ const f=fixture('https://controller.example.test');f.events.external(f.p);
  await f.approve();
  await f.events.message(request());
  f.bridge.receive({type:'controllerResult',requestId:f.sent[0].requestId,ready:true});assert.equal(f.outward.at(-1).ready,true);assert.equal(f.outward.at(-1).requestId,'r1');
@@ -223,7 +223,7 @@ test('identical authenticated policy synchronization preserves pending and appro
  for(const approved of [false,true]){
   const f=fixture();f.events.external(f.p);if(approved)await f.approve();
   const timers=f.timers.size;
-  f.bridge.receive({type:'controllerPolicy',enabled:true,origins:['https://steward.agently.viantinc.com','http://localhost:3000'],...f.binding});
+  f.bridge.receive({type:'controllerPolicy',enabled:true,origins:['https://controller.example.test','http://localhost:3000'],...f.binding});
   assert.equal(f.p.disconnected,undefined);assert.equal(f.timers.size,timers);
   if(!approved)await f.approve();
   await f.events.message(request());assert.equal(f.sent.filter(m=>m.type==='controllerRequest').length,1);
