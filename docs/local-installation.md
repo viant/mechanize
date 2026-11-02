@@ -164,6 +164,13 @@ the old sibling-artifact installation manifest. Optional `--signing-identity`
 is an exact existing certificate fingerprint; default remains ad-hoc.
 
 The stage does not consolidate existing TCC records or migrate Keychain custody.
+For `console-v1` installations, ordinary capture and capture-window discovery
+use the same signed console-owned helper launch route as the observation helper
+and permission doctor. They retain helper requirement/UID checks and disposable
+capture pipes. A failed console launch must not fall back to direct process
+launch, which can have different macOS responsibility and TCC access. Source
+support requires a matching deployed broker; a green permission panel alone does
+not qualify an older capture path.
 The relocation transaction must explicitly bind the old private broker path and
 new `~/Applications/Mechanize.app/Contents/Helpers/mechanize` path while retaining
 the private configuration and encrypted stores. Old applications and grants must

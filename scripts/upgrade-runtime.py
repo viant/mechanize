@@ -27,7 +27,7 @@ import time
 import uuid
 
 NATIVE_RECONCILIATION_CONTRACTS = ['plan.effect.reconcile', 'plan.postcondition.reconcile',
-    'native.chrome.openExtensions.v1', 'native.focus.v1', 'native.app.quit.v1']
+    'native.chrome.openExtensions.v1', 'native.focus.v1', 'native.app.quit.v1', 'native.app.open.v1']
 
 
 def reconciliation_enrollment(existing, requested):

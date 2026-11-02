@@ -24,8 +24,8 @@ spec.loader.exec_module(upgrade)
 class ReconciliationEnrollmentTests(unittest.TestCase):
     def test_quit_recovery_enrollment_preserves_other_contracts(self):
         previous = ['native.focus.v1', 'plan.effect.reconcile']
-        result = upgrade.reconciliation_enrollment(previous, ['native.app.quit.v1', 'native.app.quit.v1'])
-        self.assertEqual(result, previous + ['native.app.quit.v1'])
+        result = upgrade.reconciliation_enrollment(previous, ['native.app.quit.v1', 'native.app.open.v1', 'native.app.quit.v1'])
+        self.assertEqual(result, previous + ['native.app.quit.v1', 'native.app.open.v1'])
         self.assertEqual(previous, ['native.focus.v1', 'plan.effect.reconcile'])
 
     def test_unknown_contracts_and_malformed_enrollment_are_rejected(self):

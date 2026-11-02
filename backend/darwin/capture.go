@@ -23,6 +23,9 @@ const MaximumCaptureBytes = 32 << 20
 // gateway must resolve a fresh window in the approved application before calling
 // it. Whole-display capture is deliberately excluded from this API.
 type WindowCaptureOptions struct {
+	Console           *ConsoleLaunchOptions
+	Requirement       string
+	ExpectedUID       *uint32
 	HelperPath        string
 	BundleID          string
 	ProcessStartToken string
@@ -109,7 +112,7 @@ func CaptureWindow(ctx context.Context, options WindowCaptureOptions) (image Cap
 	}
 	defer reader.Close()
 	defer writer.Close()
-	client, err := NewClient(ctx, Options{HelperPath: options.HelperPath, Artifact: writer, Stderr: options.Stderr})
+	client, err := NewClient(ctx, Options{Console: options.Console, Requirement: options.Requirement, ExpectedUID: options.ExpectedUID, HelperPath: options.HelperPath, Artifact: writer, Stderr: options.Stderr})
 	if err != nil {
 		return image, &CaptureError{Cause: err, CleanupConfirmed: true, DispatchState: "notDispatched"}
 	}

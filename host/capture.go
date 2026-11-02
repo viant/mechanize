@@ -16,6 +16,20 @@ import (
 func captureUnsupported(message string) error {
 	return &model.MechanizeError{Code: "unsupported", Message: message, Stage: "capture", DispatchState: "notDispatched"}
 }
+
+// Capture helpers must use the same operator-enrolled launch responsibility as
+// the permission doctor/observation helper. Direct launch is not a fallback for
+// a failed console-owned launch; macOS can assign it a different TCC identity.
+func (h *Host) configureCaptureLaunch(c Config) {
+	h.captureConsole = c.consoleHelperLaunch()
+	if c.NativeLaunch != nil {
+		h.captureRequirement = c.NativeLaunch.HelperRequirement
+		if c.NativeLaunch.ExpectedUID != nil {
+			uid := *c.NativeLaunch.ExpectedUID
+			h.captureUID = &uid
+		}
+	}
+}
 func (h *Host) capturePrincipal(ctx context.Context, requested auth.Principal, surface model.Surface) (auth.Principal, error) {
 	actual, err := auth.FromContext(ctx)
 	if err != nil || requested.Validate() != nil || actual.Namespace != requested.Namespace {
@@ -82,7 +96,7 @@ func (h *Host) captureWindowWithLease(p auth.Principal, surface model.Surface, p
 	}
 	ctx, cancel := context.WithCancel(lease.Context)
 	defer cancel()
-	image, err := h.captureWindow(ctx, native.WindowCaptureOptions{HelperPath: h.captureHelper, BundleID: surface.BundleID, PID: pid, ProcessStartToken: surface.ProcessStartToken, WindowID: windowID, MaxBytes: h.captureMaxBytes})
+	image, err := h.captureWindow(ctx, native.WindowCaptureOptions{Console: h.captureConsole, Requirement: h.captureRequirement, ExpectedUID: h.captureUID, HelperPath: h.captureHelper, BundleID: surface.BundleID, PID: pid, ProcessStartToken: surface.ProcessStartToken, WindowID: windowID, MaxBytes: h.captureMaxBytes})
 	if err != nil {
 		var failure *native.CaptureError
 		if errors.As(err, &failure) && failure.CleanupConfirmed {
@@ -126,7 +140,7 @@ func (h *Host) CaptureWindows(ctx context.Context, requested auth.Principal, sur
 	}
 	ctx, cancel := context.WithCancel(lease.Context)
 	defer cancel()
-	result, err := h.captureWindows(ctx, native.CaptureWindowListOptions{HelperPath: h.captureHelper, BundleID: surface.BundleID, ProcessID: surface.ProcessID, ProcessStartToken: surface.ProcessStartToken, Limit: limit})
+	result, err := h.captureWindows(ctx, native.CaptureWindowListOptions{Console: h.captureConsole, Requirement: h.captureRequirement, ExpectedUID: h.captureUID, HelperPath: h.captureHelper, BundleID: surface.BundleID, ProcessID: surface.ProcessID, ProcessStartToken: surface.ProcessStartToken, Limit: limit})
 	if err != nil {
 		var failure *native.CaptureError
 		if errors.As(err, &failure) && failure.CleanupConfirmed {

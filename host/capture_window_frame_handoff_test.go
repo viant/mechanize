@@ -18,6 +18,8 @@ import (
 func TestPlainCaptureRetiresOwnedUnusedFrameBeforeNewObservation(t *testing.T) {
 	h, f, helper, ctx, surface := newWindowFrameHostFixture(t)
 	h.captureHelper, h.captureMaxBytes = "fixture-readonly-capture", 1<<20
+	uid := uint32(502)
+	h.configureCaptureLaunch(Config{NativeConsole: &NativeConsoleConfig{SocketPath: "/fixture/consent.sock", DesignatedRequirement: "console-pin"}, NativeLaunch: &NativeLaunchConfig{Transport: "console-v1", HelperRequirement: "helper-pin", ExpectedUID: &uid}})
 	var pixels bytes.Buffer
 	if err := png.Encode(&pixels, image.NewNRGBA(image.Rect(0, 0, 16, 12))); err != nil {
 		t.Fatal(err)
@@ -26,6 +28,9 @@ func TestPlainCaptureRetiresOwnedUnusedFrameBeforeNewObservation(t *testing.T) {
 	var captures atomic.Int32
 	var discoveries atomic.Int32
 	h.captureWindows = func(current context.Context, options native.CaptureWindowListOptions) (native.CaptureWindowList, error) {
+		if options.Console == nil || options.Console.SocketPath != "/fixture/consent.sock.helper" || options.Console.Requirement != "console-pin" || options.Requirement != "helper-pin" || options.ExpectedUID == nil || *options.ExpectedUID != uid {
+			t.Fatal("window discovery lost the enrolled console/helper identity")
+		}
 		discoveries.Add(1)
 		return native.CaptureWindowList{BundleID: options.BundleID, Windows: []native.CaptureWindowTarget{{BundleID: options.BundleID, PID: 42, ProcessStartToken: "100:1", WindowID: 17, Title: "Generic fixture"}}, ReturnedAt: time.Now().Format(time.RFC3339Nano)}, current.Err()
 	}
@@ -33,6 +38,9 @@ func TestPlainCaptureRetiresOwnedUnusedFrameBeforeNewObservation(t *testing.T) {
 		t.Fatal("initial window discovery failed", err)
 	}
 	h.captureWindow = func(current context.Context, options native.WindowCaptureOptions) (native.CapturedImage, error) {
+		if options.Console == nil || options.Console.SocketPath != "/fixture/consent.sock.helper" || options.Console.Requirement != "console-pin" || options.Requirement != "helper-pin" || options.ExpectedUID == nil || *options.ExpectedUID != uid {
+			t.Fatal("image capture lost the enrolled console/helper identity")
+		}
 		// The native boundary cannot borrow a still-held control interval.
 		// Drive the real Host/consent/manager transition rather than clearing
 		// the permit or substituting an alternate authorization path.

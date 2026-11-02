@@ -13,6 +13,9 @@ import (
 const MaximumCaptureWindows = 128
 
 type CaptureWindowListOptions struct {
+	Console           *ConsoleLaunchOptions
+	Requirement       string
+	ExpectedUID       *uint32
 	HelperPath        string
 	BundleID          string
 	ProcessID         int
@@ -47,7 +50,7 @@ func ListCaptureWindows(ctx context.Context, options CaptureWindowListOptions) (
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	client, err := NewClient(ctx, Options{HelperPath: options.HelperPath, Stderr: options.Stderr})
+	client, err := NewClient(ctx, Options{Console: options.Console, Requirement: options.Requirement, ExpectedUID: options.ExpectedUID, HelperPath: options.HelperPath, Stderr: options.Stderr})
 	if err != nil {
 		return result, &CaptureError{Cause: err, CleanupConfirmed: true, DispatchState: "notDispatched"}
 	}

@@ -55,6 +55,9 @@ type Host struct {
 	recovery                        *repairs.Service
 	scenarios                       *scenarios.Service
 	captureHelper                   string
+	captureConsole                  *native.ConsoleLaunchOptions
+	captureRequirement              string
+	captureUID                      *uint32
 	captureMaxBytes                 int
 	captureWindow                   func(context.Context, native.WindowCaptureOptions) (native.CapturedImage, error)
 	captureWindows                  func(context.Context, native.CaptureWindowListOptions) (native.CaptureWindowList, error)
@@ -121,6 +124,7 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 		return nil, err
 	}
 	h := &Host{owner: ctx, runtimeListen: c.RuntimeListenAddress, runtimeSettingsRoot: c.StorageRoot, captureHelper: c.NativeHelper, captureWindow: native.CaptureWindow, captureWindows: native.ListCaptureWindows, recordingLeases: map[string]*consent.Lease{}, Verifier: verifier, users: map[string]User{}}
+	h.configureCaptureLaunch(c)
 	if options.NativeVaultInput != nil {
 		h.vaultExposure = options.NativeVaultInput.ExposureGate()
 	}
