@@ -1,6 +1,6 @@
 # Focused Swift Testing checks
 
-This target covers attached-sheet membership. It is not the full native XCTest
+This target covers attached-sheet membership and semantic action budgets. It is not the full native XCTest
 suite. On a Command Line Tools installation with Swift Testing but no XCTest:
 
 ```sh

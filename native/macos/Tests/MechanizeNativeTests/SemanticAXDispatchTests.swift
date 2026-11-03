@@ -14,15 +14,15 @@ final class SemanticAXDispatchTests: XCTestCase {
             return .success
         }, perform: { element, action in
             XCTAssertTrue(CFEqual(element, self.target)); XCTAssertEqual(action, "AXPress")
-            XCTAssertEqual(currentTimeout, 0.2); events.append("perform"); return .success
+            XCTAssertEqual(currentTimeout, 2); events.append("perform"); return .success
         })
-        let result = try dispatchSemanticAXAction(target, action: "AXPress", budget: Budget(milliseconds: 1000), revalidate: {
+        let result = try dispatchSemanticAXAction(target, action: "AXPress", budget: Budget(milliseconds: 3000), revalidate: {
             events.append("validate")
             // Mirror scoped ancestry's write to this exact target reference.
             XCTAssertEqual(runtime.setTimeout(self.target, 0.1), .success)
             events.append("validated")
         }, reserve: {
-            XCTAssertEqual(currentTimeout, 0.2); events.append("reserve")
+            XCTAssertEqual(currentTimeout, 2); events.append("reserve")
         }, runtime: runtime)
         XCTAssertEqual(result, .success)
         XCTAssertEqual(events, ["validate", "configure", "validated", "configure", "reserve", "perform"])

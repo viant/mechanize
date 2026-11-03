@@ -10,7 +10,7 @@ struct SemanticAXDispatchRuntime {
 }
 
 /// Scoped ancestry validation changes AX reference timeouts for its reads.
-/// Restore the existing action cap only after that validation, and prove timeout
+/// Restore the action cap only after that validation, and prove timeout
 /// configuration succeeded before reserving or issuing the one native action.
 /// A native error is returned unchanged: it never authorizes replay or fallback.
 func dispatchSemanticAXAction(_ element: AXUIElement, action: String, budget: Budget,
@@ -19,7 +19,10 @@ func dispatchSemanticAXAction(_ element: AXUIElement, action: String, budget: Bu
     try budget.check()
     try revalidate()
     try budget.check()
-    let timeout = min(Float(0.2), budget.remainingSeconds)
+    // Save/export and modal actions can complete successfully after a short
+    // accessibility read deadline. Give the one action a bounded response
+    // interval; fast actions return immediately, and errors remain uncertain.
+    let timeout = min(Float(2), budget.remainingSeconds)
     guard timeout.isFinite, timeout > 0 else {
         throw NativeFailure("deadlineExceeded", "Native request deadline expired")
     }
