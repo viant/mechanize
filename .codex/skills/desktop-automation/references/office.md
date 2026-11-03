@@ -53,6 +53,25 @@ unknown and was paused without replay. This qualifies the observed file result,
 not automatic outcome reconciliation or repeat-run reliability. The presentation
 itself was authored by Computer Use, not Mechanize.
 
+A subsequent fresh export declared a UI precondition and postcondition before
+dispatch: the unique Save button in the exact document window was disabled while
+Export was open and enabled after returning to the document. With
+`requires.adapters: [native]` and host enrollment of
+`plan.postcondition.reconcile`, the original predicate resolved the AX error
+through a fresh read. After a confirmed stopped boundary, reconciliation left
+zero unresolved effects; resume skipped the confirmed action. The PDF hash and
+mtime stayed unchanged across resume, and independent text, page-size and pixel
+checks matched the Computer Use baseline. This is one verified export/recovery
+case, not a full-deck or repeated reliability claim.
+
+Declare such conditions before input and retain exact process/window boundaries.
+After uncertainty, inspect the original operation/run, establish its stopped
+boundary, reconcile with the original effect/attempt and current revisions, then
+resume only after confirmation. Never add a convenient predicate to an old
+unknown effect. UI transition verification establishes that transition; saved
+artifact correctness remains a separate mandatory check. Include recovery calls
+and file review in timing/token comparisons.
+
 Word: preserve paragraph styles, pagination, comments/revisions and fields required by the task. Outlook: draft, attachment, send and Sent verification are different outcomes; no sending unless explicitly authorized.
 
 For Mechanize fallback, retrieve `skill://mechanize-microsoft-office/SKILL.md` and only its relevant case. An offline QA reader must not silently repair or rewrite files claimed to be native-authored. Declare a hybrid route if local authoring is part of the work.
