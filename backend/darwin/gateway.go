@@ -68,7 +68,7 @@ type Gateway struct {
 }
 
 func NewGateway(caller Caller, options GatewayOptions) (*Gateway, error) {
-	if caller == nil {
+	if caller == nil || reflect.ValueOf(caller).Kind() == reflect.Pointer && reflect.ValueOf(caller).IsNil() {
 		return nil, errors.New("native caller required")
 	}
 	scope, err := (session.Scope{AllApplications: options.AllApplications, AllowedBundles: options.AllowedBundles}).Normalize()

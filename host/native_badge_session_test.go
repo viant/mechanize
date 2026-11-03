@@ -12,6 +12,20 @@ import (
 
 type sessionBadgeHelper struct{ calls []native.Request }
 
+func TestNativeBadgeReleaseWithMissingTypedHelperPreservesInhibition(t *testing.T) {
+	p, _ := auth.NewPrincipal("fixture", "", "owner", []string{"desktop:control"})
+	p.ClientID = "client"
+	var helper *native.Client
+	held := &nativeControlHeld{principal: p, helper: helper, scope: session.Scope{AllowedBundles: []string{"com.fixture.app"}}, inhibited: true, lease: session.Lease{ID: "retained-input-lease"}}
+	m := &NativeControlManager{held: held}
+	if err := m.ReleasePresentationSession(auth.WithPrincipal(context.Background(), p), p, "session"); err == nil {
+		t.Fatal("missing helper must remain unavailable")
+	}
+	if m.held != held || !held.inhibited || held.lease.ID != "retained-input-lease" {
+		t.Fatal("missing helper changed input authority")
+	}
+}
+
 func (f *sessionBadgeHelper) Close() error { return nil }
 func (f *sessionBadgeHelper) Identity() (session.ProcessIdentity, error) {
 	return session.ProcessIdentity{}, nil

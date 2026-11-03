@@ -307,6 +307,9 @@ func NewClient(ctx context.Context, options Options) (*Client, error) {
 // every reference/lease; native AX is not assumed to be cooperatively cancellable.
 func (c *Client) Call(ctx context.Context, request Request) (Reply, error) {
 	var empty Reply
+	if c == nil {
+		return empty, &TransportError{errors.New("native helper unavailable"), "notDispatched"}
+	}
 	if c.trustRequired && c.verifiedIdentity == nil {
 		return empty, &TransportError{errors.New("native helper identity authentication incomplete"), "notDispatched"}
 	}
@@ -412,6 +415,9 @@ func (c *Client) waitForExit() {
 }
 
 func (c *Client) Close() error {
+	if c == nil {
+		return errors.New("native helper unavailable; cleanup not confirmed")
+	}
 	c.closeOnce.Do(func() {
 		close(c.closeSignal)
 		c.watchdog.Close()
