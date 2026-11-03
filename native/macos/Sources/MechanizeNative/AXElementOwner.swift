@@ -2,6 +2,8 @@ import AppKit
 import ApplicationServices
 import MechanizeNativeCore
 
+enum AXOwnerMatch:String {case matched,unavailable,pidMismatch,uidMismatch,birthMismatch,bundleMismatch}
+
 /// AX owner facts describe the actual element process. They grant no delegated
 /// routing/authority and do not replace the enrolled root application identity.
 struct AXElementOwner {
@@ -10,6 +12,14 @@ struct AXElementOwner {
     let birth:String?
     let bundle:String?
     let status:Int32
+    func match(pid expectedPID:pid_t,uid expectedUID:uid_t,birth expectedBirth:String,bundle expectedBundle:String)->AXOwnerMatch {
+        if let pid,pid != expectedPID{return .pidMismatch}
+        if let uid,uid != expectedUID{return .uidMismatch}
+        if let birth,birth != expectedBirth{return .birthMismatch}
+        if let bundle,bundle != expectedBundle{return .bundleMismatch}
+        guard status==AXError.success.rawValue,pid==expectedPID,uid==expectedUID,birth==expectedBirth,bundle==expectedBundle else{return .unavailable}
+        return .matched
+    }
     func metadata(root:pid_t)->[String:Any] {
         var result:[String:Any]=[:]
         var unavailable:[String]=[]
@@ -46,11 +56,11 @@ func requireAXElementOwner(_ element:AXUIElement,pid:pid_t,uid:uid_t,birth:Strin
         try budget.check()
         let facts=owner(element)
         try budget.check()
-        if facts.pid.map({$0 != pid}) == true || facts.uid.map({$0 != uid}) == true ||
-           facts.birth.map({$0 != birth}) == true || facts.bundle.map({$0 != bundle}) == true {
+        let match=facts.match(pid:pid,uid:uid,birth:birth,bundle:bundle)
+        if match != .matched && match != .unavailable {
             throw NativeFailure("foregroundAXOwnerMismatch","Exact AX recipient owner changed; business input was not dispatched")
         }
-        if facts.status == AXError.success.rawValue,facts.pid==pid,facts.uid==uid,facts.birth==birth,facts.bundle==bundle {return}
+        if match == .matched {return}
         guard facts.status == AXError.success.rawValue || facts.status == AXError.cannotComplete.rawValue else {
             throw NativeFailure("foregroundAXOwnerUnavailable","Exact AX recipient ownership is unavailable; business input was not dispatched")
         }

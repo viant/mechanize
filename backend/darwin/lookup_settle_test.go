@@ -39,6 +39,9 @@ func (f *settlingLookupFixture) Call(ctx context.Context, r Request) (Reply, err
 		if f.mode == "permission" {
 			return Reply{}, nativeError("scopeDenied", "fixture denied")
 		}
+		if f.mode == "owner" {
+			return Reply{}, &NativeError{Code: "rootOwnerMismatch", Stage: "native", DispatchState: "notDispatched"}
+		}
 		if f.mode == "helper-transient" && f.snapshots == 1 {
 			return Reply{}, &NativeError{Code: "rootUnavailable", Stage: "native", DispatchState: "notDispatched"}
 		}
@@ -65,7 +68,7 @@ func (f *settlingLookupFixture) Call(ctx context.Context, r Request) (Reply, err
 }
 
 func TestInputLookupSettlesFreshReadsWithoutReplayingInput(t *testing.T) {
-	for _, mode := range []string{"settle", "helper-transient", "persistent", "read", "unbound", "ambiguous", "permission", "cancelled", "deadline", "input-unknown"} {
+	for _, mode := range []string{"settle", "helper-transient", "persistent", "read", "unbound", "ambiguous", "permission", "owner", "cancelled", "deadline", "input-unknown"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, p := nativeActor(t)
 			ctx, cancel := context.WithCancel(ctx)

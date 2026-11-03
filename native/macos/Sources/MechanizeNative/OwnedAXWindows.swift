@@ -19,8 +19,15 @@ enum OwnedAXWindows {
             AXUIElementSetMessagingTimeout(candidate, 0.1)
             let owner = runtime.owner(candidate)
             try check()
-            guard owner.status == AXError.success.rawValue, owner.pid == pid, owner.uid == uid, owner.birth == birth, owner.bundle == bundle else {
-                throw NativeFailure("rootOwnerMismatch", "AXWindows entry does not belong to the exact enrolled application process")
+            if owner.status == AXError.apiDisabled.rawValue {
+                throw NativeFailure("permissionDenied", "Accessibility ownership access is unavailable")
+            }
+            let match=owner.match(pid:pid,uid:uid,birth:birth,bundle:bundle)
+            if match == .unavailable {
+                throw NativeFailure("incompleteObservation", "AXWindows owner metadata is incomplete")
+            }
+            guard match == .matched else {
+                throw NativeFailure("rootOwnerMismatch", "AXWindows entry ownership mismatch (reason=\(match.rawValue))")
             }
             let (roleStatus, role) = runtime.attribute(candidate, kAXRoleAttribute)
             try check()
