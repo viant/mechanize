@@ -139,6 +139,7 @@ type Client struct {
 	businessPossible bool
 	verifiedIdentity *session.ProcessIdentity
 	trustRequired    bool
+	observationOnly  bool
 	recording        *recordingTransport
 }
 
@@ -270,6 +271,7 @@ func NewClient(ctx context.Context, options Options) (*Client, error) {
 	}
 	launched = true
 	client := &Client{consoleChild: remote, command: command, input: input, output: output, lane: make(chan struct{}, 1), stopped: make(chan struct{}), watchdog: heartbeatWrite, closeSignal: make(chan struct{}), inputPossible: options.AllowMutations || options.AllowTargetedKeyboard || options.AllowSessionKeyboard || options.AllowSessionText || options.AllowWindowFrameClick, businessPossible: options.AllowMutations || options.AllowLaunch || options.AllowSemantic, trustRequired: handshake != nil}
+	client.observationOnly = profiles == 0
 	go func() {
 		ticker := time.NewTicker(250 * time.Millisecond)
 		defer ticker.Stop()
@@ -438,6 +440,13 @@ func (c *Client) Close() error {
 	select {
 	case <-c.stopped:
 		if c.consoleChild != nil && !c.consoleChild.reaped.Load() {
+			// Console loss can discard its exit receipt. Only a helper launched
+			// without any action/recording/private-administration profile may
+			// recover from independent proof that its exact process has exited.
+			// This does not manufacture a reaping receipt or release input fences.
+			if c.observationExitConfirmed(session.InspectProcess) {
+				return nil
+			}
 			return fmt.Errorf("console helper teardown unconfirmed")
 		}
 		return nil
