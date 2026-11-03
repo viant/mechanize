@@ -43,3 +43,23 @@ struct ApplicationLookupTests {
         } catch let failure as NativeFailure { #expect(failure.code == "incompleteObservation") }
     }
 }
+
+extension ApplicationLookupTests {
+    @Test func pinnedSnapshotRequiresTheSameFreshIdentityProof() throws {
+        let snapshot: [String: Any] = ["verifyPinnedIdentity": true, "pid": Int32(42), "bundleID": "com.fixture.editor", "processStartToken": "1790000000:1"]
+        var reads = 0
+        #expect(try verifyPinnedSnapshotIdentity(snapshot, runtime: ApplicationLookupRuntime(exited: {_ in false}, entry: {_ in reads += 1; return entry()})))
+        #expect(reads == 1)
+        #expect(try !verifyPinnedSnapshotIdentity([:]))
+        for (exited, app, expected) in [(false, entry(bundle:nil), "incompleteObservation"), (false, entry(owner:getuid()+1), "staleReference"), (false, entry(token:"1790000000:2"), "staleReference"), (true, entry(), "staleReference")] {
+            do {
+                _ = try verifyPinnedSnapshotIdentity(snapshot, runtime: ApplicationLookupRuntime(exited: {_ in exited}, entry: {_ in app}))
+                Issue.record("Unverified snapshot accepted")
+            } catch let failure as NativeFailure { #expect(failure.code == expected) }
+        }
+        for key in ["pid", "bundleID", "processStartToken"] {
+            var missing = snapshot; missing.removeValue(forKey:key)
+            #expect(throws: NativeFailure.self) { try verifyPinnedSnapshotIdentity(missing) }
+        }
+    }
+}

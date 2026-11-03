@@ -47,3 +47,22 @@ func exactApplicationInventory(_ params: [String: Any], runtime: ApplicationLook
                        "launchTime": birth, "startToken": token, "active": app.active]],
             "complete": true, "scope": "exactProcess"]
 }
+
+/// Perform the same fresh identity proof as app.lookup within a snapshot RPC.
+/// No cached metadata or mutation authority is introduced by this optimization.
+func verifyPinnedSnapshotIdentity(_ params: [String: Any], runtime: ApplicationLookupRuntime = .system,
+                                  uid: uid_t = getuid()) throws -> Bool {
+    guard let requested = params["verifyPinnedIdentity"] else { return false }
+    guard let enabled = requested as? Bool, enabled,
+          let pid = params["pid"] as? Int32,
+          let bundle = params["bundleID"] as? String,
+          let token = params["processStartToken"] as? String else {
+        throw NativeFailure("invalidScope", "Pinned snapshot requires exact process identity")
+    }
+    let inventory = try exactApplicationInventory(["pid": Int(pid), "expectedApp": bundle,
+        "startToken": token, "launchTime": "kernel:" + token], runtime: runtime, uid: uid)
+    guard let apps = inventory["apps"] as? [[String: Any]], apps.count == 1 else {
+        throw NativeFailure("staleReference", "Pinned process exited before snapshot")
+    }
+    return true
+}

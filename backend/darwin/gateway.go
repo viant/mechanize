@@ -56,6 +56,7 @@ type Gateway struct {
 	nativeRootScopes             map[string]bool
 	nativeMenuScopeEnabled       bool
 	applicationLookupEnabled     bool
+	pinnedSnapshotEnabled        bool
 	windowTitleScopeEnabled      bool
 	windowPositionEnabled        bool
 	windowSessionKeyboardEnabled bool
@@ -225,6 +226,7 @@ func (g *Gateway) ready(ctx context.Context) error {
 			NativeRootScopes               []string `json:"nativeRootScopes"`
 			NativeMenuScopeVersion         int      `json:"nativeMenuScopeVersion"`
 			NativeApplicationLookupVersion int      `json:"nativeApplicationLookupVersion"`
+			NativePinnedSnapshotVersion    int      `json:"nativePinnedSnapshotVersion"`
 			NativeWindowScopes             []string `json:"nativeWindowScopes"`
 			NativeWindowActions            []string `json:"nativeWindowActions"`
 			NativeBooleanReads             []string `json:"nativeBooleanReads"`
@@ -236,6 +238,7 @@ func (g *Gateway) ready(ctx context.Context) error {
 		g.axTrusted = doctor.AXTrusted
 		g.nativeMenuScopeEnabled = doctor.NativeMenuScopeVersion == 1
 		g.applicationLookupEnabled = doctor.NativeApplicationLookupVersion == 1
+		g.pinnedSnapshotEnabled = doctor.NativePinnedSnapshotVersion == 1
 		g.mutationEnabled = doctor.MutationEnabled
 		g.semanticEnabled = doctor.SemanticEnabled
 		g.semanticMenuEnabled = false
@@ -337,17 +340,21 @@ type nativeNode struct {
 	Truncated                 []string `json:"truncatedAttributes"`
 }
 type snapshot struct {
-	WindowScope     map[string]string `json:"windowScope"`
-	WindowRootsOnly bool              `json:"windowRootsOnly"`
-	RootScope       string            `json:"rootScope"`
-	NativeMenu      string            `json:"nativeMenu"`
-	ID              string            `json:"observationId"`
-	Generation      uint64            `json:"generation"`
-	Started         time.Time         `json:"startedAt"`
-	Ended           time.Time         `json:"returnedAt"`
-	Complete        bool              `json:"complete"`
-	Truncated       bool              `json:"truncated"`
-	Nodes           []nativeNode      `json:"nodes"`
+	ProcessID              int               `json:"pid"`
+	BundleID               string            `json:"bundleID"`
+	ProcessStartToken      string            `json:"processStartToken"`
+	PinnedIdentityVerified bool              `json:"pinnedIdentityVerified"`
+	WindowScope            map[string]string `json:"windowScope"`
+	WindowRootsOnly        bool              `json:"windowRootsOnly"`
+	RootScope              string            `json:"rootScope"`
+	NativeMenu             string            `json:"nativeMenu"`
+	ID                     string            `json:"observationId"`
+	Generation             uint64            `json:"generation"`
+	Started                time.Time         `json:"startedAt"`
+	Ended                  time.Time         `json:"returnedAt"`
+	Complete               bool              `json:"complete"`
+	Truncated              bool              `json:"truncated"`
+	Nodes                  []nativeNode      `json:"nodes"`
 }
 
 func (g *Gateway) observe(ctx context.Context, surface model.Surface) (model.Observation, error) {
@@ -383,48 +390,57 @@ func (g *Gateway) observeWindowSnapshot(ctx context.Context, surface model.Surfa
 	if nativeRoot != "" && !g.nativeRootScopes[nativeRoot] {
 		return model.Observation{}, nativeError("unsupportedScope", "Native helper does not advertise the requested root scope")
 	}
-	reply, err := g.applicationInventory(ctx, surface)
-	if err != nil {
-		return model.Observation{}, err
-	}
-	var apps struct {
-		Apps []struct {
-			PID        int    `json:"pid"`
-			Bundle     string `json:"bundleID"`
-			Launch     string `json:"launchTime"`
-			StartToken string `json:"startToken"`
-		} `json:"apps"`
-		Complete bool `json:"complete"`
-	}
-	if err = json.Unmarshal(reply.Result, &apps); err != nil {
-		return model.Observation{}, err
-	}
-	if !apps.Complete {
-		return model.Observation{}, nativeError("incompleteObservation", "App enumeration is incomplete")
-	}
-	pid := 0
-	launch := ""
-	matches := 0
-	for _, app := range apps.Apps {
-		if app.Bundle == surface.BundleID && (surface.ProcessID == 0 || (app.PID == surface.ProcessID && app.StartToken == surface.ProcessStartToken)) {
-			pid = app.PID
-			launch = app.Launch
-			matches++
+	// A qualified helper verifies the exact app inside the snapshot request.
+	// This removes a transport round trip, not an identity check or input guard.
+	pinned := g.pinnedSnapshotEnabled && surface.ProcessID > 0
+	pid, launch := surface.ProcessID, "kernel:"+surface.ProcessStartToken
+	var reply Reply
+	var err error
+	if !pinned {
+		reply, err = g.applicationInventory(ctx, surface)
+		if err != nil {
+			return model.Observation{}, err
 		}
-	}
-	if matches != 1 {
-		code := "ambiguousTarget"
-		if surface.ProcessID != 0 {
-			code = "staleReference"
-		} else if matches == 0 {
-			code = "targetNotFound"
+		var apps struct {
+			Apps []struct {
+				PID        int    `json:"pid"`
+				Bundle     string `json:"bundleID"`
+				Launch     string `json:"launchTime"`
+				StartToken string `json:"startToken"`
+			} `json:"apps"`
+			Complete bool `json:"complete"`
 		}
-		return model.Observation{}, nativeError(code, fmt.Sprintf("Expected one app instance, found %d", matches))
-	}
-	if pid <= 0 || launch == "" {
-		return model.Observation{}, nativeError("appIdentityUnavailable", "Stable process launch identity is unavailable")
+		if err = json.Unmarshal(reply.Result, &apps); err != nil {
+			return model.Observation{}, err
+		}
+		if !apps.Complete {
+			return model.Observation{}, nativeError("incompleteObservation", "App enumeration is incomplete")
+		}
+		matches := 0
+		for _, app := range apps.Apps {
+			if app.Bundle == surface.BundleID && (surface.ProcessID == 0 || (app.PID == surface.ProcessID && app.StartToken == surface.ProcessStartToken)) {
+				pid = app.PID
+				launch = app.Launch
+				matches++
+			}
+		}
+		if matches != 1 {
+			code := "ambiguousTarget"
+			if surface.ProcessID != 0 {
+				code = "staleReference"
+			} else if matches == 0 {
+				code = "targetNotFound"
+			}
+			return model.Observation{}, nativeError(code, fmt.Sprintf("Expected one app instance, found %d", matches))
+		}
+		if pid <= 0 || launch == "" {
+			return model.Observation{}, nativeError("appIdentityUnavailable", "Stable process launch identity is unavailable")
+		}
 	}
 	params := map[string]any{"pid": pid, "bundleID": surface.BundleID, "maxNodes": 1000, "maxDepth": 20}
+	if pinned {
+		params["verifyPinnedIdentity"] = true
+	}
 	if len(windowScope) > 0 {
 		params["windowScope"] = windowScope
 	}
@@ -449,6 +465,9 @@ func (g *Gateway) observeWindowSnapshot(ctx context.Context, surface model.Surfa
 	var tree snapshot
 	if err = json.Unmarshal(reply.Result, &tree); err != nil {
 		return model.Observation{}, err
+	}
+	if pinned && (!tree.PinnedIdentityVerified || tree.ProcessID != surface.ProcessID || tree.BundleID != surface.BundleID || tree.ProcessStartToken != surface.ProcessStartToken) {
+		return model.Observation{}, nativeError("staleReference", "Snapshot did not verify the exact requested process identity")
 	}
 	if !reflect.DeepEqual(tree.WindowScope, windowScope) {
 		return model.Observation{}, nativeError("unsupportedScope", "Native snapshot did not confirm exact window scope")
