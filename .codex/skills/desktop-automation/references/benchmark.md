@@ -17,6 +17,14 @@ tokens from character counts or infer dollar cost without verified model pricing
 Leave unavailable breakdowns explicitly unavailable. Concurrent unrelated work must
 not contaminate run deltas.
 
+When a local Codex session log is available, its `token_count` events may expose
+`total_token_usage` and `last_token_usage`. Read only those accounting fields;
+do not copy conversation or credential-bearing tool payloads into benchmark
+reports. Record the event timestamp and session source at both boundaries. Reject
+deltas across a counter reset or different session. Cached input is a subset of
+input, and reasoning output is a subset of output: do not add either twice.
+Label these as session-reported counters and preserve unavailable fields as such.
+
 Use at least three comparable successful runs per route before describing repeat
 performance. Report sample size, median and range, plus failures. A small cell or
 slide benchmark cannot establish full-workbook/deck behavior. Expand to the user's
