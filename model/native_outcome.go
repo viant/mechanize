@@ -46,6 +46,22 @@ func ValidateNativeScopedOutcome(step Step, values map[string]Value) error {
 		if actual != step.Target.Scope.NativeRoot {
 			return errors.New("native outcome must preserve the explicitly scoped original root")
 		}
+		if step.Target.Scope.NativeMenu != "" {
+			menu := predicate.Inputs["nativeMenu"]
+			if menu.Kind == ReferenceValue {
+				if values == nil {
+					continue
+				}
+				resolved, err := ResolveValue(menu, values)
+				if err != nil {
+					return errors.New("native outcome menu reference unavailable")
+				}
+				menu = resolved
+			}
+			if menu.Kind != StringValue || menu.String != step.Target.Scope.NativeMenu {
+				return errors.New("native outcome must preserve the explicitly scoped original menu")
+			}
+		}
 	}
 	return nil
 }

@@ -175,6 +175,12 @@ func validateDeclaredNativeReconciliation(c durable.ReconciliationContext, contr
 		if ((c.Step.Action != "window.pressSessionKey" && c.Step.Action != "window.typeText") || c.Step.Target.Scope.NativeRoot != "") && target.Scope.NativeRoot != c.Step.Target.Scope.NativeRoot || contract.Predicate.Scope.Target != nil && scope.Scope.NativeRoot != target.Scope.NativeRoot {
 			return durable.ReconciliationContract{}, errors.New("native predicate must preserve the original root scope")
 		}
+		if c.Step.Target.Scope.NativeMenu != "" && target.Scope.NativeMenu != c.Step.Target.Scope.NativeMenu {
+			return durable.ReconciliationContract{}, errors.New("native predicate changed the original named menu")
+		}
+		if contract.Predicate.Scope.Target != nil && scope.Scope.NativeMenu != target.Scope.NativeMenu {
+			return durable.ReconciliationContract{}, errors.New("native predicate inputs differ from declared named menu")
+		}
 		if len(c.Step.Target.Scope.Window) > 0 && !sameReconciliationWindow(c.Step.Target.Scope.Window, target.Scope.Window, c.Values) {
 			return durable.ReconciliationContract{}, errors.New("native predicate broadened the original window boundary")
 		}
@@ -224,7 +230,7 @@ func sameReconciliationWindow(a, b map[string]model.Value, values map[string]mod
 	return err == nil && reflect.DeepEqual(left, right)
 }
 func nativeReconciliationReadTarget(inputs map[string]model.Value) (model.Selector, error) {
-	allowed := map[string]bool{"bundleID": true, "processId": true, "processStartToken": true, "strategy": true, "selector": true, "name": true, "nativeRoot": true, "windowTitle": true, "windowRole": true, "ancestorID": true, "attribute": true, "expected": true}
+	allowed := map[string]bool{"bundleID": true, "processId": true, "processStartToken": true, "strategy": true, "selector": true, "name": true, "nativeRoot": true, "nativeMenu": true, "windowTitle": true, "windowRole": true, "ancestorID": true, "attribute": true, "expected": true}
 	for key := range inputs {
 		if !allowed[key] {
 			return model.Selector{}, errors.New("unsupported native reconciliation input")
@@ -276,6 +282,13 @@ func nativeReconciliationReadTarget(inputs map[string]model.Value) (model.Select
 			return model.Selector{}, errors.New("native root requires menuBar or focusedElement without window inputs")
 		}
 		target.Scope.NativeRoot = root
+	}
+	if _, exists := inputs["nativeMenu"]; exists {
+		menu, err := text("nativeMenu")
+		if err != nil || target.Scope.NativeRoot != "menuBar" || !model.ValidNativeMenuName(menu) {
+			return model.Selector{}, errors.New("named native menu requires an exact menuBar scope")
+		}
+		target.Scope.NativeMenu = menu
 	}
 	if _, exists := inputs["windowTitle"]; exists {
 		title, err := text("windowTitle")

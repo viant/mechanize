@@ -561,3 +561,68 @@ func TestPrivateReconciliationEvaluatesFreshMatcherWithoutValueExport(t *testing
 		})
 	}
 }
+
+func TestNamedMenuPostconditionReconciliationPreservesExactScope(t *testing.T) {
+	ctx, p := reconciliationActor(t)
+	resolver := nativeEffectReconciliationResolver([]string{declaredPostconditionReconciliationContract})
+	for _, mode := range []string{"exact", "physical-key", "physical-frame-wrong-root", "changed-menu", "missing-menu", "declared-mismatch", "wrong-root", "invalid-name"} {
+		t.Run(mode, func(t *testing.T) {
+			c := scopedOriginalPostconditionContext("menuBar", false)
+			c.Step.Target.Scope.NativeMenu = "File"
+			c.Step.Postcondition.Inputs["nativeMenu"] = reconciliationString("File")
+			target, err := nativeReconciliationReadTarget(c.Step.Postcondition.Inputs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.Step.Postcondition.Scope = model.PredicateScope{Target: &target}
+			switch mode {
+			case "physical-key":
+				c.Step.Action = "window.pressSessionKey"
+				c.Step.Target.Scope = model.Scope{}
+				c.Step.Target.Locator = nil
+				c.Step.Target.Ancestor = nil
+				c.Step.Arguments = map[string]model.Value{"windowKey": {Kind: model.ObjectValue, Object: map[string]model.Value{"windowId": {Kind: model.NumberValue, Number: 99}, "key": reconciliationString("Return")}}}
+			case "physical-frame-wrong-root":
+				c.Step.Action = "window.clickFrame"
+				c.Step.Target.Scope = model.Scope{}
+				c.Step.Target.Locator = nil
+				c.Step.Target.Ancestor = nil
+				c.Step.Arguments = map[string]model.Value{"frameClick": {Kind: model.ObjectValue, Object: map[string]model.Value{"captureRef": reconciliationString("original-capture"), "x": {Kind: model.NumberValue, Number: 10}, "y": {Kind: model.NumberValue, Number: 20}}}}
+			case "changed-menu":
+				c.Step.Postcondition.Inputs["nativeMenu"] = reconciliationString("Edit")
+				c.Step.Postcondition.Scope.Target.Scope.NativeMenu = "Edit"
+			case "missing-menu":
+				delete(c.Step.Postcondition.Inputs, "nativeMenu")
+				c.Step.Postcondition.Scope.Target.Scope.NativeMenu = ""
+			case "declared-mismatch":
+				c.Step.Postcondition.Scope.Target.Scope.NativeMenu = "Edit"
+			case "wrong-root":
+				c.Step.Postcondition.Inputs["nativeRoot"] = reconciliationString("focusedElement")
+			case "invalid-name":
+				c.Step.Postcondition.Inputs["nativeMenu"] = reconciliationString("File\nEdit")
+			}
+			contract, err := resolver(ctx, p, c)
+			if mode != "exact" && mode != "physical-key" {
+				if err == nil {
+					t.Fatal("changed named menu accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			reads := 0
+			adapter, _ := objective.NewNative(func(_ context.Context, _ auth.Principal, got model.Selector, _ string) (model.Value, objective.NativeEvidence, error) {
+				reads++
+				if got.Scope.NativeRoot != "menuBar" || got.Scope.NativeMenu != "File" {
+					t.Fatal("actual read changed menu")
+				}
+				return model.Value{Kind: model.BoolValue, Bool: true}, objective.NativeEvidence{HelperEpoch: "helper", TargetRef: "menu-item", ObservedAt: time.Now()}, nil
+			})
+			result, err := adapter.Evaluate(ctx, p, contract.Predicate.Name, contract.Predicate.Inputs)
+			if err != nil || reads != 1 || result.Truth != objective.True {
+				t.Fatal("named-menu read failed", err)
+			}
+		})
+	}
+}
