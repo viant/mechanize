@@ -55,8 +55,7 @@ struct AXSemanticForegroundRecipient {
  let pid:pid_t,uid:uid_t,birth:String,bundle:String
  let menuRoot:Bool
  private func read(_ element:AXUIElement,_ name:String,_ budget:Budget,_ runtime:ScopedNativeRootRuntime)throws->(AXError,CFTypeRef?){
-  try budget.check();AXUIElementSetMessagingTimeout(element,min(0.05,budget.remainingSeconds))
-  let result=runtime.attribute(element,name);try budget.check();return result
+  try readForegroundMetadata(element,attribute:name,budget:budget,read:runtime.attribute)
  }
  private func owned(_ element:AXUIElement,_ budget:Budget,_ runtime:ScopedNativeRootRuntime)throws {
   try requireAXElementOwner(element,pid:pid,uid:uid,birth:birth,bundle:bundle,budget:budget,owner:runtime.owner)

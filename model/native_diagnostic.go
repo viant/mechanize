@@ -8,7 +8,7 @@ func NativeExecutionFailureCode(code string) bool {
 	// staleFramePermit proof. Receipt uncertainty is preserved by the caller.
 	case "stalePermit", "windowClickOccluded", "windowHitTestUnavailable", "windowClickUnqualified":
 		return true
-	case "foregroundAXWindowUnavailable", "foregroundAXWindowChanged", "foregroundAXOwnerMismatch", "foregroundAXOwnerUnavailable", "foregroundAXFocusUnavailable", "foregroundAXFocusChanged",
+	case "foregroundAXWindowUnavailable", "foregroundAXWindowChanged", "foregroundAXOwnerMismatch", "foregroundAXOwnerUnavailable", "foregroundMetadataTimeoutUnavailable", "foregroundAXFocusUnavailable", "foregroundAXFocusChanged",
 		"foregroundGeometryUnavailable", "foregroundGeometryUnbound", "foregroundGeometryAmbiguous",
 		"foregroundWindowUnavailable", "foregroundAcquisitionUnavailable", "foregroundChanged", "foregroundNotActive", "foregroundUnavailable", "foregroundRefreshUnavailable", "windowKeyboardUnqualified",
 		"foregroundWindowMissing", "foregroundWindowInvisible", "foregroundWindowUnsupportedLayer", "foregroundWindowZeroAlpha", "foregroundWindowAlphaUnavailable", "foregroundWindowAmbiguous",
