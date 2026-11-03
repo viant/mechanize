@@ -278,8 +278,8 @@ func nativeReconciliationReadTarget(inputs map[string]model.Value) (model.Select
 		root, err := text("nativeRoot")
 		_, windowTitle := inputs["windowTitle"]
 		_, windowRole := inputs["windowRole"]
-		if err != nil || (root != "menuBar" && root != "focusedElement") || windowTitle || windowRole {
-			return model.Selector{}, errors.New("native root requires menuBar or focusedElement without window inputs")
+		if err != nil || model.ValidateNativeRootSurface(target.Surface, root) != nil || windowTitle || windowRole {
+			return model.Selector{}, errors.New("supported native root and process required without window inputs")
 		}
 		target.Scope.NativeRoot = root
 	}

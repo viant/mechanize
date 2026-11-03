@@ -266,7 +266,7 @@ func (c *compiler) eval(e *Expression) (typed, *model.Step, error) {
 	for ; idx < len(e.Calls); idx++ {
 		call := e.Calls[idx]
 		switch call.Name {
-		case "menuBar", "focusedElement":
+		case "menuBar", "focusedElement", "focusedWindow":
 			if v.kind != "app" || v.selector.Surface.Kind != "native" || v.selector.Locator != nil || v.selector.Ancestor != nil || v.selector.Scope.NativeRoot != "" || len(v.selector.Scope.Window) != 0 || len(v.selector.Scope.Frame) != 0 {
 				return v, nil, c.err(call.Position, "native root requires an unscoped app receiver")
 			}

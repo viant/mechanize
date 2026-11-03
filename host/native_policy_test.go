@@ -233,16 +233,16 @@ func TestHostPolicyRequiresFreshNativeRootAdvertisements(t *testing.T) {
 	}
 	h := &Host{nativeClient: client, nativeByUser: map[string]*native.Gateway{p.Namespace: g}, users: map[string]User{p.Namespace: {NativeBundles: []string{"com.fixture.app"}}}}
 	for _, tc := range []struct {
-		ax          bool
-		scopes      []string
-		menu, focus bool
-	}{{true, nil, false, false}, {true, []string{"unknownRoot"}, false, false}, {true, []string{"menuBar"}, true, false}, {true, []string{"focusedElement"}, false, true}, {true, []string{"menuBar", "focusedElement"}, true, true}, {false, []string{"menuBar", "focusedElement"}, false, false}, {true, nil, false, false}} {
+		ax                         bool
+		scopes                     []string
+		menu, focus, focusedWindow bool
+	}{{true, nil, false, false, false}, {true, []string{"unknownRoot"}, false, false, false}, {true, []string{"menuBar"}, true, false, false}, {true, []string{"focusedElement"}, false, true, false}, {true, []string{"focusedWindow"}, false, false, true}, {true, []string{"menuBar", "focusedElement", "focusedWindow"}, true, true, true}, {false, []string{"menuBar", "focusedElement", "focusedWindow"}, false, false, false}, {true, nil, false, false, false}} {
 		write(tc.ax, tc.scopes)
 		policy, err := h.Policy(ctx, p)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if policy.Capabilities["native:menuBarScope"] != tc.menu || policy.Capabilities["native:focusedElementScope"] != tc.focus {
+		if policy.Capabilities["native:menuBarScope"] != tc.menu || policy.Capabilities["native:focusedElementScope"] != tc.focus || policy.Capabilities["native:focusedWindowScope"] != tc.focusedWindow {
 			t.Fatalf("root scope policy did not follow fresh doctor: %+v caps=%v", tc, policy.Capabilities)
 		}
 	}

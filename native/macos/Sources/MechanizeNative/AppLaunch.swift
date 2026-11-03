@@ -104,11 +104,6 @@ func applicationProcessStartToken(_ pid: pid_t) -> String? {
     return "\(info.pbi_start_tvsec):\(info.pbi_start_tvusec)"
 }
 
-// Canonical, bounded public libproc fingerprint (seconds:microseconds).
-func validApplicationProcessStartToken(_ token: String) -> Bool {
-    token.utf8.count <= 27 && token.range(of: #"\A[1-9][0-9]{0,19}:(0|[1-9][0-9]{0,5})\z"#, options: .regularExpression) != nil && UInt64(token.split(separator: ":")[0]) != nil
-}
-
 // Cocoa launchDate is optional for legitimate directly launched applications.
 // Kernel birth identity is canonical and never changes when Cocoa metadata appears.
 func applicationKernelLaunchIdentity(_ startToken: String?) -> String? {

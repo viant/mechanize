@@ -26,6 +26,7 @@ func (Registry) Describe() []Definition {
 		{Name: "app", Arguments: []model.ValueKind{model.StringValue}, Result: "app", Effect: model.ReadOnly, Options: map[string]model.ValueKind{"processId": model.NumberValue, "processStartToken": model.StringValue}},
 		{Name: "web.tab", Result: "page", Effect: model.ReadOnly, Options: map[string]model.ValueKind{"origin": model.StringValue, "title": model.StringValue, "id": model.StringValue}},
 		{Name: "menuBar", Options: map[string]model.ValueKind{"name": model.StringValue}, Receivers: []string{"app"}, Result: "app", Effect: model.ReadOnly, Capabilities: []string{"menuBarScope"}},
+		{Name: "focusedWindow", Receivers: []string{"app"}, Result: "app", Effect: model.ReadOnly, Capabilities: []string{"focusedWindowScope"}},
 		{Name: "focusedElement", Receivers: []string{"app"}, Result: "app", Effect: model.ReadOnly, Capabilities: []string{"focusedElementScope"}},
 		{Name: "window", Receivers: []string{"app"}, Result: "window", Effect: model.ReadOnly}, {Name: "frame", Receivers: []string{"page"}, Result: "frame", Effect: model.ReadOnly, Capabilities: []string{"frameScope"}},
 		{Name: "getByRole", Receivers: []string{"app", "window", "page", "frame", "locator"}, Result: "locator", Effect: model.ReadOnly, Capabilities: []string{"roleLocator"}},
@@ -101,7 +102,7 @@ func (Registry) CheckCapabilities(plan *model.Plan, supported map[string]bool) e
 				return fmt.Errorf("step %s requires native menuScope capability", s.ID)
 			}
 			if target.Scope.NativeRoot != "" {
-				capability := map[string]string{"menuBar": "menuBarScope", "focusedElement": "focusedElementScope"}[target.Scope.NativeRoot]
+				capability := map[string]string{"menuBar": "menuBarScope", "focusedElement": "focusedElementScope", "focusedWindow": "focusedWindowScope"}[target.Scope.NativeRoot]
 				if capability == "" || !supported[s.Target.Surface.Kind+":"+capability] {
 					return fmt.Errorf("step %s requires native root capability", s.ID)
 				}

@@ -14,13 +14,16 @@ import (
 
 func TestObserveNativeRootExplicitRoutingAndConsent(t *testing.T) {
 	p, _ := auth.NewPrincipal("fixture", "", "observer", []string{"desktop:observe"})
-	for _, mode := range []string{"menuBar", "focusedElement", "ordinary", "unexpectedScoped", "unexpectedWindow", "unexpectedRoots", "missingCallback", "unsupportedHelper", "unknown", "web", "denied", "unauthenticated", "wrongRoot", "wrongSurface"} {
+	for _, mode := range []string{"menuBar", "focusedElement", "focusedWindow", "unpinnedWindow", "ordinary", "unexpectedScoped", "unexpectedWindow", "unexpectedRoots", "missingCallback", "unsupportedHelper", "unknown", "web", "denied", "unauthenticated", "wrongRoot", "wrongSurface"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := auth.WithPrincipal(context.Background(), p)
 			if mode == "unauthenticated" {
 				ctx = context.Background()
 			}
 			root := mode
+			if mode == "unpinnedWindow" {
+				root = "focusedWindow"
+			}
 			if mode == "ordinary" || mode == "unexpectedScoped" || mode == "unexpectedWindow" || mode == "unexpectedRoots" {
 				root = ""
 			}
@@ -75,11 +78,17 @@ func TestObserveNativeRootExplicitRoutingAndConsent(t *testing.T) {
 			if _, e = client.Initialize(ctx); e != nil {
 				t.Fatal(e)
 			}
-			out, e := client.CallTool(ctx, &schema.CallToolRequestParams{Name: "mechanize_observe", Arguments: map[string]any{"surface": map[string]any{"kind": kind, "bundleId": "fixture.app", "origin": "https://example.com"}, "nativeRoot": root, "sessionId": "session", "grantId": "grant", "purpose": "inspect"}})
+			surface := map[string]any{"kind": kind, "bundleId": "fixture.app", "origin": "https://example.com"}
+			if mode == "focusedWindow" {
+				surface["processId"] = 42
+				surface["processStartToken"] = "100:1"
+				delete(surface, "origin")
+			}
+			out, e := client.CallTool(ctx, &schema.CallToolRequestParams{Name: "mechanize_observe", Arguments: map[string]any{"surface": surface, "nativeRoot": root, "sessionId": "session", "grantId": "grant", "purpose": "inspect"}})
 			if e != nil {
 				t.Fatal(e)
 			}
-			success := mode == "menuBar" || mode == "focusedElement" || mode == "ordinary"
+			success := mode == "menuBar" || mode == "focusedElement" || mode == "focusedWindow" || mode == "ordinary"
 			if success == (out.IsError != nil && *out.IsError) {
 				t.Fatalf("unexpected result: %+v", out)
 			}
@@ -91,7 +100,7 @@ func TestObserveNativeRootExplicitRoutingAndConsent(t *testing.T) {
 				t.Fatal("scoped request broadened to whole app")
 			}
 			expected := 0
-			if mode == "menuBar" || mode == "focusedElement" || (mode == "unsupportedHelper" || mode == "wrongRoot" || mode == "wrongSurface") {
+			if mode == "menuBar" || mode == "focusedElement" || mode == "focusedWindow" || (mode == "unsupportedHelper" || mode == "wrongRoot" || mode == "wrongSurface") {
 				expected = 1
 			}
 			if scoped != expected {

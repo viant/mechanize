@@ -133,7 +133,7 @@ func (s *ObserveWindowScope) UnmarshalJSON(raw []byte) error {
 type ObserveInput struct {
 	NativeMenu  string              `json:"nativeMenu,omitempty" description:"Exact unique top-level menu name; requires nativeRoot menuBar and exact native process identity. Bounds observation to this menu subtree."`
 	WindowScope *ObserveWindowScope `json:"windowScope,omitempty" description:"Exact native window subtree; requires PID/birth identity and never falls back to whole-app state."`
-	NativeRoot  string              `json:"nativeRoot,omitempty" choice:"menuBar" choice:"focusedElement" description:"Explicit app-owned native subtree; requires helper support and never falls back to the whole app."`
+	NativeRoot  string              `json:"nativeRoot,omitempty" choice:"menuBar" choice:"focusedElement" choice:"focusedWindow" description:"Explicit app-owned native subtree; requires helper support and never falls back to the whole app."`
 	SessionID   string              `json:"sessionId,omitempty"`
 	GrantID     string              `json:"grantId,omitempty"`
 	Purpose     string              `json:"purpose,omitempty"`
@@ -579,7 +579,7 @@ func registerObserve(base *protocol.DefaultHandler, d Dependencies) error {
 		if input.NativeMenu != "" && (input.NativeRoot != "menuBar" || !model.ValidNativeMenuName(input.NativeMenu) || input.Surface.ProcessID <= 0 || input.Surface.ProcessStartToken == "") {
 			return failure(errors.New("exact named menu and process required"))
 		}
-		if input.NativeRoot != "" && (input.Surface.Kind != "native" || (input.NativeRoot != "menuBar" && input.NativeRoot != "focusedElement")) {
+		if input.NativeRoot != "" && model.ValidateNativeRootSurface(input.Surface, input.NativeRoot) != nil {
 			return failure(errors.New("supported native observation root required"))
 		}
 		if input.WindowScope != nil {

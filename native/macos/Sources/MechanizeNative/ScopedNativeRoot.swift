@@ -34,7 +34,11 @@ struct ScopedNativeRoot {
     let bundle: String
 
     private static func attributeName(_ scope: NativeRootScope) -> String {
-        scope == .menuBar ? kAXMenuBarAttribute : kAXFocusedUIElementAttribute
+        switch scope {
+        case .menuBar: return kAXMenuBarAttribute
+        case .focusedElement: return kAXFocusedUIElementAttribute
+        case .focusedWindow: return kAXFocusedWindowAttribute
+        }
     }
     static func resolve(_ scope: NativeRootScope, application: AXUIElement, pid: pid_t, uid: uid_t, birth: String, bundle: String, nativeMenu:String?=nil,
                         check: () throws -> Void, runtime: ScopedNativeRootRuntime = .system) throws -> ScopedNativeRoot {
@@ -52,6 +56,14 @@ struct ScopedNativeRoot {
             try check()
             guard roleStatus == .success, role as? String == kAXMenuBarRole else {
                 throw NativeFailure("rootUnavailable", "Requested application root is not an AXMenuBar")
+            }
+        }
+        if scope == .focusedWindow {
+            let (roleStatus, role) = runtime.attribute(element, kAXRoleAttribute)
+            try check()
+            guard roleStatus == .success, let role = role as? String,
+                  [kAXWindowRole, kAXSheetRole].contains(role) else {
+                throw NativeFailure("rootUnavailable", "Focused container is not an owned window or sheet")
             }
         }
         if let name=nativeMenu {
@@ -126,7 +138,7 @@ struct ScopedNativeRoot {
                 throw NativeFailure("staleReference", "Scoped target ancestry contains a cycle")
             }
             let parentOwner = runtime.owner(parent)
-            if windowScope != nil, parentOwner.status == AXError.success.rawValue,
+            if (windowScope != nil || scope == .focusedWindow), parentOwner.status == AXError.success.rawValue,
                let helperPID = parentOwner.pid, helperPID > 0, helperPID != pid, parentOwner.uid == uid,
                parentOwner.birth?.isEmpty == false,
                parentOwner.bundle == "com.apple.appkit.xpc.openAndSavePanelService" {
@@ -193,17 +205,17 @@ struct ScopedNativeRoot {
         do { fresh = try resolveCurrent(check: check, runtime: runtime) }
         catch let failure as NativeFailure {
             guard ["rootUnavailable", "rootOwnerMismatch"].contains(failure.code) else { throw failure }
-            throw NativeFailure(scope == .focusedElement ? "staleFocus" : "staleReference", "Application native root is no longer qualified")
+            throw NativeFailure((scope == .focusedElement || scope == .focusedWindow) ? "staleFocus" : "staleReference", "Application native root is no longer qualified")
         }
         guard CFEqual(element, fresh.element) else {
-            throw NativeFailure(scope == .focusedElement ? "staleFocus" : "staleReference", "Application native root changed since the scoped snapshot")
+            throw NativeFailure((scope == .focusedElement || scope == .focusedWindow) ? "staleFocus" : "staleReference", "Application native root changed since the scoped snapshot")
         }
         if let referenceElement {
             try validateContainment(referenceElement, check: check, runtime: runtime)
             // Ancestry reads must not silently adopt a focus/root transition.
             let after = try resolveCurrent(check: check, runtime: runtime)
             guard CFEqual(element, after.element) else {
-                throw NativeFailure(scope == .focusedElement ? "staleFocus" : "staleReference", "Application native root changed during containment qualification")
+                throw NativeFailure((scope == .focusedElement || scope == .focusedWindow) ? "staleFocus" : "staleReference", "Application native root changed during containment qualification")
             }
         }
     }

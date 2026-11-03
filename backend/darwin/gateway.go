@@ -118,7 +118,7 @@ func (g *Gateway) Capabilities() []model.Capability {
 	caps = append(caps, model.Capability{Name: "windowFrameClick", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && g.semanticEnabled && g.windowFrameClickEnabled, Reason: "One-use exact captured-window frame pixels under retained qualified control; receipt is not outcome proof"})
 	caps = append(caps, model.Capability{Name: "replaceText", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.mutationEnabled || g.semanticEnabled) && g.textReplaceEnabled, Reason: "Explicit selected-text replacement, full range and readback; no AXValue fallback"}, model.Capability{Name: "valueMatches", Surface: "native", Supported: g.axTrusted && g.valueMatchesEnabled, Reason: "Private bounded literal equality proof; no plaintext value export"})
 	caps = append(caps, model.Capability{Name: "menuScope", Surface: "native", Supported: g.axTrusted && g.nativeMenuScopeEnabled, Reason: "Exact named top-level menu subtree; complete owned root and fresh ancestry required"})
-	return append(caps, model.Capability{Name: "menuBarScope", Surface: "native", Supported: g.axTrusted && g.nativeRootScopes["menuBar"], Reason: "Complete exact app-owned menu bar subtree"}, model.Capability{Name: "focusedElementScope", Surface: "native", Supported: g.axTrusted && g.nativeRootScopes["focusedElement"], Reason: "Complete exact app-owned focused element subtree, rechecked before input"})
+	return append(caps, model.Capability{Name: "menuBarScope", Surface: "native", Supported: g.axTrusted && g.nativeRootScopes["menuBar"], Reason: "Complete exact app-owned menu bar subtree"}, model.Capability{Name: "focusedElementScope", Surface: "native", Supported: g.axTrusted && g.nativeRootScopes["focusedElement"], Reason: "Complete exact app-owned focused element subtree, rechecked before input"}, model.Capability{Name: "focusedWindowScope", Surface: "native", Supported: g.axTrusted && g.nativeRootScopes["focusedWindow"], Reason: "Exact process-owned focused window or sheet, rechecked before input"})
 }
 
 func authorized(ctx context.Context, p auth.Principal, control bool) error {
@@ -294,7 +294,7 @@ func (g *Gateway) ready(ctx context.Context) error {
 		}
 		g.nativeRootScopes = map[string]bool{}
 		for _, scope := range doctor.NativeRootScopes {
-			if scope == "menuBar" || scope == "focusedElement" {
+			if scope == "menuBar" || scope == "focusedElement" || scope == "focusedWindow" {
 				g.nativeRootScopes[scope] = true
 			}
 		}
@@ -527,7 +527,7 @@ func (g *Gateway) Observe(ctx context.Context, p auth.Principal, surface model.S
 // ObserveNativeRoot reads only the explicitly selected app-owned semantic subtree.
 // Unsupported helper capabilities and missing scope echoes fail without broadening.
 func (g *Gateway) ObserveNativeRoot(ctx context.Context, p auth.Principal, surface model.Surface, nativeRoot string, nativeMenu ...string) (model.Observation, error) {
-	if surface.Kind != "native" || (nativeRoot != "menuBar" && nativeRoot != "focusedElement") {
+	if model.ValidateNativeRootSurface(surface, nativeRoot) != nil {
 		return model.Observation{}, fmt.Errorf("supported native observation root required")
 	}
 	if err := authorized(ctx, p, false); err != nil {

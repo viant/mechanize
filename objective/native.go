@@ -221,8 +221,8 @@ func (a *NativeAdapter) evaluateOnce(ctx context.Context, p auth.Principal, name
 		root, err := boundedNativeString(value, 16, false)
 		_, windowTitle := inputs["windowTitle"]
 		_, windowRole := inputs["windowRole"]
-		if err != nil || (root != "menuBar" && root != "focusedElement") || windowTitle || windowRole {
-			return Result{}, errors.New("native root requires menuBar or focusedElement without window inputs")
+		if err != nil || model.ValidateNativeRootSurface(surface, root) != nil || windowTitle || windowRole {
+			return Result{}, errors.New("supported native root and process required without window inputs")
 		}
 		target.Scope.NativeRoot = root
 	}

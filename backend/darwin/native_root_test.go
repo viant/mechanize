@@ -18,6 +18,10 @@ type rootGatewayFixture struct {
 }
 
 func (f *rootGatewayFixture) Call(ctx context.Context, r Request) (Reply, error) {
+	if r.Method == "apps.list" {
+		raw, _ := json.Marshal(map[string]any{"complete": true, "apps": []map[string]any{{"pid": 1, "bundleID": "fixture.app", "launchTime": "kernel:100:1", "startToken": "100:1"}}})
+		return Reply{HelperEpoch: "fixture", Result: raw}, nil
+	}
 	if r.Method == "doctor" {
 		f.calls = append(f.calls, r.Method)
 		raw, _ := json.Marshal(map[string]any{"axTrusted": true, "mutationEnabled": true, "nativeRootScopes": f.advertised})
@@ -40,7 +44,7 @@ func (f *rootGatewayFixture) Call(ctx context.Context, r Request) (Reply, error)
 }
 func TestNativeRootLookupScopesBeforeSnapshotAndRequiresExactEcho(t *testing.T) {
 	ctx, p := nativeActor(t)
-	for _, root := range []string{"menuBar", "focusedElement"} {
+	for _, root := range []string{"menuBar", "focusedElement", "focusedWindow"} {
 		for _, mode := range []string{"complete", "noAdvert", "wrongEcho", "noEcho", "partial", "wrongName", "duplicate"} {
 			t.Run(root+"_"+mode, func(t *testing.T) {
 				f := &rootGatewayFixture{gatewayFixture: gatewayFixture{mutation: true, nodes: []map[string]any{{"ref": "target", "nativeRole": "AXTextField", "name": "Go to the folder:", "enabled": true}}}, advertised: []string{root}, echo: root}
@@ -62,7 +66,7 @@ func TestNativeRootLookupScopesBeforeSnapshotAndRequiresExactEcho(t *testing.T) 
 				if err != nil {
 					t.Fatal(err)
 				}
-				plan, err := script.Compile(`app("fixture.app").` + root + `().getByRole("textbox", name: "Go to the folder:", exact: true).fill("/tmp")`)
+				plan, err := script.Compile(`app("fixture.app",processId:1,processStartToken:"100:1").` + root + `().getByRole("textbox", name: "Go to the folder:", exact: true).fill("/tmp")`)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -86,7 +90,7 @@ func TestNativeRootLookupScopesBeforeSnapshotAndRequiresExactEcho(t *testing.T) 
 					}
 				}
 				for _, cap := range g.Capabilities() {
-					if cap.Name == map[string]string{"menuBar": "menuBarScope", "focusedElement": "focusedElementScope"}[root] && cap.Supported != (mode != "noAdvert") {
+					if cap.Name == map[string]string{"menuBar": "menuBarScope", "focusedElement": "focusedElementScope", "focusedWindow": "focusedWindowScope"}[root] && cap.Supported != (mode != "noAdvert") {
 						t.Fatal("root capability did not follow advertisement")
 					}
 				}

@@ -8,8 +8,8 @@ import (
 )
 
 func TestNativeRootDSLAndCapabilities(t *testing.T) {
-	for _, root := range []string{"menuBar", "focusedElement"} {
-		source := `app("com.apple.finder").` + root + `().getByRole("textbox", name: "Go to the folder:", exact: true).fill("/tmp")`
+	for _, root := range []string{"menuBar", "focusedElement", "focusedWindow"} {
+		source := `app("com.apple.finder",processId:42,processStartToken:"100:1").` + root + `().getByRole("textbox", name: "Go to the folder:", exact: true).fill("/tmp")`
 		plan, err := Compile(source)
 		if err != nil {
 			t.Fatal(err)
@@ -21,7 +21,7 @@ func TestNativeRootDSLAndCapabilities(t *testing.T) {
 		if (Registry{}).CheckCapabilities(plan, caps) == nil {
 			t.Fatal("unadvertised root capability accepted")
 		}
-		capability := map[string]string{"menuBar": "menuBarScope", "focusedElement": "focusedElementScope"}[root]
+		capability := map[string]string{"menuBar": "menuBarScope", "focusedElement": "focusedElementScope", "focusedWindow": "focusedWindowScope"}[root]
 		caps["native:"+capability] = true
 		if err = (Registry{}).CheckCapabilities(plan, caps); err != nil {
 			t.Fatal(err)
@@ -73,6 +73,18 @@ func TestNamedMenuDSLNeedsExactProcessAndAdvertisedScope(t *testing.T) {
 	for _, source := range []string{`app("com.fixture.Editor").menuBar(name:"Git").getById("x").click()`, `app("com.fixture.Editor",processId:42,processStartToken:"100:1").focusedElement(name:"Git").getById("x").click()`, `app("com.fixture.Editor",processId:42,processStartToken:"100:1").menuBar(name:"").getById("x").click()`} {
 		if _, err := Compile(source); err == nil {
 			t.Fatal("unbound menu accepted")
+		}
+	}
+}
+
+func TestFocusedWindowRejectsUnpinnedOrMixedScopes(t *testing.T) {
+	for _, src := range []string{
+		`app("com.fixture.editor").focusedWindow().getById("export").click()`,
+		`app("com.fixture.editor",processId:42,processStartToken:"100:1").focusedWindow().window(title:"x").getById("export").click()`,
+		`app("com.fixture.editor",processId:42,processStartToken:"100:1").focusedWindow(name:"x").getById("export").click()`,
+	} {
+		if _, err := Compile(src); err == nil {
+			t.Fatal("invalid focused window scope accepted", src)
 		}
 	}
 }

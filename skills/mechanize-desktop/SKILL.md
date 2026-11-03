@@ -328,6 +328,22 @@ JSON selector uses `scope: {nativeRoot: "menuBar", nativeMenu: "File"}`. Native
 postcondition inputs accept the same `nativeRoot`/`nativeMenu` pair. Duplicate
 or unavailable top menus remain a refusal; do not use an index to bypass it.
 
+## Focused native windows and sheets
+
+When `native:focusedWindowScope` is advertised, use `nativeRoot: "focusedWindow"`
+with a fresh exact native PID and birth token to inspect the app's focused window
+or modal sheet. The DSL equivalent is `app(...).focusedWindow()`, followed by an
+observed semantic locator. This scope cannot mix with a titled window, menu or
+frame scope. Missing/foreign focus is unavailable; it never broadens to a whole
+application or a system-wide focus query.
+
+The helper retains and rechecks the same owned container before input. A sheet
+whose reverse parent crosses the AppKit panel service requires fresh, bounded
+same-app child membership; helper-owned controls are never adopted. A complete
+observation can support semantic option selection and checked-state predicates,
+but the capability alone does not qualify a particular app dialog or export.
+Preserve the original operation on uncertain input and verify the saved output.
+
 ## Foreground activation confirmation
 
 Source `app.activate` submits one activation request, then observes the exact

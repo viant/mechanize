@@ -64,7 +64,7 @@ struct AXSemanticForegroundRecipient {
   let owner=runtime.owner(candidate)
   guard owner.status==AXError.success.rawValue,let helperPID=owner.pid,helperPID>0,helperPID != pid,owner.uid==uid,owner.birth?.isEmpty==false,
         owner.bundle=="com.apple.appkit.xpc.openAndSavePanelService",
-        let root=scopedWindow,root.windowScope != nil,root.pid==pid,root.uid==uid,root.birth==birth,root.bundle==bundle else{return nil}
+        let root=scopedWindow,(root.windowScope != nil || root.scope == .focusedWindow),root.pid==pid,root.uid==uid,root.birth==birth,root.bundle==bundle else{return nil}
   // Reuse the exact app-window membership proof; no helper-owned control is
   // adopted as a foreground/input recipient. This is semantic-only at binding.
   try root.validate(referenceElement:element,check:{try budget.check()},runtime:runtime)
@@ -125,7 +125,8 @@ struct AXSemanticForegroundRecipient {
    guard let current,CFEqual(current,window) else{throw NativeFailure("foregroundAXWindowChanged","Exact target AX window changed; business input was not dispatched")}
    try owned(window,budget,runtime)
    let role=try read(window,kAXRoleAttribute,budget,runtime)
-   guard role.0 == .success,role.1 as? String==kAXWindowRole else{throw NativeFailure("foregroundAXWindowUnavailable","Exact recipient is not an AX window")}
+   let focusedSheet = role.1 as? String == kAXSheetRole && scopedWindow?.scope == .focusedWindow && scopedWindow.map { CFEqual($0.element, window) } == true && sheetPath.first.map { CFEqual($0, window) } == true
+   guard role.0 == .success,(role.1 as? String==kAXWindowRole || focusedSheet) else{throw NativeFailure("foregroundAXWindowUnavailable","Exact recipient is not an AX window or verified focused sheet")}
   } else if current != nil || !menuRoot {throw NativeFailure("foregroundAXWindowChanged","Windowless menu recipient changed")}
  }
  func focused(_ budget:Budget,runtime:ScopedNativeRootRuntime = .system)throws->Bool {

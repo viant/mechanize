@@ -12,8 +12,12 @@ import (
 )
 
 func TestLiteralNativeComparisonPreservesScopeWithoutReturningValue(t *testing.T) {
-	for _, mode := range []string{"match", "different", "noControl", "noProcess", "metadataAttribute", "missingProof", "callbackFailure", "cancelled"} {
+	for _, mode := range []string{"match", "focusedWindow", "different", "noControl", "noProcess", "metadataAttribute", "missingProof", "callbackFailure", "cancelled"} {
 		t.Run(mode, func(t *testing.T) {
+			root := "focusedElement"
+			if mode == "focusedWindow" {
+				root = "focusedWindow"
+			}
 			p, _ := auth.NewPrincipal("fixture", "", "literal-match", []string{"desktop:control"})
 			if mode == "noControl" {
 				p.Scopes = []string{"desktop:observe"}
@@ -26,7 +30,7 @@ func TestLiteralNativeComparisonPreservesScopeWithoutReturningValue(t *testing.T
 				return model.Value{}, NativeEvidence{}, nil
 			}, func(ctx context.Context, _ auth.Principal, target model.Selector, expected string) (bool, NativeEvidence, error) {
 				calls++
-				if target.Scope.NativeRoot != "focusedElement" || target.Surface.ProcessID != 123 || target.Surface.ProcessStartToken != "1791032156:839822" || expected != "public comparison text" {
+				if target.Scope.NativeRoot != root || target.Surface.ProcessID != 123 || target.Surface.ProcessStartToken != "1791032156:839822" || expected != "public comparison text" {
 					t.Fatal("literal comparison scope changed")
 				}
 				proof := NativeEvidence{HelperEpoch: "helper", TargetRef: "field", ObservedAt: time.Now()}
@@ -46,7 +50,7 @@ func TestLiteralNativeComparisonPreservesScopeWithoutReturningValue(t *testing.T
 			}
 			inputs := nativeInputs()
 			inputs["expected"] = model.Value{Kind: model.StringValue, String: "public comparison text"}
-			inputs["nativeRoot"] = model.Value{Kind: model.StringValue, String: "focusedElement"}
+			inputs["nativeRoot"] = model.Value{Kind: model.StringValue, String: root}
 			inputs["processId"] = model.Value{Kind: model.NumberValue, Number: 123}
 			inputs["processStartToken"] = model.Value{Kind: model.StringValue, String: "1791032156:839822"}
 			if mode == "noProcess" {
@@ -58,7 +62,7 @@ func TestLiteralNativeComparisonPreservesScopeWithoutReturningValue(t *testing.T
 			}
 			result, err := a.Evaluate(ctx, p, "literalValueMatches", inputs)
 			switch mode {
-			case "match":
+			case "match", "focusedWindow":
 				if err != nil || result.Truth != True {
 					t.Fatalf("match not proved: %+v %v", result, err)
 				}

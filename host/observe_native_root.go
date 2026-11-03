@@ -19,7 +19,7 @@ func (h *Host) ObserveNativeRoot(ctx context.Context, p auth.Principal, surface 
 	if len(nativeMenu) > 1 || len(nativeMenu) == 1 && nativeMenu[0] != "" && (root != "menuBar" || !model.ValidNativeMenuName(nativeMenu[0]) || surface.ProcessID <= 0 || surface.ProcessStartToken == "") {
 		return model.Observation{}, fmt.Errorf("exact named menu and process required")
 	}
-	if surface.Kind != "native" || (root != "menuBar" && root != "focusedElement") {
+	if model.ValidateNativeRootSurface(surface, root) != nil {
 		return model.Observation{}, fmt.Errorf("supported native observation root required")
 	}
 	lease, err := h.AuthorizeOperation(ctx, p, surface, false, consent.Observe)

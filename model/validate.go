@@ -116,8 +116,8 @@ func (s Selector) validate(depth int) error {
 		return fmt.Errorf("named native menu requires menuBar and exact process identity")
 	}
 	if s.Scope.NativeRoot != "" {
-		if (s.Scope.NativeRoot != "menuBar" && s.Scope.NativeRoot != "focusedElement") || s.Surface.Kind != "native" || len(s.Scope.Window) != 0 || len(s.Scope.Frame) != 0 {
-			return fmt.Errorf("native root must be menuBar or focusedElement without window/frame scopes")
+		if ValidateNativeRootSurface(s.Surface, s.Scope.NativeRoot) != nil || len(s.Scope.Window) != 0 || len(s.Scope.Frame) != 0 {
+			return fmt.Errorf("supported native root and process required without window/frame scopes")
 		}
 	}
 	switch s.Cardinality {

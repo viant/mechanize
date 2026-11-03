@@ -502,6 +502,8 @@ func (h *Host) policy(ctx context.Context, p auth.Principal, admission *NativeCo
 							caps["native:menuBarScope"] = true
 						case "focusedElement":
 							caps["native:focusedElementScope"] = true
+						case "focusedWindow":
+							caps["native:focusedWindowScope"] = true
 						}
 					}
 					for _, action := range doctor.NativeTextActions {
@@ -582,7 +584,7 @@ func (h *Host) policy(ctx context.Context, p auth.Principal, admission *NativeCo
 		// The control helper can independently qualify selectors and target
 		// scopes even when the read gateway has no fresh AX doctor evidence.
 		// Only capabilities that require the read gateway itself are withheld.
-		for _, name := range []string{"boundedObservation", "attributeRead", "menuBarScope", "focusedElementScope", "valueMatches"} {
+		for _, name := range []string{"boundedObservation", "attributeRead", "menuBarScope", "focusedElementScope", "focusedWindowScope", "valueMatches"} {
 			delete(caps, "native:"+name)
 		}
 	}
