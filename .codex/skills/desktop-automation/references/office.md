@@ -78,8 +78,11 @@ no `windowId` option. Refresh expired permits and never reuse historical pixels.
 
 For local PDF export, verify Best for printing. The alternate online-service
 option changes the export destination. Physical export-sheet titles may differ
-from AX titles; after a scoped lookup fails, inspect the exact physical capture
-instead of guessing titles or expanding to an unbounded tree.
+from AX titles. When `native:focusedWindowScope` is advertised, inspect the owned
+focused window/sheet using its exact PID and birth token. A complete dialog tree
+can qualify a semantic radio-button click with a `checked` postcondition, avoiding
+screenshot-based selection. If that scope is unavailable, inspect the exact
+physical capture; do not guess titles or expand to an unbounded tree.
 
 Verify the exact chosen filename before export. A screenshot may clip a long
 filename, and a successful fill alone does not prove its value. When Mechanize
@@ -91,7 +94,11 @@ selection check and resulting PDF verification as separate acceptance gates.
 Declare export pre/postconditions before dispatch. An observed File-menu Save
 enabled-state transition can establish return from the export sheet when the
 runtime supports the original-postcondition contract. Keep predicate scope and
-named-menu inputs identical. This UI transition does not replace PDF file QA.
+named-menu inputs identical. A sheet-scoped semantic Export action cannot adopt a
+menu-scoped postcondition when the runtime rejects that scope change. After an
+explicit pre-dispatch rejection, an independently qualified exact-window
+confirmation may use its existing completion contract; never replay an uncertain
+export or weaken the scope check. This UI transition does not replace PDF file QA.
 A native AX error may occur after the export created a file: preserve the original
 attempt, use the enrolled reconciliation contract and resume only confirmed
 remaining work. Verify file hash/mtime remain unchanged when resume skips export.
