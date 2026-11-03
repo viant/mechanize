@@ -44,6 +44,15 @@ check, not an export, complex-layout or timed-repeat qualification. The editor's
 AX layout area reported disabled despite the supported keyboard route working;
 do not equate that attribute with an application-wide editing prohibition.
 
+Observed Mechanize export on the same one-slide fixture: exact app activation,
+File > Export, filename fill and Best for printing selection worked after the
+attached-sheet membership/focus fixes. The Export action returned AX error
+-25204, but the PDF was created; independent text, page-size and rendered-pixel
+checks matched the Computer Use export. The durable export effect remained
+unknown and was paused without replay. This qualifies the observed file result,
+not automatic outcome reconciliation or repeat-run reliability. The presentation
+itself was authored by Computer Use, not Mechanize.
+
 Word: preserve paragraph styles, pagination, comments/revisions and fields required by the task. Outlook: draft, attachment, send and Sent verification are different outcomes; no sending unless explicitly authorized.
 
 For Mechanize fallback, retrieve `skill://mechanize-microsoft-office/SKILL.md` and only its relevant case. An offline QA reader must not silently repair or rewrite files claimed to be native-authored. Declare a hybrid route if local authoring is part of the work.
