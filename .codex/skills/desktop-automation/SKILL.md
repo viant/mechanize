@@ -49,6 +49,15 @@ Distinguish app grants, macOS permissions, browser connection, process identity 
 
 ## Reliability and efficiency
 
+Before resuming a consequential action, reconcile the current status summary with
+its original operation, receipt, input revision and outcome evidence. An old
+summary or still-prepared intent does not override a confirmed send, save or
+submission. Preserve conflicting records, resolve the discrepancy without
+replaying input, and update the summary with its evidence source. Distinguish
+retained verification from a fresh remote check. If a manifest covers changed
+metadata, retain its previous revision and update only verified changes; never
+silently accept changed source artifacts by regenerating all hashes.
+
 Verify business outcomes and saved content, not just tool success. Poll the same live operation after a timeout; never replay an uncertain submit, save, export or credential submission. Keep unsuccessful attempts visible and resume at the first unfinished verified boundary.
 
 When comparing Computer Use with Mechanize, use identical synthetic inputs, output requirements and review gates. Time preparation, operation completion, save/export, reopen, review and recovery. Report warm/cold setup and sample size. Formula correctness, editable native objects and fidelity are acceptance gates, not optional speed tradeoffs. A small cell or slide test does not establish full-document reliability. Keep task-specific benchmark contracts in their separate domain workspace.
