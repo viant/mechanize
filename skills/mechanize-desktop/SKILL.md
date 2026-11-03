@@ -162,7 +162,11 @@ syntax with `mechanize_script_validate`, then reuse that structure with fresh
 targets and arguments. Do not add host-language code, shell commands, or guessed
 methods.
 
-For web locators, `read` accepts `text`, `value`, `name`, or `checked`.
+For web locators, `read` accepts `text`, `value`, or `name`. The current Chrome
+gateway rejects `read("checked")` and `toBeChecked` before dispatch and does not
+advertise `web:checkedObservation`. Do not infer checkbox state from an input's
+`value` (for example, `on`), its name, or a successful click. Verify current state
+with a separately qualified observation route, or report it as unavailable.
 Use `.read("text")` for an element's text; DOM property names such as
 `textContent` are not DSL read attributes. Native locators additionally support
 `staticText`, `identifier`, `role`, `focused`, and `enabled`.
