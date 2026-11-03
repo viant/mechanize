@@ -27,7 +27,9 @@ func nativePredicateError(err error) error {
 		return errors.Join(err, &model.MechanizeError{Code: helper.Code, Message: helper.Message, Stage: helper.Stage, RetryableRead: helper.RetryableRead, DispatchState: helper.DispatchState})
 	case "valueComparisonDenied", "valueComparisonUnavailable":
 		// Preserve only a fixed read diagnostic; never forward helper text or
-		// make these failures retryable or eligible for dispatch.
+		// make these failures generally retryable or eligible for dispatch.
+		// The bounded postcondition-only read loop may settle an unavailable
+		// comparison; denied classification remains a one-shot refusal.
 		return errors.Join(err, &model.MechanizeError{Code: helper.Code, Stage: "native", DispatchState: "notDispatched"})
 	default:
 		return err

@@ -96,7 +96,11 @@ func transientNativeObservation(err error) bool {
 		return false
 	}
 	switch detail.Code {
-	case "incompleteObservation", "targetNotFound", "attributeUnavailable", "rootUnavailable":
+	case "incompleteObservation", "targetNotFound", "attributeUnavailable", "rootUnavailable", "valueComparisonUnavailable":
+		// A classified nonsecure field can temporarily lack a complete value
+		// while an app applies input. Only the bounded postcondition read loop
+		// reaches here; every comparison repeats its own classification/proof.
+		// valueComparisonDenied and input dispatch uncertainty remain terminal.
 		return true
 	}
 	return false
