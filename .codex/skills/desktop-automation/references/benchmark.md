@@ -22,6 +22,20 @@ performance. Report sample size, median and range, plus failures. A small cell o
 slide benchmark cannot establish full-workbook/deck behavior. Expand to the user's
 actual task only after basic routes pass.
 
+Measure speed consistency separately from average speed: retain each attempt's
+elapsed time and report the spread, including recovery overhead. Three successful
+runs are an initial comparison, not proof of a reliable tail-latency estimate.
+Do not report meaningful percentile or reliability claims from tiny samples.
+Report first-attempt successes / all attempts, eventual successes / all attempts,
+retries, unresolved outcomes and human interventions. Never discard failures from
+the denominator or replace them with successful reruns.
+
+Tune each route competently before freezing its measured procedure. Give Computer
+Use the same prepared inputs and opportunity to batch supported deterministic
+actions. Record the Mechanize revision, runtime configuration and Endly plan used
+for each attempt. Separate exploratory tuning time from repeat execution, retain
+both, and start a new comparison cohort after a material implementation change.
+
 Quality gates: correct typed values and formulas; observed input sensitivity;
 save/reopen persistence; complete requested sheets/slides; preserved editable
 charts and embedded data; no clipping or missing content; valid matching exports.
