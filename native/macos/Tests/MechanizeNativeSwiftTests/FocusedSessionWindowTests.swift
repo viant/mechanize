@@ -7,16 +7,18 @@ struct FocusedSessionWindowTests {
     func row(_ id:UInt32=7,_ title:String?="Draft copy",layer:Int=0)->SessionKeyWindow {
         SessionKeyWindow(id:id,pid:42,layer:layer,visible:true,alpha:1,bounds:bounds,title:title)
     }
-    func focus(pid:pid_t=42,uid:uid_t=502,birth:String="birth",bundle:String="com.example.Editor",title:String="Draft copy",rect:CGRect?=nil)->FocusedSessionWindow {
-        FocusedSessionWindow(pid:pid,uid:uid,birth:birth,bundle:bundle,title:title,bounds:rect ?? bounds)
+    func focus(pid:pid_t=42,uid:uid_t=502,birth:String="birth",bundle:String="com.example.Editor",title:String="Draft copy",rect:CGRect?=nil,verified:Bool=true)->FocusedSessionWindow {
+        FocusedSessionWindow(pid:pid,uid:uid,birth:birth,bundle:bundle,title:title,bounds:rect ?? bounds,keyboardFocusVerified:verified)
     }
     func matches(_ rows:[SessionKeyWindow],_ f:FocusedSessionWindow?)->Bool {
         focusedSessionWindowMatches(rows,pid:42,uid:502,birth:"birth",bundle:"com.example.Editor",windowID:7,focused:f)
     }
     @Test func exactFocusDistinguishesOverlappingDocumentsBehindTooltip() {
-        let rows=[row(8,"Tooltip",layer:101),row(9,"Other document"),row()]
+        let rows=[row(8,"Tooltip",layer:101),row(),row(9,"Other document")]
         #expect(matches(rows,focus()))
         #expect(!matches(rows,nil))
+        #expect(!matches(rows,focus(verified:false)))
+        for layer in [0,3,8] { #expect(!matches([row(8,"Blocking window",layer:layer),row()],focus())) }
         #expect(!matches(rows,focus(title:"Other document")))
         #expect(!matches([row(),row(9)],focus()))
         #expect(!matches([row(),row()],focus()))
