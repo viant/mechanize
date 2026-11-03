@@ -5,6 +5,14 @@ import MechanizeNativeCore
 struct ScopedNativeRootRuntime {
     let attribute: (AXUIElement, String) -> (AXError, CFTypeRef?)
     let owner: (AXUIElement) -> AXElementOwner
+    let children: (AXUIElement, () throws -> Void) throws -> BoundedSnapshotChildRead
+    init(attribute: @escaping (AXUIElement, String) -> (AXError, CFTypeRef?),
+         owner: @escaping (AXUIElement) -> AXElementOwner,
+         children: @escaping (AXUIElement, () throws -> Void) throws -> BoundedSnapshotChildRead = { element, check in
+             try boundedSnapshotChildren(element, check: check)
+         }) {
+        self.attribute = attribute; self.owner = owner; self.children = children
+    }
     static let system = ScopedNativeRootRuntime(attribute: { element, name in
         var value: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(element, name as CFString, &value)
@@ -117,6 +125,18 @@ struct ScopedNativeRoot {
             guard !visited.contains(where: { CFEqual($0, parent) }) else {
                 throw NativeFailure("staleReference", "Scoped target ancestry contains a cycle")
             }
+            let parentOwner = runtime.owner(parent)
+            if windowScope != nil, parentOwner.status == AXError.success.rawValue,
+               let helperPID = parentOwner.pid, helperPID > 0, helperPID != pid, parentOwner.uid == uid,
+               parentOwner.birth?.isEmpty == false,
+               parentOwner.bundle == "com.apple.appkit.xpc.openAndSavePanelService" {
+                // AppKit panels can expose same-app controls through AXChildren
+                // while their reverse AXParent crosses the save-panel service.
+                // Prove membership using fresh same-app child edges instead;
+                // never traverse or authorize input in the helper process.
+                try validateAttachedSheetChildren(target, check: check, runtime: runtime)
+                return
+            }
             try Self.validateOwner(parent, pid: pid, uid: uid, birth: birth, bundle: bundle, check: check, runtime: runtime, stage: "ancestor-\(depth)")
             if CFEqual(parent, element) { return }
             guard !CFEqual(parent, application) else {
@@ -126,6 +146,47 @@ struct ScopedNativeRoot {
             current = parent
         }
         throw NativeFailure("staleReference", "Scoped target ancestry exceeds the snapshot depth boundary")
+    }
+    private func validateAttachedSheetChildren(_ target: AXUIElement, check: () throws -> Void, runtime: ScopedNativeRootRuntime) throws {
+        var queue: [(AXUIElement, [AXUIElement], Bool)] = [(element, [], false)]
+        var visited: [AXUIElement] = []
+        while !queue.isEmpty {
+            try check()
+            let (node, ancestors, inSheet) = queue.removeFirst()
+            guard visited.count < 1000, ancestors.count <= 20,
+                  !visited.contains(where: { CFEqual($0, node) }) else {
+                throw NativeFailure("staleReference", "Attached-sheet child proof is cyclic, aliased or exceeds bounds")
+            }
+            visited.append(node)
+            try Self.validateOwner(node, pid: pid, uid: uid, birth: birth, bundle: bundle, check: check, runtime: runtime, stage: "sheet-child")
+            AXUIElementSetMessagingTimeout(node, 0.1)
+            let (status, role) = runtime.attribute(node, kAXRoleAttribute)
+            try check()
+            guard status == .success, let role = role as? String else { throw NativeFailure("staleReference", "Attached-sheet child role unavailable") }
+            let attached = inSheet || role == kAXSheetRole
+            if CFEqual(node, target) {
+                guard attached else { throw NativeFailure("staleReference", "Target is not within an attached sheet") }
+                // Re-read every edge of the chosen path before accepting it.
+                let path = ancestors + [node]
+                var stillAttached = false
+                for (parent, child) in zip(path, path.dropFirst()) {
+                    try Self.validateOwner(parent, pid: pid, uid: uid, birth: birth, bundle: bundle, check: check, runtime: runtime, stage: "sheet-path")
+                    let (roleStatus, roleValue) = runtime.attribute(parent, kAXRoleAttribute)
+                    try check()
+                    guard roleStatus == .success, let parentRole = roleValue as? String else { throw NativeFailure("staleReference", "Attached-sheet path role unavailable") }
+                    stillAttached = stillAttached || parentRole == kAXSheetRole
+                    let children = try runtime.children(parent, check)
+                    guard children.complete, children.elements.contains(where: { CFEqual($0, child) }) else { throw NativeFailure("staleReference", "Attached-sheet child path changed") }
+                }
+                guard stillAttached else { throw NativeFailure("staleReference", "Attached sheet disappeared from child path") }
+                try Self.validateOwner(target, pid: pid, uid: uid, birth: birth, bundle: bundle, check: check, runtime: runtime, stage: "target")
+                return
+            }
+            let children = try runtime.children(node, check)
+            guard children.complete, queue.count + visited.count + children.elements.count <= 1000 else { throw NativeFailure("staleReference", "Attached-sheet child census incomplete or exceeds bounds") }
+            queue.append(contentsOf: children.elements.map { ($0, ancestors + [node], attached) })
+        }
+        throw NativeFailure("staleReference", "Target absent from selected window's attached sheet")
     }
     func validate(referenceElement: AXUIElement? = nil, check: () throws -> Void, runtime: ScopedNativeRootRuntime = .system) throws {
         let fresh: ScopedNativeRoot
