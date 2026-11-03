@@ -7,3 +7,13 @@ Private preparation is not successful login. Verify the resulting account/page t
 OAuth/SDK authentication is separate from UI password entry. If explicitly requested, use the service's documented private exchange and verified endpoint; do not treat an SDK key as an access token or guess endpoints with credentials attached. Keep credential files and token contents outside task artifacts, logs and commit history. Do not retry rejected credentials without new evidence or explicit steering.
 
 Permanent Mechanize consent is matched to its verified client, scope and modes. Reuse it across sessions when valid. Credential protection, macOS grants and server identity remain distinct. A denied/unknown private operation cannot be bypassed with Computer Use, clipboard reads or screenshots.
+
+Distinguish missing Vault configuration from missing app consent. An installed
+credential tool is not proof that its private store is configured, contains one
+matching record, or has completed a login. Use the returned preparation/status
+code to identify the actual requirement. `needsConfiguration` calls for local
+Vault setup or record selection, not another Chrome approval. Preserve an existing
+authenticated session and continue independent work while that requirement remains.
+Do not configure a new custody provider, migrate keys, import credentials or widen
+access merely to make a qualification test pass. Use the user's authorized local
+setup path, and keep any credential entry in that private interface.

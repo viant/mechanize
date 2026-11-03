@@ -82,3 +82,14 @@ Put a token measurement boundary in its own completed tool call before starting
 long-running work. Verify timestamp alignment with the provider/session usage
 event; a distant event makes that token comparison unavailable. Keep interrupted
 trials and startup failures separately identified, including recovery time.
+
+If context recovery or an unrelated interruption occurs inside a measurement,
+retain the raw interval and mark it unsuitable for executor comparison. Do not
+silently subtract the interruption or replace the failed sample with a clean run.
+
+Token attribution requires comparable returned evidence, not just identical UI
+actions. Record screenshot dimensions/resizing, emitted accessibility content,
+wrapper output and model/tool round trips. If both routes suppress their trees,
+do not credit tree suppression for the difference. Report uncached-input savings
+separately from total tokens; unequal images or wrappers prevent attributing the
+whole difference to executor efficiency.
