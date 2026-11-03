@@ -22,10 +22,56 @@ final class AXSemanticForegroundTests:XCTestCase {
     XCTAssertTrue(CFEqual(element,self.target));return self.associated.map{(.success,$0 as CFTypeRef)} ?? (.noValue,nil)
    case kAXFocusedWindowAttribute:
     XCTAssertTrue(CFEqual(element,self.app));return self.selected.map{(.success,$0 as CFTypeRef)} ?? (.noValue,nil)
+   case kAXParentAttribute:return(.noValue,nil)
    default:XCTFail("semantic proof read geometry/content: \(name)");return(.cannotComplete,nil)
    }
   },owner:{self.owner($0)})}
   func bind()throws->AXSemanticForegroundRecipient{try AXSemanticForegroundRecipient.bind(element:target,application:app,pid:pid,uid:uid,birth:birth,bundle:bundle,menuRoot:false,budget:Budget(milliseconds:1000),runtime:runtime)}
+ }
+ func testAttachedSheetPathPinsOwnershipAncestryAndFocusedRecipient()throws {
+  for directSheet in [false,true] {
+   let f=Fixture(),sheet=AXUIElementCreateApplication(42010),group=AXUIElementCreateApplication(42011),otherSheet=AXUIElementCreateApplication(42012)
+   var changed=false,focusSheet=false
+   let runtime=ScopedNativeRootRuntime(attribute:{element,name in
+    switch name {
+    case kAXRoleAttribute:
+     return(.success,(CFEqual(element,sheet)||CFEqual(element,otherSheet) ? kAXSheetRole:CFEqual(element,group) ? kAXGroupRole:CFEqual(element,f.target) ? kAXTextFieldRole:kAXWindowRole) as CFString)
+    case kAXWindowAttribute:return directSheet ? (.success,sheet):(.noValue,nil)
+    case kAXParentAttribute:
+     if CFEqual(element,f.target){return(.success,group)}
+     if CFEqual(element,group){return(.success,changed ? otherSheet:sheet)}
+     return(.success,f.window)
+    case kAXFocusedWindowAttribute:return(.success,focusSheet ? sheet:f.window)
+    default:XCTFail("unexpected content read");return(.cannotComplete,nil)
+    }
+   },owner:{f.owner($0)})
+   let proof=try AXSemanticForegroundRecipient.bind(element:f.target,application:f.app,pid:f.pid,uid:f.uid,birth:f.birth,bundle:f.bundle,menuRoot:false,budget:Budget(milliseconds:1000),runtime:runtime)
+   XCTAssertTrue(try proof.focused(Budget(milliseconds:1000),runtime:runtime))
+   focusSheet=true
+   XCTAssertTrue(try proof.focused(Budget(milliseconds:1000),runtime:runtime))
+   f.foreign=sheet
+   XCTAssertThrowsError(try proof.validate(Budget(milliseconds:1000),runtime:runtime))
+   f.foreign=nil;changed=true
+   XCTAssertThrowsError(try proof.validate(Budget(milliseconds:1000),runtime:runtime))
+  }
+ }
+ func testMissingDirectWindowCannotAdoptOrdinaryAncestorCycleOrUnrelatedSheet() {
+  for mode in ["ordinary","cycle","unrelated","foreign"] {
+   let f=Fixture(),sheet=AXUIElementCreateApplication(42010)
+   if mode=="foreign"{f.foreign=sheet}
+   let runtime=ScopedNativeRootRuntime(attribute:{element,name in
+    switch name {
+    case kAXRoleAttribute:return(.success,(CFEqual(element,sheet) ? kAXSheetRole:CFEqual(element,f.target) ? kAXTextFieldRole:kAXWindowRole) as CFString)
+    case kAXWindowAttribute:return mode=="unrelated" ? (.success,sheet):(.noValue,nil)
+    case kAXParentAttribute:
+     if mode=="cycle"{return(.success,f.target)}
+     if mode=="foreign",CFEqual(element,f.target){return(.success,sheet)}
+     return(.success,f.window)
+    default:return(.noValue,nil)
+    }
+   },owner:{f.owner($0)})
+   XCTAssertThrowsError(try AXSemanticForegroundRecipient.bind(element:f.target,application:f.app,pid:f.pid,uid:f.uid,birth:f.birth,bundle:f.bundle,menuRoot:false,budget:Budget(milliseconds:1000),runtime:runtime),mode)
+  }
  }
  func testSameAXFocusAcceptsWithoutCGGeometryEvenWhenWindowBoundsCoincide()throws {
   let f=Fixture(),proof=try f.bind()

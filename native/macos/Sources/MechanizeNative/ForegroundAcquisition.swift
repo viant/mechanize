@@ -50,6 +50,7 @@ func acquireNativeForeground(_ budget:Budget,runtime:ForegroundAcquisitionRuntim
 struct AXSemanticForegroundRecipient {
  let element:AXUIElement,application:AXUIElement
  let window:AXUIElement?
+ let sheetPath:[AXUIElement]
  let pid:pid_t,uid:uid_t,birth:String,bundle:String
  let menuRoot:Bool
  private func read(_ element:AXUIElement,_ name:String,_ budget:Budget,_ runtime:ScopedNativeRootRuntime)throws->(AXError,CFTypeRef?){
@@ -60,26 +61,54 @@ struct AXSemanticForegroundRecipient {
   try budget.check();let owner=runtime.owner(element);try budget.check()
   guard owner.status==AXError.success.rawValue,owner.pid==pid,owner.uid==uid,owner.birth==birth,owner.bundle==bundle else{throw NativeFailure("foregroundAXOwnerMismatch","Exact AX recipient owner changed; business input was not dispatched")}
  }
- private func currentWindow(_ budget:Budget,_ runtime:ScopedNativeRootRuntime)throws->AXUIElement? {
+ private func currentRecipient(_ budget:Budget,_ runtime:ScopedNativeRootRuntime)throws->(AXUIElement?,[AXUIElement]) {
   try owned(element,budget,runtime)
   let role=try read(element,kAXRoleAttribute,budget,runtime)
   guard role.0 == .success,role.1 is String else{throw NativeFailure("foregroundAXWindowUnavailable","Exact target role unavailable")}
-  if role.1 as? String==kAXWindowRole{return element}
+  if role.1 as? String==kAXWindowRole{return(element,[])}
   let raw=try read(element,kAXWindowAttribute,budget,runtime)
-  if raw.0 == .success,let value=raw.1,CFGetTypeID(value)==AXUIElementGetTypeID(){return value as! AXUIElement}
+  if raw.0 == .success,let value=raw.1,CFGetTypeID(value)==AXUIElementGetTypeID(){
+   let associated=value as! AXUIElement
+   try owned(associated,budget,runtime)
+   let associatedRole=try read(associated,kAXRoleAttribute,budget,runtime)
+   if associatedRole.0 == .success,associatedRole.1 as? String==kAXWindowRole{return(associated,[])}
+   guard associatedRole.0 == .success,associatedRole.1 as? String==kAXSheetRole else{throw NativeFailure("foregroundAXWindowUnavailable","Associated AX object is not a window or sheet")}
+  } else {
+   guard (raw.0 == .noValue || raw.0 == .attributeUnsupported || raw.0 == .success),raw.1==nil else{throw NativeFailure("foregroundAXWindowUnavailable","Exact target AX window read failed")}
+  }
   // Only the already-owned menu-bar scope may legitimately have no AX window.
-  if menuRoot,(raw.0 == .noValue || raw.0 == .attributeUnsupported || raw.0 == .success),raw.1==nil{return nil}
-  throw NativeFailure("foregroundAXWindowUnavailable","Exact target AX window unavailable; business input was not dispatched")
+  if menuRoot,raw.1==nil{return(nil,[])}
+  // Some attached save/export fields omit AXWindow or point at their AXSheet.
+  // Only a bounded, same-owner parent path containing a sheet may establish
+  // their top-level recipient. Retain the entire path to detect reparenting.
+  var path:[AXUIElement]=[],current=element,sawSheet=false
+  for _ in 0..<32 {
+   guard !path.contains(where:{CFEqual($0,current)}),!CFEqual(current,application) else{throw NativeFailure("foregroundAXWindowUnavailable","Attached-sheet parent path is cyclic or incomplete")}
+   try owned(current,budget,runtime);path.append(current)
+   let role=try read(current,kAXRoleAttribute,budget,runtime)
+   guard role.0 == .success,let name=role.1 as? String else{throw NativeFailure("foregroundAXWindowUnavailable","Attached-sheet parent role unavailable")}
+   if name==kAXWindowRole {
+    guard sawSheet else{throw NativeFailure("foregroundAXWindowUnavailable","Missing direct AXWindow without an attached sheet")}
+    if let associated=raw.1,CFGetTypeID(associated)==AXUIElementGetTypeID(),!path.contains(where:{CFEqual($0,associated)}){throw NativeFailure("foregroundAXWindowUnavailable","Associated sheet differs from parent path")}
+    return(current,path)
+   }
+   sawSheet = sawSheet || name==kAXSheetRole
+   let parent=try read(current,kAXParentAttribute,budget,runtime)
+   guard parent.0 == .success,let value=parent.1,CFGetTypeID(value)==AXUIElementGetTypeID() else{throw NativeFailure("foregroundAXWindowUnavailable","Attached-sheet parent unavailable")}
+   current=value as! AXUIElement
+  }
+  throw NativeFailure("foregroundAXWindowUnavailable","Attached-sheet parent path exceeds bound")
  }
  static func bind(element:AXUIElement,application:AXUIElement,pid:pid_t,uid:uid_t,birth:String,bundle:String,menuRoot:Bool,budget:Budget,runtime:ScopedNativeRootRuntime = .system)throws->AXSemanticForegroundRecipient {
-  let candidate=AXSemanticForegroundRecipient(element:element,application:application,window:nil,pid:pid,uid:uid,birth:birth,bundle:bundle,menuRoot:menuRoot)
-  let window=try candidate.currentWindow(budget,runtime)
-  let bound=AXSemanticForegroundRecipient(element:element,application:application,window:window,pid:pid,uid:uid,birth:birth,bundle:bundle,menuRoot:menuRoot)
+  let candidate=AXSemanticForegroundRecipient(element:element,application:application,window:nil,sheetPath:[],pid:pid,uid:uid,birth:birth,bundle:bundle,menuRoot:menuRoot)
+  let (window,path)=try candidate.currentRecipient(budget,runtime)
+  let bound=AXSemanticForegroundRecipient(element:element,application:application,window:window,sheetPath:path,pid:pid,uid:uid,birth:birth,bundle:bundle,menuRoot:menuRoot)
   try bound.validate(budget,runtime:runtime);return bound
  }
  func validate(_ budget:Budget,runtime:ScopedNativeRootRuntime = .system)throws {
   try owned(application,budget,runtime)
-  let current=try currentWindow(budget,runtime)
+  let (current,path)=try currentRecipient(budget,runtime)
+  guard path.count==sheetPath.count,zip(path,sheetPath).allSatisfy({CFEqual($0.0,$0.1)}) else{throw NativeFailure("foregroundAXWindowChanged","Attached-sheet parent path changed")}
   if let window {
    guard let current,CFEqual(current,window) else{throw NativeFailure("foregroundAXWindowChanged","Exact target AX window changed; business input was not dispatched")}
    try owned(window,budget,runtime)
@@ -96,7 +125,8 @@ struct AXSemanticForegroundRecipient {
    let focused=value as! AXUIElement
    try owned(focused,budget,runtime)
    let role=try read(focused,kAXRoleAttribute,budget,runtime)
-   guard role.0 == .success,role.1 as? String==kAXWindowRole else{throw NativeFailure("foregroundAXFocusUnavailable","Application focused object is not an AX window")}
+   if role.0 == .success,role.1 as? String==kAXSheetRole,sheetPath.contains(where:{CFEqual($0,focused)}){return window}
+   guard role.0 == .success,role.1 as? String==kAXWindowRole else{throw NativeFailure("foregroundAXFocusUnavailable","Application focused object is not the owned window or attached sheet")}
    return focused
   }
   let before=try readFocused();try validate(budget,runtime:runtime)
