@@ -41,4 +41,6 @@ Verify business outcomes and saved content, not just tool success. Poll the same
 
 When comparing Computer Use with Mechanize, use identical synthetic inputs, output requirements and review gates. Time preparation, operation completion, save/export, reopen, review and recovery. Report warm/cold setup and sample size. Formula correctness, editable native objects and fidelity are acceptance gates, not optional speed tradeoffs. A small cell or slide test does not establish full-document reliability. Keep task-specific benchmark contracts in their separate domain workspace.
 
+For measured optimization, read [time, tokens and quality](references/benchmark.md). Compare individual Mechanize actions with Endly batches as separate routes, and use authoritative usage counters rather than token estimates.
+
 At handoff, name the actual executor per stage and the remaining limitations. Say “verified for this operation and environment,” not “fully reliable” without matching end-to-end evidence. Preserve user-owned files and keep test copies separate.

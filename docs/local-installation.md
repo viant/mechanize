@@ -154,6 +154,34 @@ Chrome subtree. The installer still requires exact equality after removing
 
 ### Unified application staging
 
+For an existing, unmanaged unified **development** installation without configured
+Vault/Keychain custody, `scripts/upgrade-unified-development.py` provides a narrow
+same-path update. It requires a frozen source build, its matching unified manifest,
+the same signing certificate, unchanged private configuration and exact old pins.
+Preflight is read-only by default:
+
+```sh
+python3 scripts/upgrade-unified-development.py --installation PRIVATE_RUNTIME \
+  --source FROZEN_SOURCE --manifest UNIFIED_MANIFEST
+```
+
+Apply additionally requires `--apply --broker-pid PID --idle-verified`, after
+checking that input executors are quiescent. It retains the original application
+through an atomic exchange, rotates only the console's existing-role credential,
+updates exact artifact pins, and preserves credential resources, grants, stores,
+website policy and extension bytes. It never changes macOS privacy settings or
+enables new input capabilities. A native-host bridge may restart; Chrome tabs stay
+open. The private backup records each phase. Failed enrollment/startup is not
+automatically retried or rolled back.
+
+An explicit rollback uses `--installation PRIVATE_RUNTIME --rollback BACKUP` with
+either an exact idle `--broker-pid PID --idle-verified` or
+`--broker-stopped-verified`; the latter is also independently checked. Changed
+application/config revisions refuse rollback. Old console credentials remain
+available; a rollback does not repeat or delete the new enrollment operation.
+Custody-bearing or launchd-managed installations continue to require the reviewed
+migration/service updater instead of this development-only route.
+
 `python3 scripts/build-unified-app.py --manifest SIGNED_DEVELOPMENT_MANIFEST --output-directory NEW_EXTERNAL_DIRECTORY`
 stages `Mechanize.app` without changing an installation. Its main console keeps
 `com.viant.mechanize.consent` and the existing enrollment account. Broker, helper,
