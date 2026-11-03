@@ -316,7 +316,7 @@ async function attach(command, enrollment) {
   if (!frame || !allowedOrigin(frame.url, enrollment)) throw MechanizeProtocol.error("documentDenied", "Frame document/origin unavailable or not enrolled");
   const key = `${tab.id}:${frame.documentId}`;
   if (!documents.has(key)) {
-    await chrome.scripting.executeScript({target: {tabId: tab.id, documentIds: [frame.documentId]}, world: "ISOLATED", files: ["protocol.js", "fingerprint.js", "accessibility-provider.js", "dom.js", "recorder.js", "secure-input.js", "content.js"]});
+    await chrome.scripting.executeScript({target: {tabId: tab.id, documentIds: [frame.documentId]}, world: "ISOLATED", injectImmediately:true, files: ["protocol.js", "fingerprint.js", "accessibility-provider.js", "dom.js", "recorder.js", "secure-input.js", "content.js"]});
     const bound = await chrome.tabs.sendMessage(tab.id, {type: "bind", binding: {identity: command.identity, brokerEpoch: grant.brokerEpoch, channelEpoch: grant.channelEpoch, scopeHash: grant.scopeHash, leaseRequired: grant.leaseRequired === true, mutationFingerprintVersion: grant.mutationFingerprintVersion || 1,...executorTrustMetadata(grant)}}, {documentId: frame.documentId});
     if (bound?.error || !validBoundIdentity(bound?.identity,command.identity) || (grant.mutationFingerprintVersion === 2 && bound.mutationFingerprintVersion !== 2)) throw MechanizeProtocol.error("executorBindingFailed", "Exact negotiated document executor required");
     documents.set(key, bound.identity);
@@ -1642,7 +1642,11 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
   reconnectDiagnosticPhase = "inspect";
   for(const item of snapshot.documents) {
     const identity=Object.fromEntries(["profileChannel","browserInstance","tabId","frameId","documentId","documentGeneration"].map(key=>[key,item[key]]));
-    try {await chrome.scripting.executeScript({target:{tabId:identity.tabId,documentIds:[identity.documentId]},world:"ISOLATED",files:["protocol.js","fingerprint.js","accessibility-provider.js","dom.js","recorder.js","secure-input.js","content.js"]});}
+    // Executor installation only registers guarded handlers/observers. It does
+    // not require a completed DOM; later requests still prove document/fence
+    // identity. Avoid document_idle keeping this qualification lane pending on
+    // a loading page. A genuinely unresolved injection still owns the lane.
+    try {await chrome.scripting.executeScript({target:{tabId:identity.tabId,documentIds:[identity.documentId]},world:"ISOLATED",injectImmediately:true,files:["protocol.js","fingerprint.js","accessibility-provider.js","dom.js","recorder.js","secure-input.js","content.js"]});}
     catch (error) {throw reconnectRefuse(injectionFailureReason(error));}
     if(recoveryBinding){
       const fences=[oldFence,...recoveryBinding.bindings.filter(r=>r.identity.tabId===identity.tabId&&r.identity.documentId===identity.documentId).map(r=>r.fence),...candidateFences];
@@ -2025,7 +2029,7 @@ async function receiveCommand(command, qualification) {
         for (const identity of (reconnectRecord ? [] : snapshot.documents.filter(d => d.frameId === 0))) {
           reconnectDiagnosticPhase='inspect';
           try {
-            await chrome.scripting.executeScript({target: {tabId: identity.tabId, documentIds: [identity.documentId]}, world: "ISOLATED", files: ["protocol.js", "fingerprint.js", "accessibility-provider.js", "dom.js", "recorder.js", "secure-input.js", "content.js"]});
+            await chrome.scripting.executeScript({target: {tabId: identity.tabId, documentIds: [identity.documentId]}, world: "ISOLATED", injectImmediately:true, files: ["protocol.js", "fingerprint.js", "accessibility-provider.js", "dom.js", "recorder.js", "secure-input.js", "content.js"]});
           } catch { replyTo({type: "attention", error: MechanizeProtocol.error("executorInjectionFailed", "Packaged executor injection could not be confirmed")}); return; }
           qualificationCurrent(qualification);
           let bound;
@@ -2405,7 +2409,7 @@ async function connectNativeOnce(token,valid=()=>true) {
     }catch{metadataStartupBarrier='inventoryUnavailable';}
     // This fixed metadata hello is independent of secret/document visibility.
     // No retained document or input payload is replayed on a replacement port.
-    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,playwrightTargetRetirementVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:36,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
+    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,playwrightTargetRetirementVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:37,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
 
   } catch {
     if (lifecycleGuardId) connectionAttention = "lifecycleInhibited";

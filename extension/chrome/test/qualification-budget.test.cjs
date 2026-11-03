@@ -6,6 +6,23 @@ const qualify = channelEpoch => ({type:'processQualified', ...grant, channelEpoc
   executorChallenge:'fixture-challenge-'+channelEpoch, mutationFingerprintVersion:2});
 const flush = async () => { for(let i=0;i<20;i++) await new Promise(resolve=>setImmediate(resolve)); };
 const until = async predicate => { const deadline=process.hrtime.bigint()+2000000000n;while(!predicate()&&process.hrtime.bigint()<deadline)await new Promise(resolve=>setImmediate(resolve));assert.ok(predicate(),'bounded asynchronous metadata proof did not settle'); };
+test('initial and reconnect executor installation do not wait for document idle',async()=>{
+  for(const historical of [false,true]) {
+    const f=historical?await historicalFixture():await fixture({}, {enroll:false});
+    f.state.inventoryTabs=[{id:7,url:f.state.url}];
+    f.state.boundFingerprintVersion=2;f.state.reconnectSupported=true;
+    const injections=[];
+    f.state.injectionHook=details=>{
+      injections.push(details);
+      if(details.injectImmediately!==true)throw Error('fixture document has not reached idle');
+    };
+    await f.receive(qualify('loading-document-channel'));
+    assert.ok(f.messages.some(m=>m.type==='executorPrepared'&&m.executorChallenge==='fixture-challenge-loading-document-channel'));
+    assert.ok(injections.length>0);
+    for(const details of injections){assert.equal(details.world,'ISOLATED');assert.deepEqual(Array.from(details.target.documentIds),['d1']);}
+    assert.equal(f.state.deliveries,0);assert.equal(f.state.permissionRequests||0,0);
+  }
+});
 async function historicalFixture() {
   const f = await fixture({}, {enroll:false});
   f.state.inventoryTabs = [{id:7,url:f.state.url}];
