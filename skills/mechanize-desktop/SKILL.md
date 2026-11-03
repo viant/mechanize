@@ -95,6 +95,20 @@ until the server reports the relevant authorization and the result is verified.
    adapter enrollment; unavailable evidence stays unverified. Close an owned
    session with `mechanize_session_close` when done.
 
+## Changed browser process identity
+
+Passive `mechanize_browser_status` does not reconnect or close a transport.
+An authorized `mechanize_browser_tabs` request can retire the original connection
+when full verification proves that its bound Chrome or native-host identity has
+changed. That request returns `authorityChanged`; it does not adopt the new
+identity or replay browser input. A new connection must complete the ordinary
+signed handshake and recovery before another operation is admitted.
+
+Timeouts, cancellation and unavailable process evidence do not trigger this
+retirement. Saved grants and unresolved-effect history remain intact. Wait for
+fresh qualification and inspect any retained uncertainty; do not clear guards,
+resend input, or request duplicate approval merely because the connection changed.
+
 ## Choose a website or native application
 
 To start an installed native application when no process is running, use the

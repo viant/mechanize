@@ -276,7 +276,7 @@ func TestPrivateRecipientNavigationIDPreservesLegacyAndBindsNonce(t *testing.T) 
 }
 
 func TestReviewedWorkerCredentialRecipientCompatibility(t *testing.T) {
-	for _, build := range []int{34, 35, 36, 37} {
+	for _, build := range []int{34, 35, 36, 37, 38} {
 		for _, mode := range []string{"pinnedGeneration", "pinnedWrongNonce", "pinnedMissingNonce"} {
 			t.Run(fmt.Sprintf("build%d/%s", build, mode), func(t *testing.T) {
 				g, p, ctx, a, binding, calls := credentialFreshFixture(t, mode, build)
@@ -297,8 +297,8 @@ func TestReviewedWorkerCredentialRecipientCompatibility(t *testing.T) {
 			})
 		}
 	}
-	t.Run("futureBuild38", func(t *testing.T) {
-		_, _, _, a, _, _ := credentialFreshFixture(t, "ready", 38)
+	t.Run("futureBuild39", func(t *testing.T) {
+		_, _, _, a, _, _ := credentialFreshFixture(t, "ready", 39)
 		if a.PrivateRecipientID != "" {
 			t.Fatal("unreviewed worker received recipient capability")
 		}

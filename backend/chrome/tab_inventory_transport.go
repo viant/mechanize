@@ -99,7 +99,7 @@ func (b *Broker) currentTabInventory(ctx context.Context, c *channel, namespace,
 	if ctx.Err() != nil {
 		return tabInventoryReply{}, "transportUnavailable"
 	}
-	if b.checkChannelProcess(ctx, c, false) != nil {
+	if b.checkTabInventoryProcess(ctx, c) != nil {
 		return tabInventoryReply{}, "authorityChanged"
 	}
 	deadline, ok := ctx.Deadline()
@@ -156,7 +156,7 @@ func (b *Broker) currentTabInventory(ctx context.Context, c *channel, namespace,
 	case <-ctx.Done():
 		return tabInventoryReply{}, "transportUnavailable"
 	}
-	if b.checkChannelProcess(ctx, c, false) != nil {
+	if b.checkTabInventoryProcess(ctx, c) != nil {
 		return tabInventoryReply{}, "authorityChanged"
 	}
 	b.mu.Lock()
