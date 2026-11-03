@@ -53,13 +53,17 @@ func prepareForeignLifecycleFixture(t *testing.T, h *Host, p auth.Principal, inp
 	if err != nil {
 		t.Fatal(err)
 	}
-	decision, _ := json.Marshal(map[string]any{"requestID": request.ID, "decision": consent.AllowUntilRevoked})
-	approved, err := h.consent.NativeRPC(human, "decide", decision)
-	if err != nil {
-		t.Fatal(err)
+	approved := request.ExistingGrant
+	if approved == nil {
+		decision, _ := json.Marshal(map[string]any{"requestID": request.ID, "decision": consent.AllowUntilRevoked})
+		result, err := h.consent.NativeRPC(human, "decide", decision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		approved = result.(*consent.Grant)
 	}
 	input.SessionID = opened.SessionID
-	input.GrantID = approved.(*consent.Grant).ID
+	input.GrantID = approved.ID
 	result, err := h.CredentialPrepare(ctx, foreign, input)
 	if err != nil {
 		t.Fatal("independently authorized successor preparation unavailable")
