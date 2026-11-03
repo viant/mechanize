@@ -24,6 +24,16 @@ in that diff does not mean it disappeared. Before resolving a different control,
 merge the documented diff correctly or request fresh complete state. Do not reuse
 old indices or repeat the setter merely to make the control appear in output.
 
+For a repeat Mechanize procedure, avoid setup already performed by its qualified
+native action contract. Semantic dispatch can acquire and verify the exact app's
+foreground itself; do not prepend activation solely out of habit. Qualify both
+already-foreground and background-app cases before removing that step. Likewise,
+an explicit whole-dialog read or intermediate value check may be redundant when
+the next action already resolves a fresh complete scope and checks the same fact.
+Retain source identity, the final filename check before export, local-printing
+verification, and saved-output QA. Never skip a required review boundary or reuse
+an old element reference to obtain a faster result.
+
 ## Excel
 
 1. Select the intended sheet/cell and verify both the selection and original value.
