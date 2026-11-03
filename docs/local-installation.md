@@ -341,6 +341,11 @@ sources and conflicting source endpoints are refused. The CLI must be an owned
 or root-owned, non-shared-writable executable at `/usr/local/bin/scy` or
 `/opt/homebrew/bin/scy` (resolved symlinks are checked).
 
+The importer passes an owner-only snapshot inside a fresh operation directory to
+Scy. This isolates older Scy/AFS versions that chmod the immediate parent during
+a read: the real `~/.secret` directory stays `0700`, and the original file is not
+passed to that reader. No decrypted output is written to the temporary resource.
+
 This importer creates a Basic record keyed by the exact origin; it never silently
 overwrites an existing key. An uncertain save still requires inventory/outcome
 inspection before another attempt. Native legacy credential import remains a

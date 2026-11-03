@@ -17,17 +17,21 @@ struct ScyVaultImportTests {
         var calls = 0
         let frame = try ScyVaultImport.frame(resourceName: "account.enc", origin: origin, root: root) { snapshot in
             calls += 1
-            #expect(snapshot.deletingLastPathComponent().path == root.path)
+            #expect(snapshot.deletingLastPathComponent().deletingLastPathComponent().path == root.path)
             #expect(snapshot.lastPathComponent != "account.enc")
             let copied = try Data(contentsOf: snapshot)
             let permissions = try FileManager.default.attributesOfItem(atPath: snapshot.path)[.posixPermissions] as? NSNumber
             #expect(copied == Data("synthetic-ciphertext".utf8))
             #expect(permissions?.intValue == 0o600)
+            // Reproduce the installed Scy/AFS reader's directory chmod.
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: snapshot.deletingLastPathComponent().path)
             return plain()
         }
         #expect(calls == 1)
         let remaining = try FileManager.default.contentsOfDirectory(atPath: root.path)
         #expect(remaining == ["account.enc"])
+        let rootPermissions = try FileManager.default.attributesOfItem(atPath: root.path)[.posixPermissions] as? NSNumber
+        #expect(rootPermissions?.intValue == 0o700)
         #expect(!String(describing: frame).contains("fixture-password-canary"))
         try frame.writeOnce { bytes in
             let data = Data(bytes)

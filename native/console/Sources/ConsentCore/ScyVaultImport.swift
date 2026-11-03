@@ -36,14 +36,26 @@ public enum ScyVaultImport {
         // Snapshot ciphertext through an owner-only file so the CLI cannot follow
         // a replacement source symlink. Decrypted CLI output is never written
         // to a file; only the original resource bytes are copied here.
-        let name = ".mechanize-scy-import-" + UUID().uuidString.lowercased() + ".enc"
-        let temporary = openat(parent, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        // Older Scy/AFS releases chmod the directory containing a read source
+        // to 0755. Isolate that behavior beneath the still-private .secret
+        // parent instead of allowing it to change Vault custody permissions.
+        let operationName = ".mechanize-scy-import-" + UUID().uuidString.lowercased()
+        guard mkdirat(parent, operationName, 0o700) == 0 else { throw ScyVaultImportError.unavailable }
+        defer { _ = unlinkat(parent, operationName, AT_REMOVEDIR) }
+        let operation = openat(parent, operationName, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard operation >= 0 else { throw ScyVaultImportError.unavailable }
+        defer { close(operation) }
+        let name = "resource.enc"
+        let temporary = openat(operation, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard temporary >= 0 else { throw ScyVaultImportError.unavailable }
-        defer { close(temporary); _ = unlinkat(parent, name, 0) }
+        defer { close(temporary); _ = unlinkat(operation, name, 0) }
         let written = encrypted.withUnsafeBytes { Darwin.write(temporary, $0.baseAddress, $0.count) }
         guard written == encrypted.count, fsync(temporary) == 0 else { throw ScyVaultImportError.unavailable }
-        var plain = try load(root.appendingPathComponent(name))
+        var plain = try load(root.appendingPathComponent(operationName).appendingPathComponent(name))
         defer { plain.resetBytes(in: 0..<plain.count) }
+        var protectedParent = stat()
+        guard fstat(parent, &protectedParent) == 0, protectedParent.st_uid == getuid(),
+              protectedParent.st_mode & 0o7777 == 0o700 else { throw ScyVaultImportError.unavailable }
         return try decodeFrame(&plain, origin: canonical)
     }
 
