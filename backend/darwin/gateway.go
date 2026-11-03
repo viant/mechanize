@@ -824,12 +824,10 @@ func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step
 	if err != nil {
 		return result, err
 	}
-	observation, err := g.observeWindowSnapshot(ctx, step.Target.Surface, step.Target.Scope.NativeRoot, step.Action == "window.moveTo", windowScope, step.Target.Scope.NativeMenu)
-	if err != nil {
-		return result, err
+	observation, node, err := g.lookupForStep(ctx, step, values, windowScope, mutation)
+	if observation.ID != "" {
+		result.Observation = &observation
 	}
-	result.Observation = &observation
-	node, err := resolve(observation, step.Target, values)
 	if err != nil {
 		return result, err
 	}
