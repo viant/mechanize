@@ -48,7 +48,7 @@ struct WindowSessionKeyRuntime {
         // Cocoa foreground properties update through its run loop. This
         // bounded read-only refresh does not activate an app. The caller's
         // original deadline is checked again before any input can be posted.
-        try refreshForegroundNotifications(Budget(milliseconds: 50))
+        try refreshForegroundNotifications(Budget(milliseconds: foregroundRefreshMaximumMilliseconds))
     }, foregroundSample: {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         return SessionKeyForegroundSample(pid: app.processIdentifier, bundle: app.bundleIdentifier, active: app.isActive)

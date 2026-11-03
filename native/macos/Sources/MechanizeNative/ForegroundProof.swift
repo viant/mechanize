@@ -21,6 +21,15 @@ struct ForegroundProofRuntime {
     },corroborate:{try? freshFocusedApplicationPID()})
 }
 
+// Waiting for main-queue scheduling is not an AX tree-read timeout. Allow a
+// busy application turn to finish, while retaining the request's deadline.
+let foregroundRefreshMaximumMilliseconds = 250
+func foregroundRefreshWaitNanoseconds(_ budget: Budget) throws -> Int {
+    try budget.check()
+    return Int(min(Double(foregroundRefreshMaximumMilliseconds) / 1000,
+                   Double(budget.remainingSeconds)) * 1_000_000_000)
+}
+
 /// Cocoa documents running-application properties as run-loop updated. Drain at
 /// most two already queued main-loop sources before reading frontmost/isActive;
 /// neither this refresh nor its callbacks accept caller code or dispatch input.
@@ -38,7 +47,7 @@ func refreshForegroundNotifications(_ budget:Budget)throws {
     let lock=NSLock()
     var finished=false
     var failure:Error?
-    let waitNanoseconds=Int(min(0.05,Double(budget.remainingSeconds))*1_000_000_000)
+    let waitNanoseconds=try foregroundRefreshWaitNanoseconds(budget)
     let deadline=DispatchTime.now() + .nanoseconds(waitNanoseconds)
     DispatchQueue.main.async {
         lock.lock();let expired=finished;lock.unlock()
