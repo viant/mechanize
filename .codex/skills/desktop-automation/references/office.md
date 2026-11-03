@@ -19,6 +19,11 @@ navigation boundaries. Observe a path field after typing, before confirming it;
 verify the resulting picker selection and opened document path. A setter return
 alone does not establish a committed path, cell selection or edit.
 
+Computer Use may return an accessibility diff after a setter. A missing control
+in that diff does not mean it disappeared. Before resolving a different control,
+merge the documented diff correctly or request fresh complete state. Do not reuse
+old indices or repeat the setter merely to make the control appear in output.
+
 ## Excel
 
 1. Select the intended sheet/cell and verify both the selection and original value.
@@ -75,6 +80,13 @@ For local PDF export, verify Best for printing. The alternate online-service
 option changes the export destination. Physical export-sheet titles may differ
 from AX titles; after a scoped lookup fails, inspect the exact physical capture
 instead of guessing titles or expanding to an unbounded tree.
+
+Verify the exact chosen filename before export. A screenshot may clip a long
+filename, and a successful fill alone does not prove its value. When Mechanize
+restricts that field's value read, use the supported `native.literalValueMatches`
+precondition with the known nonsecret filename and exact focused-field scope.
+A denied read does not justify broader value access. Keep the local-printing
+selection check and resulting PDF verification as separate acceptance gates.
 
 Declare export pre/postconditions before dispatch. An observed File-menu Save
 enabled-state transition can establish return from the export sheet when the
