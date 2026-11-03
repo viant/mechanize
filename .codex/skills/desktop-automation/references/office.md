@@ -33,6 +33,34 @@ copy. Read-only saved-file inspection confirmed the formula and numeric cached
 result. Attribute this to a hybrid recovery, not a successful Mechanize durable
 run: the original unknown effect remained preserved and was never replayed.
 
+A later Excel 16.114.3 copy test qualified one numeric edit, recalculation,
+Save, Close and reopen through Mechanize, with Computer Use native inspection and
+read-only saved-file QA. B2 changed from 2500 to 5000; B4 retained `B2/B3*1000`
+and recalculated from 100000 to 200000. Other cells and styles were unchanged,
+and the original source hash was preserved. The qualified steps had zero
+unresolved effects; earlier failed/uncertain trials remain recorded. This is a
+small operation qualification, not full-workbook or repeat-speed evidence.
+
+That route required the existing session-text and session-keyboard opt-ins plus
+live qualification. Before typing, verify the selected cell and original formula
+editor value. `typeWindowText` is a terminating app action with fresh physical
+window ID and declared focus role/name; do not chain `.window(...)` before it.
+Declare the exact native formula-editor precondition and postcondition separately.
+Use the enrolled original-postcondition reconciliation contract if needed; an
+extra `effect.reconcile` requires its own separate enrollment. Commit with Return,
+save the copy, verify saved formula/cache, then close and reopen the exact file.
+The named-key grammar uses `Control+G` for Excel Go To, not `Ctrl+G`.
+
+A floating non-key window previously blocked physical text despite worksheet
+focus. The qualified fix accepts a non-top window only with a unique fresh
+AX-focused-window/physical-window match of owner, process birth, title and geometry,
+and rechecks it before input. Missing or ambiguous evidence still refuses input.
+For file-panel fields outside the value-read allowlist, compare a known public
+literal with `native.literalValueMatches` before confirmation; do not broaden read
+permissions or expose unknown field contents. A transient observation failure
+immediately after a dialog transition requires a fresh bounded read, not repeated
+input. Rediscover all transient dialog/control identifiers.
+
 PowerPoint: use existing placeholders/objects, preserve chart data and embedded workbook relationships, inspect every affected slide, save and reopen, then export and inspect the PDF. Compare slide count, text, numeric consistency, image crops, native editability and layout. Do not replace editable charts with images or drop slides to meet a time target.
 
 Observed Computer Use baseline: selecting Blank Presentation opened a one-slide
