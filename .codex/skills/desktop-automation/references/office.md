@@ -131,6 +131,26 @@ separate local-artifact revision, and restart comparisons rather than silently
 repairing outputs claimed as native. A raster reference PDF is not an identical
 rendering-method baseline for a native PDF timing comparison.
 
+A subsequent clean-input 19-slide test completed the same single-label edit,
+Save, local printing PDF export, Close and reopen using Mechanize alone. Fresh
+capture-bound clicks focused the embedded Find and Replace fields; focused
+textbox fills and Return found exactly one match, then a fresh capture-bound
+Replace click changed it. This removes the earlier Computer Use focus assistance
+for that observed panel. Do not reuse its pixel coordinates or capture permits.
+All 336 shape identities/types/names/geometries and active image bindings were
+preserved, chart and embedded workbook bytes matched, all 66 raster images
+decoded, and the reopened deck hash stayed unchanged. All 19 rendered PDF pages
+matched the earlier independently reviewed native export pixel for pixel.
+
+The export still required the original-postcondition reconciliation: its initial
+read returned an unavailable outcome before asynchronous export finished. Resume
+skipped the confirmed export; PDF hash and mtime stayed unchanged. This is a
+successful native edit/persistence case with recovery, not first-attempt export
+reliability, complete deck authoring, or a timed comparison. Investigate the
+underlying read failure before changing retry policy. Physical Export-sheet titles
+need not be AXWindow titles; after scoped observation fails, use a fresh exact
+physical-window capture instead of guessing another accessibility title.
+
 Word: preserve paragraph styles, pagination, comments/revisions and fields required by the task. Outlook: draft, attachment, send and Sent verification are different outcomes; no sending unless explicitly authorized.
 
 For Mechanize fallback, retrieve `skill://mechanize-microsoft-office/SKILL.md` and only its relevant case. An offline QA reader must not silently repair or rewrite files claimed to be native-authored. Declare a hybrid route if local authoring is part of the work.
