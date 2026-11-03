@@ -320,6 +320,22 @@ Set `nativeVault.keyProvider` to `scy-local-v1` to keep Vault encryption indepen
 
 Provisioning remains native-only. Existing ciphertext prevents replacement of a missing key; malformed keys, symlinks, hard links, unsafe permissions and repository locations are refused. No MCP tool reads or returns master keys, credential values or clipboard contents. Keep keys and encrypted records outside source control and back them up together using an appropriate private backup.
 
+The native record guard also requires the existing `~/.secret` parent directory
+to be owned by the login user with mode `0700`. A `0755` parent can leave “Set up
+or repair Vault” disabled with a guard-unavailable message even when the Vault
+subdirectories are private. Inspect ownership, file type and permissions without
+reading credential contents. Correct an authorized parent-permission problem
+without recursively rewriting files, then reopen the console to obtain a fresh
+guard check. Do not delete guard markers or treat unknown mutation/protection
+state as a permissions problem; those states require their recovery protocol.
+
+An empty ready Vault is not a qualified password-login route. Native legacy
+credential import selects an existing Vault entry; it is not a general importer
+for arbitrary encrypted resource files. Enter a matching website credential
+through the protected native interface before testing delivery at its exact HTTPS
+origin. OAuth clients and SDK resources are not interchangeable with website
+username/password records.
+
 The certificate-signed unified development updater can preserve an already
 configured `scy-local-v1` Vault with `helper-v1` protection. It checks that the
 existing broker pin matches the installed app, retains the same native storage
