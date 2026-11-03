@@ -320,7 +320,7 @@ func (m *NativeControlManager) AdmitScope(ctx context.Context, requested auth.Pr
 
 // admissionCurrent permits reuse only for policy discovery immediately after
 // this operation admitted the same held generation. It grants no dispatch;
-// lease acquisition and every helper call still freshly qualify the process,
+// admission and every helper call still freshly qualify the process,
 // permission/session readiness and physical fence.
 func (m *NativeControlManager) admissionCurrent(ctx context.Context, p auth.Principal, a NativeControlAdmission) bool {
 	m.mu.Lock()
@@ -451,9 +451,11 @@ func (m *NativeControlManager) lease(ctx context.Context, p auth.Principal, held
 	if m.closed || m.options.Owner.Err() != nil || m.held != held || held.inhibited || actual.Namespace != held.principal.Namespace {
 		return native.Lease{}, session.ErrNoLease
 	}
-	if err = m.qualify(ctx, actual, held); err != nil {
-		return native.Lease{}, err
-	}
+	// This returns only already-held fence metadata; it installs no authority
+	// and sends no helper request. Supervisor.Lease freshly checks the helper
+	// process identity below. nativeControlCaller.Call independently qualifies
+	// current permissions/session readiness before lease.install and every
+	// input/read request, so metadata retrieval must not duplicate its probe.
 	lease, err := m.supervisor.Lease(ctx, actual)
 	if err != nil {
 		return native.Lease{}, err

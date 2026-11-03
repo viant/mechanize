@@ -72,6 +72,12 @@ counters, classify the environmental interruption, and exclude that interval fro
 executor speed/token comparisons. Safe resume after wake is separate recovery
 evidence; it does not turn the interrupted sample into an uninterrupted pass.
 
+When profiling with the qualified gops v0.3.23 agent, collect CPU profiles and
+stack samples in separate passes. Its command handler is serial: a long CPU
+profile queues stack requests, which can then capture an idle process after the
+workload ends. Verify active workload frames before using a sample to attribute
+latency. Keep raw traces in the private task workspace, outside the repository.
+
 Put a token measurement boundary in its own completed tool call before starting
 long-running work. Verify timestamp alignment with the provider/session usage
 event; a distant event makes that token comparison unavailable. Keep interrupted
