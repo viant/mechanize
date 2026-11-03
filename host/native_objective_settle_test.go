@@ -23,16 +23,26 @@ func settlingNativePredicate() model.Predicate {
 }
 
 func TestNativePredicateHelperErrorsSettleOnlyWithPostconditionOptIn(t *testing.T) {
-	for _, code := range []string{"targetNotFound", "incompleteObservation", "attributeUnavailable"} {
+	for _, code := range []string{"targetNotFound", "incompleteObservation", "attributeUnavailable", "rootUnavailable"} {
 		t.Run(code, func(t *testing.T) {
 			p, _ := auth.NewPrincipal("fixture", "", "native-settle", []string{"desktop:observe"})
 			base := auth.WithPrincipal(context.Background(), p)
 			helperErr := &native.NativeError{Code: code, Message: "temporarily unavailable", Stage: "native", RetryableRead: true, DispatchState: "notDispatched"}
 			calls := 0
+			predicate := settlingNativePredicate()
+			if code == "rootUnavailable" {
+				for key, value := range map[string]string{"nativeRoot": "menuBar", "nativeMenu": "File", "processStartToken": "100:1"} {
+					predicate.Inputs[key] = model.Value{Kind: model.StringValue, String: value}
+				}
+				predicate.Inputs["processId"] = model.Value{Kind: model.NumberValue, Number: 42}
+			}
 			adapter, _ := objective.NewNative(func(ctx context.Context, actor auth.Principal, target model.Selector, attribute string) (model.Value, objective.NativeEvidence, error) {
 				calls++
 				if target.Surface.BundleID != "com.example.Fixture" || target.Locator.Value.String != "next" || attribute != "enabled" || actor.Namespace != p.Namespace {
 					t.Fatal("read scope changed")
+				}
+				if code == "rootUnavailable" && (target.Scope.NativeRoot != "menuBar" || target.Scope.NativeMenu != "File" || target.Surface.ProcessID != 42 || target.Surface.ProcessStartToken != "100:1") {
+					t.Fatal("temporary root loss broadened the original menu or process scope")
 				}
 				if calls == 1 {
 					return model.Value{}, objective.NativeEvidence{}, nativePredicateError(fmt.Errorf("helper read: %w", helperErr))
@@ -40,12 +50,12 @@ func TestNativePredicateHelperErrorsSettleOnlyWithPostconditionOptIn(t *testing.
 				return model.Value{Kind: model.BoolValue, Bool: true}, objective.NativeEvidence{HelperEpoch: "epoch", TargetRef: "next", ObservedAt: time.Now()}, nil
 			})
 			evaluator, _ := objective.New(map[string]objective.Enrollment{"native": adapter.Enrollment()})
-			snapshot, err := evaluator.Evaluate(base, p, settlingNativePredicate(), nil)
+			snapshot, err := evaluator.Evaluate(base, p, predicate, nil)
 			if err != nil || calls != 1 || snapshot.Truth != objective.Unknown || snapshot.Reason != "outcome source unavailable" {
 				t.Fatalf("snapshot: %+v calls=%d err=%v", snapshot, calls, err)
 			}
 			calls = 0
-			result, err := evaluator.Evaluate(objective.WithObservationWait(base), p, settlingNativePredicate(), nil)
+			result, err := evaluator.Evaluate(objective.WithObservationWait(base), p, predicate, nil)
 			if err != nil || result.Truth != objective.True || calls != 2 {
 				t.Fatalf("settled: %+v calls=%d err=%v", result, calls, err)
 			}
@@ -57,6 +67,9 @@ func TestNativePredicateErrorBridgeKeepsPermanentAndTransportFailuresOneShot(t *
 	for _, failure := range []error{
 		auth.ErrUnauthorized,
 		&native.NativeError{Code: "ownerMismatch", Stage: "native"},
+		&native.NativeError{Code: "rootOwnerMismatch", Stage: "native", DispatchState: "notDispatched"},
+		&native.NativeError{Code: "rootUnavailable", Stage: "native", DispatchState: "unknown"},
+		&native.TransportError{Cause: &native.NativeError{Code: "rootUnavailable", Stage: "native", DispatchState: "notDispatched"}, DispatchState: "unknown"},
 		&native.NativeError{Code: "staleEpoch", Stage: "native"},
 		&native.NativeError{Code: "ambiguousTarget", Stage: "native"},
 		&native.NativeError{Code: "permissionDenied", Stage: "native"},
@@ -99,7 +112,7 @@ func TestNativePredicateHelperSettlingRetainsDeadlineCancellationAndFreshness(t 
 					cancel()
 				}
 				if calls == 1 || mode == "deadline" || mode == "canceled" {
-					return model.Value{}, objective.NativeEvidence{}, nativePredicateError(&native.NativeError{Code: "targetNotFound", Stage: "native", DispatchState: "notDispatched"})
+					return model.Value{}, objective.NativeEvidence{}, nativePredicateError(&native.NativeError{Code: "rootUnavailable", Stage: "native", DispatchState: "notDispatched"})
 				}
 				return model.Value{Kind: model.BoolValue, Bool: true}, objective.NativeEvidence{HelperEpoch: "epoch", TargetRef: "next", ObservedAt: time.Now().Add(-time.Hour)}, nil
 			})

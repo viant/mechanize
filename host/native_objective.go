@@ -23,7 +23,7 @@ func nativePredicateError(err error) error {
 		return err
 	}
 	switch helper.Code {
-	case "incompleteObservation", "targetNotFound", "attributeUnavailable":
+	case "incompleteObservation", "targetNotFound", "attributeUnavailable", "rootUnavailable":
 		return errors.Join(err, &model.MechanizeError{Code: helper.Code, Message: helper.Message, Stage: helper.Stage, RetryableRead: helper.RetryableRead, DispatchState: helper.DispatchState})
 	case "valueComparisonDenied", "valueComparisonUnavailable":
 		// Preserve only a fixed read diagnostic; never forward helper text or

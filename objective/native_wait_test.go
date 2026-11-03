@@ -75,7 +75,7 @@ func TestNativeWaitOptInAndDeadlineBothRequired(t *testing.T) {
 	}
 }
 func TestNativeWaitPermanentProtectedIdentityAndPermissionFailuresSingleCall(t *testing.T) {
-	for _, code := range []string{"permissionDenied", "staleReference", "valueReadDenied", "staticTextReadDenied", "secureInput", "scopeDenied"} {
+	for _, code := range []string{"permissionDenied", "staleReference", "rootOwnerMismatch", "valueReadDenied", "staticTextReadDenied", "secureInput", "scopeDenied"} {
 		ctx, p := waitActor(t)
 		ctx, cancel := context.WithTimeout(WithObservationWait(ctx), time.Second)
 		calls := 0
@@ -116,6 +116,23 @@ func TestNativeWaitFocusedBooleanAndCancellationNeverFalseSuccess(t *testing.T) 
 	result, err = a.Evaluate(canceled, p, "valueEquals", inputs)
 	if !errors.Is(err, context.Canceled) || result.Truth == True {
 		t.Fatal("canceled late true accepted")
+	}
+}
+
+func TestNativeWaitRootFailureWithDispatchUncertaintyIsNotRetried(t *testing.T) {
+	for _, dispatch := range []string{"", "dispatched", "unknown"} {
+		ctx, p := waitActor(t)
+		ctx, cancel := context.WithTimeout(WithObservationWait(ctx), time.Second)
+		calls := 0
+		a, _ := NewNative(func(context.Context, auth.Principal, model.Selector, string) (model.Value, NativeEvidence, error) {
+			calls++
+			return model.Value{}, NativeEvidence{}, &model.MechanizeError{Code: "rootUnavailable", Stage: "native", DispatchState: dispatch}
+		})
+		result, err := a.Evaluate(ctx, p, "valueEquals", nativeInputs())
+		cancel()
+		if err == nil || result.Truth == True || calls != 1 {
+			t.Fatalf("uncertain root failure retried: dispatch=%q calls=%d result=%+v", dispatch, calls, result)
+		}
 	}
 }
 func TestNativeWaitDeadlineUnknownBoundedAttemptsAndInterval(t *testing.T) {

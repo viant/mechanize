@@ -92,11 +92,11 @@ func (a *NativeAdapter) Evaluate(ctx context.Context, p auth.Principal, name str
 }
 func transientNativeObservation(err error) bool {
 	var detail *model.MechanizeError
-	if !errors.As(err, &detail) || detail.Stage != "native" {
+	if !errors.As(err, &detail) || detail.Stage != "native" || detail.DispatchState != "notDispatched" {
 		return false
 	}
 	switch detail.Code {
-	case "incompleteObservation", "targetNotFound", "attributeUnavailable":
+	case "incompleteObservation", "targetNotFound", "attributeUnavailable", "rootUnavailable":
 		return true
 	}
 	return false
