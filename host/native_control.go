@@ -616,7 +616,10 @@ func (c *nativeControlCaller) Call(ctx context.Context, request native.Request) 
 	}
 	var transport *native.TransportError
 	var applicationFailure *native.NativeError
-	unknownMutation := (request.Method == "elements.replaceText" || request.Method == "windows.clickFrame" || request.Method == "app.quit") && errors.As(callErr, &applicationFailure) && applicationFailure.DispatchState == "unknown"
+	// Read-only requests returned above. Any remaining helper operation can
+	// change input authority or application state; an uncertain native failure
+	// must retain the fence regardless of which method reported it.
+	unknownMutation := errors.As(callErr, &applicationFailure) && applicationFailure.DispatchState == "unknown"
 	if unknownMutation || ctx.Err() != nil || errors.As(callErr, &transport) && transport.DispatchState == "unknown" || reply.Receipt != nil && reply.Receipt.DispatchState == "unknown" {
 		c.held.inhibited = true
 		report := session.CleanupReport{InputInhibited: true, UnknownInputs: true, Reason: "native dispatch interrupted; held inputs require reconciliation"}
