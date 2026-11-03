@@ -51,6 +51,7 @@ struct AXSemanticForegroundRecipient {
  let element:AXUIElement,application:AXUIElement
  let window:AXUIElement?
  let sheetPath:[AXUIElement]
+ let scopedWindow:ScopedNativeRoot?
  let pid:pid_t,uid:uid_t,birth:String,bundle:String
  let menuRoot:Bool
  private func read(_ element:AXUIElement,_ name:String,_ budget:Budget,_ runtime:ScopedNativeRootRuntime)throws->(AXError,CFTypeRef?){
@@ -61,6 +62,16 @@ struct AXSemanticForegroundRecipient {
   try budget.check();let owner=runtime.owner(element);try budget.check()
   guard owner.status==AXError.success.rawValue,owner.pid==pid,owner.uid==uid,owner.birth==birth,owner.bundle==bundle else{throw NativeFailure("foregroundAXOwnerMismatch","Exact AX recipient owner changed; business input was not dispatched")}
  }
+ private func scopedWindowForPanelOwner(_ candidate:AXUIElement,_ budget:Budget,_ runtime:ScopedNativeRootRuntime)throws->AXUIElement? {
+  let owner=runtime.owner(candidate)
+  guard owner.status==AXError.success.rawValue,let helperPID=owner.pid,helperPID>0,helperPID != pid,owner.uid==uid,owner.birth?.isEmpty==false,
+        owner.bundle=="com.apple.appkit.xpc.openAndSavePanelService",
+        let root=scopedWindow,root.windowScope != nil,root.pid==pid,root.uid==uid,root.birth==birth,root.bundle==bundle else{return nil}
+  // Reuse the exact app-window membership proof; no helper-owned control is
+  // adopted as a foreground/input recipient. This is semantic-only at binding.
+  try root.validate(referenceElement:element,check:{try budget.check()},runtime:runtime)
+  return root.element
+ }
  private func currentRecipient(_ budget:Budget,_ runtime:ScopedNativeRootRuntime)throws->(AXUIElement?,[AXUIElement]) {
   try owned(element,budget,runtime)
   let role=try read(element,kAXRoleAttribute,budget,runtime)
@@ -69,6 +80,7 @@ struct AXSemanticForegroundRecipient {
   let raw=try read(element,kAXWindowAttribute,budget,runtime)
   if raw.0 == .success,let value=raw.1,CFGetTypeID(value)==AXUIElementGetTypeID(){
    let associated=value as! AXUIElement
+   if let root=try scopedWindowForPanelOwner(associated,budget,runtime){return(root,[])}
    try owned(associated,budget,runtime)
    let associatedRole=try read(associated,kAXRoleAttribute,budget,runtime)
    if associatedRole.0 == .success,associatedRole.1 as? String==kAXWindowRole{return(associated,[])}
@@ -84,6 +96,7 @@ struct AXSemanticForegroundRecipient {
   var path:[AXUIElement]=[],current=element,sawSheet=false
   for _ in 0..<32 {
    guard !path.contains(where:{CFEqual($0,current)}),!CFEqual(current,application) else{throw NativeFailure("foregroundAXWindowUnavailable","Attached-sheet parent path is cyclic or incomplete")}
+   if let root=try scopedWindowForPanelOwner(current,budget,runtime){return(root,[])}
    try owned(current,budget,runtime);path.append(current)
    let role=try read(current,kAXRoleAttribute,budget,runtime)
    guard role.0 == .success,let name=role.1 as? String else{throw NativeFailure("foregroundAXWindowUnavailable","Attached-sheet parent role unavailable")}
@@ -99,10 +112,10 @@ struct AXSemanticForegroundRecipient {
   }
   throw NativeFailure("foregroundAXWindowUnavailable","Attached-sheet parent path exceeds bound")
  }
- static func bind(element:AXUIElement,application:AXUIElement,pid:pid_t,uid:uid_t,birth:String,bundle:String,menuRoot:Bool,budget:Budget,runtime:ScopedNativeRootRuntime = .system)throws->AXSemanticForegroundRecipient {
-  let candidate=AXSemanticForegroundRecipient(element:element,application:application,window:nil,sheetPath:[],pid:pid,uid:uid,birth:birth,bundle:bundle,menuRoot:menuRoot)
+ static func bind(element:AXUIElement,application:AXUIElement,pid:pid_t,uid:uid_t,birth:String,bundle:String,menuRoot:Bool,scopedWindow:ScopedNativeRoot? = nil,budget:Budget,runtime:ScopedNativeRootRuntime = .system)throws->AXSemanticForegroundRecipient {
+  let candidate=AXSemanticForegroundRecipient(element:element,application:application,window:nil,sheetPath:[],scopedWindow:scopedWindow,pid:pid,uid:uid,birth:birth,bundle:bundle,menuRoot:menuRoot)
   let (window,path)=try candidate.currentRecipient(budget,runtime)
-  let bound=AXSemanticForegroundRecipient(element:element,application:application,window:window,sheetPath:path,pid:pid,uid:uid,birth:birth,bundle:bundle,menuRoot:menuRoot)
+  let bound=AXSemanticForegroundRecipient(element:element,application:application,window:window,sheetPath:path,scopedWindow:scopedWindow,pid:pid,uid:uid,birth:birth,bundle:bundle,menuRoot:menuRoot)
   try bound.validate(budget,runtime:runtime);return bound
  }
  func validate(_ budget:Budget,runtime:ScopedNativeRootRuntime = .system)throws {
@@ -180,7 +193,7 @@ struct NativeForegroundTarget {
   try ref.validateProcess();try budget.check()
   if semanticOnly || keyboardOnly {
    try ref.validateInputScope(budget)
-   let proof=try AXSemanticForegroundRecipient.bind(element:ref.element,application:AXUIElementCreateApplication(ref.pid),pid:ref.pid,uid:getuid(),birth:ref.startToken,bundle:ref.bundleID,menuRoot:semanticOnly && ref.scopedRoot?.scope == .menuBar,budget:budget)
+   let proof=try AXSemanticForegroundRecipient.bind(element:ref.element,application:AXUIElementCreateApplication(ref.pid),pid:ref.pid,uid:getuid(),birth:ref.startToken,bundle:ref.bundleID,menuRoot:semanticOnly && ref.scopedRoot?.scope == .menuBar,scopedWindow:semanticOnly ? ref.scopedRoot:nil,budget:budget)
    return NativeForegroundTarget(pid:ref.pid,birth:ref.startToken,bundle:ref.bundleID,windowID:nil,window:proof.window,reference:ref,semanticRecipient:proof,keyboardRecipient:keyboardOnly)
   }
   AXUIElementSetMessagingTimeout(ref.element,min(0.05,budget.remainingSeconds))

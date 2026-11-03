@@ -21,6 +21,8 @@ final class AttachedSheetMembershipTests {
                 switch name {
                 case kAXWindowsAttribute: return (.success, [root] as CFArray)
                 case kAXTitleAttribute: return (.success, "Fixture" as CFString)
+                case kAXWindowAttribute: return (.success, helper)
+                case kAXFocusedWindowAttribute: return (.success, root)
                 case kAXRoleAttribute:
                     if CFEqual(element, sheet) {
                         sheetRoleReads += 1
@@ -48,7 +50,15 @@ final class AttachedSheetMembershipTests {
             })
             let requested = try #require(try NativeWindowScope.requested(in: ["windowScope": ["title": "Fixture", "role": "AXWindow"]], method: "elements.snapshot"))
             let proof = try ScopedNativeRoot.resolveWindow(requested, application: app, pid: pid, uid: uid, birth: birth, bundle: bundle, check: {}, runtime: runtime)
-            if mode == "valid" { try proof.validate(referenceElement: child, check: {}, runtime: runtime) }
+            if mode == "valid" {
+                try proof.validate(referenceElement: child, check: {}, runtime: runtime)
+                #expect(throws: (any Error).self) {
+                    try AXSemanticForegroundRecipient.bind(element: child, application: app, pid: pid, uid: uid, birth: birth, bundle: bundle, menuRoot: false, budget: Budget(milliseconds: 1000), runtime: runtime)
+                }
+                let recipient = try AXSemanticForegroundRecipient.bind(element: child, application: app, pid: pid, uid: uid, birth: birth, bundle: bundle, menuRoot: false, scopedWindow: proof, budget: Budget(milliseconds: 1000), runtime: runtime)
+                #expect(try recipient.focused(Budget(milliseconds: 1000), runtime: runtime))
+                #expect(CFEqual(try #require(recipient.window), root))
+            }
             else { #expect(throws: (any Error).self) { try proof.validate(referenceElement: child, check: {}, runtime: runtime) } }
             #expect(!helperChildrenRead, "Never inspect or authorize helper controls")
         }
