@@ -61,6 +61,23 @@ permissions or expose unknown field contents. A transient observation failure
 immediately after a dialog transition requires a fresh bounded read, not repeated
 input. Rediscover all transient dialog/control identifiers.
 
+A six-sheet proposal-copy test extended the numeric edit route to an existing
+formatted workbook. Mechanize selected a qualified sheet/cell through Go To,
+changed one budget input, and verified the dependent row, paid total and conditional
+added-value formulas. Save/reopen preserved all six sheets, formulas, merged ranges
+and other cell values, with no cached formula errors. A physical Cmd+S attempt was
+refused before dispatch (`foregroundAcquisitionUnavailable`); a fresh File-menu
+Save succeeded. Keep that failure visible and prefer the qualified semantic Save
+route for this state rather than retrying the shortcut.
+
+An independent Computer Use edit on an identical copy produced matching saved
+cells and styles across all six sheets. Both native Excel saves rewrote the same
+font/fill metadata; retain such differences from the source and compare their
+appearance and the two executor outputs before attributing them to automation.
+This qualifies the observed edit/recalculation/persistence operation, not complete
+proposal authoring or repeat-speed parity. Freeze and batch both proven procedures
+before timing repeats, with file QA and recovery included in the boundary.
+
 PowerPoint: use existing placeholders/objects, preserve chart data and embedded workbook relationships, inspect every affected slide, save and reopen, then export and inspect the PDF. Compare slide count, text, numeric consistency, image crops, native editability and layout. Do not replace editable charts with images or drop slides to meet a time target.
 
 Observed Computer Use baseline: selecting Blank Presentation opened a one-slide
