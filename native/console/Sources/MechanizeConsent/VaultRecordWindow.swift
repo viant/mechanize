@@ -90,6 +90,22 @@ import ConsentCore
             throw error
         }
     }
+    func importFromScy(resourceName: String, origin: String) async -> Bool {
+        guard mode == .create, !saving, protected else { return false }
+        saving = true
+        do {
+            let frame = try await Task.detached {
+                try ScyVaultImport.frame(resourceName: resourceName, origin: origin)
+            }.value
+            saving = false
+            guard protected else { frame.destroy(); return false }
+            await save(frame: frame)
+            return true
+        } catch {
+            saving = false
+            return false
+        }
+    }
     func save(frame: VaultRecordFrame) async {
         guard mode != .delete, !saving, protected, let id = entryID, let generation = guardGeneration else { frame.destroy(); return }
         saving = true
@@ -267,14 +283,35 @@ enum VaultRecordSecretType: String, CaseIterable, Identifiable {
     let mode: VaultRecordWindow.Mode
     @State private var busy = false
     @State private var message = ""
+    @State private var scyImport = false
+    @State private var resourceName = ""
+    @State private var websiteOrigin = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(mode == .delete ? "Delete secret?" : mode == .update ? "Replace secret" : "Create secret").font(.title2)
             if mode == .delete {
                 Text("The selected encrypted record will be permanently deleted.")
             } else {
-                Text(mode == .update ? "Choose the Scy type and enter the complete replacement. Existing values are never revealed." : "Choose a Scy secret type and enter its values.")
-                VaultRecordFields(input:input)
+                if mode == .create {
+                    Toggle("Import encrypted Scy resource", isOn: $scyImport)
+                        .accessibilityIdentifier("mechanize.vault.records.scy.mode")
+                        .onChange(of: scyImport) { _, _ in input.clear() }
+                }
+                if scyImport {
+                    Text("Import a Basic username/password resource from your private .secret directory. Decrypted values stay local and are never displayed.")
+                    TextField("Encrypted filename, for example account.enc", text: $resourceName)
+                        .accessibilityLabel("Encrypted Scy filename")
+                        .accessibilityIdentifier("mechanize.vault.records.scy.filename")
+                    TextField("https://login.example.test", text: $websiteOrigin)
+                        .accessibilityLabel("Website HTTPS origin")
+                        .accessibilityIdentifier("mechanize.vault.records.scy.origin")
+                    Text("Uses local scy with blowfish://default. The file must be owner-only. An existing record for this origin is never silently overwritten.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                } else {
+                    Text(mode == .update ? "Choose the Scy type and enter the complete replacement. Existing values are never revealed." : "Choose a Scy secret type and enter its values.")
+                    VaultRecordFields(input:input)
+                }
             }
             Text(message).font(.caption).foregroundStyle(.secondary).frame(height:44,alignment:.topLeading)
             HStack {
@@ -282,11 +319,22 @@ enum VaultRecordSecretType: String, CaseIterable, Identifiable {
                 if mode == .delete {
                     Button("Delete secret", role: .destructive) { busy = true; Task { await controller.delete() } }.disabled(busy || !controller.protected)
                 } else {
-                    Button("Encrypt and save") { save() }.disabled(busy || !controller.protected || !input.complete)
+                    Button(scyImport ? "Import and encrypt" : "Encrypt and save") {
+                        if scyImport {
+                            busy = true
+                            let source = resourceName, origin = websiteOrigin
+                            Task {
+                                if !(await controller.importFromScy(resourceName: source, origin: origin)) {
+                                    busy = false
+                                    message = "Import unavailable. Check the private filename, permissions, website origin and local Scy installation. No credential values are shown."
+                                }
+                            }
+                        } else { save() }
+                    }.disabled(busy || !controller.protected || (scyImport ? resourceName.isEmpty || VaultOrigin.canonical(websiteOrigin) != websiteOrigin : !input.complete))
                 }
             }
         }.padding(24).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).disabled(busy)
-            .onDisappear { input.clear() }
+            .onDisappear { input.clear(); resourceName = ""; websiteOrigin = "" }
     }
     private func save() {
         guard !busy, controller.protected else { input.clear(); return }

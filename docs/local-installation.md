@@ -329,12 +329,24 @@ without recursively rewriting files, then reopen the console to obtain a fresh
 guard check. Do not delete guard markers or treat unknown mutation/protection
 state as a permissions problem; those states require their recovery protocol.
 
-An empty ready Vault is not a qualified password-login route. Native legacy
-credential import selects an existing Vault entry; it is not a general importer
-for arbitrary encrypted resource files. Enter a matching website credential
-through the protected native interface before testing delivery at its exact HTTPS
-origin. OAuth clients and SDK resources are not interchangeable with website
-username/password records.
+An empty ready Vault is not a qualified password-login route. For an authorized
+existing Basic resource, use Vault → Create secret → Import encrypted Scy resource.
+Supply its basename under `~/.secret` and the exact website HTTPS origin, then
+choose Import and encrypt. The native panel runs the locally installed Scy CLI
+with `blowfish://default`, keeps decrypted output in bounded memory, and uses the
+existing protected one-shot record write. It does not pass secrets through MCP,
+public typing tools, command arguments or logs. The directory must be `0700` and
+the source file `0600`, owned by the login user; symlinks, hard links, oversized
+sources and conflicting source endpoints are refused. The CLI must be an owned
+or root-owned, non-shared-writable executable at `/usr/local/bin/scy` or
+`/opt/homebrew/bin/scy` (resolved symlinks are checked).
+
+This importer creates a Basic record keyed by the exact origin; it never silently
+overwrites an existing key. An uncertain save still requires inventory/outcome
+inspection before another attempt. Native legacy credential import remains a
+separate path for an existing Vault entry. OAuth clients and SDK resources are
+not interchangeable with website username/password records. No successful import
+alone establishes login success or authority to submit anything at the website.
 
 The certificate-signed unified development updater can preserve an already
 configured `scy-local-v1` Vault with `helper-v1` protection. It checks that the

@@ -17,3 +17,12 @@ authenticated session and continue independent work while that requirement remai
 Do not configure a new custody provider, migrate keys, import credentials or widen
 access merely to make a qualification test pass. Use the user's authorized local
 setup path, and keep any credential entry in that private interface.
+
+When the user authorizes an existing encrypted Scy Basic resource and the native
+panel supports it, use Vault → Create secret → Import encrypted Scy resource.
+Enter only the source basename and verified exact HTTPS origin, then import
+through the protected native transaction. The local CLI decrypts directly into
+the one-shot encrypted-record flow; never reveal its output in chat, public input
+tools or logs. Require a private owned source and the supported local cipher.
+Reject OAuth/SDK resources as website passwords. Preserve failed/uncertain writes
+and inspect before retrying; an import does not prove successful sign-in.
