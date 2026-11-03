@@ -142,7 +142,7 @@ preserved, chart and embedded workbook bytes matched, all 66 raster images
 decoded, and the reopened deck hash stayed unchanged. All 19 rendered PDF pages
 matched the earlier independently reviewed native export pixel for pixel.
 
-The export still required the original-postcondition reconciliation: its initial
+That export required the original-postcondition reconciliation: its initial
 read returned an unavailable outcome before asynchronous export finished. Resume
 skipped the confirmed export; PDF hash and mtime stayed unchanged. This is a
 successful native edit/persistence case with recovery, not first-attempt export
@@ -150,6 +150,16 @@ reliability, complete deck authoring, or a timed comparison. Investigate the
 underlying read failure before changing retry policy. Physical Export-sheet titles
 need not be AXWindow titles; after scoped observation fails, use a fresh exact
 physical-window capture instead of guessing another accessibility title.
+
+A following diagnostic isolated `rootUnavailable` during the export transition.
+The bounded native postcondition wait now settles this read-only error while
+retaining the original selector/process and stopping on permission, ownership,
+transport and stale-process failures. One installed-runtime retest completed its
+19-page export and original postcondition in a single 3.56-second call, with zero
+unresolved effects and no reconciliation or input replay. All rendered pages
+matched the reviewed native PDF exactly. This single retest is evidence for the
+fix, not a repeat-reliability or end-to-end speed claim. Preserve the original
+postcondition and timeout; never replace this bounded read wait with export retries.
 
 Word: preserve paragraph styles, pagination, comments/revisions and fields required by the task. Outlook: draft, attachment, send and Sent verification are different outcomes; no sending unless explicitly authorized.
 
