@@ -53,3 +53,14 @@ Batch only proven actions against current scopes. Stop at new windows/dialogs,
 ambiguous selections, uncertain effects and required review boundaries. Measure the
 batch's completed result, not its submission latency. Do not reduce verification
 or replay uncertain saves, exports or sends to improve benchmark numbers.
+
+One observed macOS/PowerPoint single-slide PDF comparison used three warm runs
+per route, prepared orchestration, separate output files and identical rendered
+QA. Median wall times including model/tool/recovery overhead were 23.1 seconds
+for Computer Use, 23.2 for Endly batches and 24.6 for individual Mechanize actions.
+All nine PDFs matched. Computer Use needed no recovery; every Mechanize export
+required original-postcondition reconciliation, with no action replay and zero
+unresolved effects in those measured runs. These sequential, small-sample results
+do not establish a general speed winner or full-deck reliability. Large cached
+chat context dominated session token counts; retain cached/noncached breakdowns
+and do not interpret these counters as billing estimates.
