@@ -93,7 +93,7 @@ type SourceInput struct {
 	Format string `json:"format,omitempty"`
 }
 type RunInput struct {
-	WaitMs          int                    `json:"waitMs,omitempty" description:"Observe completion for 0..5000 milliseconds; timeout does not cancel or repeat execution. Default 0 returns immediately."`
+	WaitMs          int                    `json:"waitMs,omitempty" description:"Observe completion for 0..30000 milliseconds; timeout does not cancel or repeat execution. Default 0 returns immediately."`
 	OutputBindings  []string               `json:"outputBindings,omitempty" description:"Up to 16 explicit element.read or browser.openOrigin binding names to include after successful completion."`
 	GrantID         string                 `json:"grantId,omitempty"`
 	Purpose         string                 `json:"purpose,omitempty"`

@@ -65,7 +65,10 @@ until the server reports the relevant authorization and the result is verified.
    execution step or `mechanize_script_run` for a typed script. Supply a
    unique `clientRequestId` for each intended run. For short operations, set
    `waitMs: 5000` to receive completion in this call when ready (default `0`
-   returns immediately). For a declared read binding such as `let answer = ...read(...)`,
+   returns immediately). For a known longer batch, use up to `waitMs: 30000`
+   when the live tool schema supports it. The wait is clipped to the caller deadline
+   with time reserved for the reply; inspect the returned status before polling.
+   For a declared read binding such as `let answer = ...read(...)`,
    add `outputBindings: ["answer"]`; successful completion includes bounded safe
    values in `outputs.outputs` and explicit withheld reasons in `outputs.unavailable`.
    Only named `element.read` and `browser.openOrigin` bindings are exportable.

@@ -28,8 +28,8 @@ func (in *RunInput) UnmarshalJSON(raw []byte) error {
 }
 
 func validateRunCompletion(in *RunInput, plan *model.Plan) error {
-	if in.WaitMs < 0 || in.WaitMs > 5000 {
-		return errors.New("waitMs must be between 0 and 5000")
+	if in.WaitMs < 0 || in.WaitMs > 30000 {
+		return errors.New("waitMs must be between 0 and 30000")
 	}
 	if len(in.OutputBindings) == 0 {
 		return nil

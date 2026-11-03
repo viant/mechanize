@@ -68,5 +68,6 @@ only for an observed human-only challenge, missing permission, or a required
 capability that is unavailable through all advertised routes.
 
 For short run calls, use `waitMs: 5000` and named `outputBindings` for reads.
-Inspect returned completion/outputs before polling again. If still running,
+For known longer batches, use up to `waitMs: 30000` when advertised by the live
+tool schema. Inspect returned completion/outputs before polling again. If still running,
 follow that same operation rather than starting another action.

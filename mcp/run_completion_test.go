@@ -125,11 +125,11 @@ func TestRunCompletionTimeoutAndRequestCancellationDoNotCancelExecution(t *testi
 			args := completionArgs(session, mode, 20)
 			if mode == "requestDeadlineReserve" {
 				callCtx, cancel = context.WithTimeout(ctx, 600*time.Millisecond)
-				args["waitMs"] = 5000
+				args["waitMs"] = 30000
 			}
 			if mode == "requestCanceled" {
 				callCtx, cancel = context.WithCancel(ctx)
-				args["waitMs"] = 5000
+				args["waitMs"] = 30000
 				go func() { <-entered; cancel() }()
 			}
 			defer cancel()
@@ -146,7 +146,7 @@ func TestRunCompletionTimeoutAndRequestCancellationDoNotCancelExecution(t *testi
 				}
 			}
 			close(release)
-			args["waitMs"] = 5000
+			args["waitMs"] = 30000
 			completed := completionOperation(t, controllerCall(t, d, ctx, id, "mechanize_step_run", args).StructuredContent)
 			if completed.ExecutionStatus != "succeeded" || completed.Outputs.Outputs["answer"].String != "later" || actions.Load() != 1 || original.ID != "" && original.ID != completed.ID {
 				t.Fatal("observational cancellation replayed or cancelled action")
@@ -160,7 +160,7 @@ func TestRunCompletionRejectsInvalidOutputsAndForeignOwnershipBeforeExecution(t 
 		actions.Add(1)
 		return automation.StepResult{}, nil
 	}, automation.Options{})
-	for _, patch := range []map[string]any{{"waitMs": -1}, {"waitMs": 5001}, {"waitMs": 1.5}, {"outputBindings": []string{"missing"}}, {"outputBindings": []string{"answer", "answer"}}, {"outputBindings": []string{"binding.answer"}}, {"extraOutput": "all"}} {
+	for _, patch := range []map[string]any{{"waitMs": -1}, {"waitMs": 30001}, {"waitMs": 1.5}, {"outputBindings": []string{"missing"}}, {"outputBindings": []string{"answer", "answer"}}, {"outputBindings": []string{"binding.answer"}}, {"extraOutput": "all"}} {
 		args := completionArgs(session, "invalid", 1)
 		for k, v := range patch {
 			args[k] = v
@@ -230,7 +230,7 @@ func TestRunCompletionExplicitCancelRemainsCancelledWithoutOutputs(t *testing.T)
 	started := completionOperation(t, controllerCall(t, d, ctx, id, "mechanize_step_run", args).StructuredContent)
 	<-entered
 	controllerCall(t, d, ctx, id, "mechanize_operation_cancel", map[string]any{"sessionId": session, "operationId": started.ID})
-	args["waitMs"] = 5000
+	args["waitMs"] = 30000
 	final := completionOperation(t, controllerCall(t, d, ctx, id, "mechanize_step_run", args).StructuredContent)
 	if final.ID != started.ID || final.ExecutionStatus != "cancelled" || final.Outputs != nil || actions.Load() != 1 {
 		t.Fatalf("cancelled request changed: %+v calls%d", final, actions.Load())
@@ -262,7 +262,7 @@ func TestRunCompletionWaitIncludesObjectiveButDoesNotInventCompletionAtBudget(t 
 	}
 	<-entered
 	close(release)
-	args["waitMs"] = 5000
+	args["waitMs"] = 30000
 	final := completionOperation(t, controllerCall(t, d, ctx, id, "mechanize_step_run", args).StructuredContent)
 	if final.ID != pending.ID || final.BusinessStatus != "failed" {
 		t.Fatal("explicit objective did not complete independently")
@@ -304,5 +304,28 @@ func TestRunCompletionOptionsRemainClosedAndAdvertised(t *testing.T) {
 		if !found {
 			t.Fatal("missing run tool", name)
 		}
+	}
+}
+
+// A batch that exceeds the former five-second cap can return its terminal
+// receipt without external status polling. Changing the observation budget
+// must not change execution identity or execute the batch twice.
+func TestRunCompletionWaitBeyondFiveSeconds(t *testing.T) {
+	var actions atomic.Int32
+	d, id, ctx, session := completionFixture(t, func(context.Context, auth.Principal, model.Step, map[string]model.Value) (automation.StepResult, error) {
+		actions.Add(1)
+		time.Sleep(5100 * time.Millisecond)
+		v := model.Value{Kind: model.StringValue, String: "completed batch"}
+		return automation.StepResult{Value: &v}, nil
+	}, automation.Options{})
+	args := completionArgs(session, "long-batch", 30000)
+	op := completionOperation(t, controllerCall(t, d, ctx, id, "mechanize_script_run", args).StructuredContent)
+	if op.ExecutionStatus != "succeeded" || op.Outputs == nil || op.Outputs.Outputs["answer"].String != "completed batch" {
+		t.Fatalf("long wait did not return completed output: %+v", op)
+	}
+	args["waitMs"] = 5000
+	same := completionOperation(t, controllerCall(t, d, ctx, id, "mechanize_script_run", args).StructuredContent)
+	if same.ID != op.ID || same.RunID != op.RunID || actions.Load() != 1 {
+		t.Fatal("changed wait budget repeated execution")
 	}
 }
