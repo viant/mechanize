@@ -288,7 +288,9 @@ struct NativeForegroundTarget {
    return try semanticRecipient.focused(budget)
   }
   guard let windowID else{return true};let rows=try Self.ownedRows(pid:pid,birth:birth,bundle:bundle,budget:budget)
-  return Self.physicalWindowReady(rows,pid:pid,windowID:windowID,pointerDelivery:pointerDelivery)
+  if Self.physicalWindowReady(rows,pid:pid,windowID:windowID,pointerDelivery:pointerDelivery){return true}
+  guard !pointerDelivery else{return false}
+  return focusedSessionWindowMatches(rows,pid:pid,uid:getuid(),birth:birth,bundle:bundle,windowID:windowID,focused:WindowSessionKeyRuntime.system.focusedWindow?(pid))
  }
  func ready(_ budget:Budget)throws->Bool {
   _=try qualifiedForeground(ForegroundIdentity(pid:pid,uid:getuid(),birth:birth,bundle:bundle,active:true),budget)

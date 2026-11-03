@@ -10,6 +10,10 @@ struct SessionKeyWindow {
     let visible: Bool
     let alpha: Double
     let bounds: CGRect
+    let title: String?
+    init(id: UInt32, pid: pid_t, layer: Int, visible: Bool, alpha: Double, bounds: CGRect, title: String? = nil) {
+        self.id=id; self.pid=pid; self.layer=layer; self.visible=visible; self.alpha=alpha; self.bounds=bounds; self.title=title
+    }
 }
 struct SessionKeyForegroundSample {
     let pid: pid_t
@@ -24,6 +28,7 @@ struct WindowSessionKeyRuntime {
     let secure: () -> Bool
     var refresh: () throws -> Void = {}
     var foregroundSample: (() -> SessionKeyForegroundSample?)? = nil
+    var focusedWindow: ((pid_t) -> FocusedSessionWindow?)? = nil
     static let system = WindowSessionKeyRuntime(process: { pid in
         guard let uid = applicationLoginUID(pid), let birth = applicationProcessStartToken(pid), let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { return nil }
         return (uid, birth, bundle)
@@ -36,7 +41,7 @@ struct WindowSessionKeyRuntime {
                   let alpha = row[kCGWindowAlpha as String] as? Double, let rawBounds = row[kCGWindowBounds as String], CFGetTypeID(rawBounds as CFTypeRef) == CFDictionaryGetTypeID() else { return nil }
             var bounds = CGRect.zero
             guard CGRectMakeWithDictionaryRepresentation(rawBounds as! CFDictionary, &bounds) else { return nil }
-            result.append(SessionKeyWindow(id: id, pid: pid, layer: layer, visible: visible, alpha: alpha, bounds: bounds))
+            result.append(SessionKeyWindow(id: id, pid: pid, layer: layer, visible: visible, alpha: alpha, bounds: bounds, title: row[kCGWindowName as String] as? String))
         }
         return result
     }, session: sessionKeyReleaseAllowed, secure: IsSecureEventInputEnabled, refresh: {
@@ -47,7 +52,7 @@ struct WindowSessionKeyRuntime {
     }, foregroundSample: {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         return SessionKeyForegroundSample(pid: app.processIdentifier, bundle: app.bundleIdentifier, active: app.isActive)
-    })
+    }, focusedWindow: readFocusedSessionWindow)
 }
 func supportedSessionInputWindowLayer(_ layer: Int) -> Bool {
     [NSWindow.Level.normal.rawValue, NSWindow.Level.floating.rawValue, NSWindow.Level.modalPanel.rawValue].contains(layer)
@@ -76,19 +81,28 @@ private func qualifySessionWindow(pid: pid_t, uid: uid_t, birth: String, bundle:
     if requireForeground { try requireSessionKeyForeground(pid: pid, phase: "initial", runtime: runtime) }
     guard let windows = runtime.windows() else { throw NativeFailure("windowKeyboardUnqualified", "Visible window inventory is unavailable or contains incomplete metadata") }
     guard windows.count <= 1000 else { throw NativeFailure("windowKeyboardUnqualified", "Visible window inventory exceeds the bounded inspection limit") }
-    // The highest owned visible window governs session-key routing. Frame capture
-    // selects its exact requested window; pointer posting independently proves the
-    // actual mouse-down recipient, including overlays and modal interception.
+    // Stacking remains the default. A non-top keyboard window additionally needs
+    // a fresh exact AX-focus/physical-window match, repeated below before return.
+    // Pointer posting independently proves its actual mouse-down recipient.
     let owned = windows.filter { $0.pid == pid && $0.visible && $0.alpha != 0 }
     let requestedLayer = windows.first(where: { $0.id == windowID })?.layer ?? -1
     let topID = owned.first?.id ?? 0
-    let candidate = requireForeground ? owned.first : owned.first(where: { $0.id == windowID })
+    var candidate = requireForeground ? owned.first : owned.first(where: { $0.id == windowID })
+    let needsFocusedProof = requireForeground && candidate?.id != windowID
+    if needsFocusedProof && focusedSessionWindowMatches(windows, pid:pid, uid:uid, birth:birth, bundle:bundle, windowID:windowID, focused:runtime.focusedWindow?(pid)) {
+        candidate = owned.first(where: { $0.id == windowID })
+    }
     guard owned.allSatisfy({ $0.alpha.isFinite && $0.alpha > 0 && $0.alpha <= 1 }), let first = candidate, first.id == windowID, supportedSessionInputWindowLayer(first.layer), windows.filter({ $0.id == windowID }).count == 1,
           first.bounds.minX.isFinite, first.bounds.minY.isFinite, first.bounds.maxX.isFinite, first.bounds.maxY.isFinite,
           first.bounds.width > 0, first.bounds.height > 0 else { throw NativeFailure("windowKeyboardUnqualified", "Requested window is not a supported top owned window (requestedLayer=\(requestedLayer), topWindowId=\(topID))") }
     try runtime.refresh(); try check()
     guard let after = runtime.process(pid), after.0 == uid, after.1 == birth, after.2 == bundle else { throw NativeFailure("windowKeyboardUnqualified", "Window keyboard qualification changed") }
     if requireForeground { try requireSessionKeyForeground(pid: pid, phase: "final", runtime: runtime) }
+    if needsFocusedProof {
+        guard let fresh=runtime.windows(), focusedSessionWindowMatches(fresh,pid:pid,uid:uid,birth:birth,bundle:bundle,windowID:windowID,focused:runtime.focusedWindow?(pid)) else {
+            throw NativeFailure("windowKeyboardUnqualified", "Exact focused window changed before keyboard delivery")
+        }
+    }
     guard runtime.session(), !runtime.secure() else { throw NativeFailure("windowKeyboardUnqualified", "Window keyboard qualification changed") }
     try check()
 }
