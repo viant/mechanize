@@ -31,4 +31,16 @@ final class ForegroundProofTests:XCTestCase {
   XCTAssertThrowsError(try qualifiedForeground(identity(),Budget(milliseconds:1000),runtime:runtime))
   XCTAssertEqual(currentReads,0)
  }
+ func testConflictReportsIndependentPIDsWithoutApplicationContent() {
+  let current=ForegroundIdentity(pid:42,uid:getuid(),birth:"private-birth",bundle:"private.bundle",active:true)
+  let runtime=ForegroundProofRuntime(refresh:{_ in},current:{current},corroborate:{43})
+  for expected in [Optional(identity(pid:44)), nil] {
+   XCTAssertThrowsError(try qualifiedForeground(expected,Budget(milliseconds:1000),runtime:runtime)) { error in
+    guard let failure=error as? NativeFailure else {return XCTFail("Expected native failure")}
+    XCTAssertEqual(failure.code,"foregroundCorroborationConflict")
+    XCTAssertTrue(failure.message.contains("workspacePID=42, systemAXPID=43, expectedPID=\(expected == nil ? "none" : "44")"))
+    XCTAssertFalse(failure.message.contains("private"))
+   }
+  }
+ }
 }

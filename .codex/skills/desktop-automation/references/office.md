@@ -18,6 +18,15 @@ Rediscover the dialog identifiers; do not copy historical transient IDs.
 
 PowerPoint: use existing placeholders/objects, preserve chart data and embedded workbook relationships, inspect every affected slide, save and reopen, then export and inspect the PDF. Compare slide count, text, numeric consistency, image crops, native editability and layout. Do not replace editable charts with images or drop slides to meet a time target.
 
+Observed Computer Use baseline: selecting Blank Presentation opened a one-slide
+deck. With the slide editor focused, Tab selected the title placeholder; typing,
+Escape, then Tab selected the subtitle. Both texts persisted after local Save,
+Close and Open. Read-only PPTX inspection confirmed two native text shapes, and
+the reopened screenshot showed no clipping. This is a small creation/persistence
+check, not an export, complex-layout or timed-repeat qualification. The editor's
+AX layout area reported disabled despite the supported keyboard route working;
+do not equate that attribute with an application-wide editing prohibition.
+
 Word: preserve paragraph styles, pagination, comments/revisions and fields required by the task. Outlook: draft, attachment, send and Sent verification are different outcomes; no sending unless explicitly authorized.
 
 For Mechanize fallback, retrieve `skill://mechanize-microsoft-office/SKILL.md` and only its relevant case. An offline QA reader must not silently repair or rewrite files claimed to be native-authored. Declare a hybrid route if local authoring is part of the work.

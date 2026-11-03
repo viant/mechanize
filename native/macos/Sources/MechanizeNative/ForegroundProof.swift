@@ -56,7 +56,13 @@ func qualifiedForeground(_ expected:ForegroundIdentity?,_ budget:Budget,runtime:
     guard let current=runtime.current() else {throw NativeFailure("foregroundUnavailable","Public NSWorkspace foreground unavailable")}
     guard current.active else {throw NativeFailure("foregroundNotActive","NSWorkspace frontmost application is not active")}
     guard current.uid == getuid(),let birth=current.birth,!birth.isEmpty,let bundle=current.bundle,bundle != "com.apple.loginwindow" else {throw NativeFailure("foregroundOwnerUnqualified","Active foreground UID/kernel identity unavailable or outside current user")}
-    if let systemPID=runtime.corroborate(),systemPID != current.pid {throw NativeFailure("foregroundCorroborationConflict","Available system AX foreground disagrees with independent public application source")}
+    if let systemPID=runtime.corroborate(),systemPID != current.pid {
+        // Preserve the rejection, but identify which independent readers differ.
+        // Numeric process IDs are sufficient; do not include window titles or
+        // application content in a failure that may reach the public MCP client.
+        let expectedPID = expected.map { String($0.pid) } ?? "none"
+        throw NativeFailure("foregroundCorroborationConflict","Available system AX foreground disagrees with independent public application source (workspacePID=\(current.pid), systemAXPID=\(systemPID), expectedPID=\(expectedPID))")
+    }
     if let expected {
         guard current.pid == expected.pid else {throw NativeFailure("foregroundChanged","Refreshed public foreground differs from exact target PID")}
         guard current.uid == expected.uid,current.birth == expected.birth,current.bundle == expected.bundle else {throw NativeFailure("staleReference","Foreground UID/kernel birth/bundle changed")}
