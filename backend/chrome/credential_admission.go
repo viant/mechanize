@@ -304,7 +304,7 @@ func (g *Gateway) AdmitCredentialControl(ctx context.Context, p auth.Principal, 
 	requestID := newPrivateID()
 	b.mu.Lock()
 	diagnostics := c.privateInspectionDiagnosticVersion == 1
-	if c.workerBuild >= 22 && c.workerBuild <= 36 {
+	if c.workerBuild >= 22 && c.workerBuild <= maxQualifiedWorkerBuild {
 		a.PrivateRecipientID = newPrivateID()
 	}
 	b.mu.Unlock()

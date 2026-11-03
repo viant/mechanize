@@ -24,6 +24,9 @@ import (
 	_ "github.com/viant/scy/kms/blowfish" // Register operator-selected encrypted env-key enrollment.
 )
 
+// Increment only alongside reviewed worker changes and reconnect qualification tests.
+const maxQualifiedWorkerBuild = 37
+
 type Enrollment struct {
 	AllWebsites        bool           `json:"allWebsites,omitempty"`
 	TrustScope         string         `json:"trustScope,omitempty"`
@@ -507,7 +510,7 @@ func (b *Broker) serve(conn net.Conn) {
 	c.visibilityUnknownVersion = hello.VisibilityUnknownVersion
 	c.extensionVersion = reportedExtensionVersion(hello.ExtensionVersion)
 	c.workerBuild = 0
-	if hello.WorkerBuild >= 20 && hello.WorkerBuild <= 36 {
+	if hello.WorkerBuild >= 20 && hello.WorkerBuild <= maxQualifiedWorkerBuild {
 		c.workerBuild = hello.WorkerBuild
 	}
 	c.controllerSessions = make(map[string]*ControllerSession)
@@ -520,7 +523,7 @@ func (b *Broker) serve(conn net.Conn) {
 	c.extensionMaintenancePending = nil
 	c.executorChallenge = newID()
 	c.consentReconnect = nil
-	if hello.WorkerBuild == 32 || hello.WorkerBuild == 33 || hello.WorkerBuild == 34 || hello.WorkerBuild == 35 || hello.WorkerBuild == 36 {
+	if hello.WorkerBuild >= 32 && hello.WorkerBuild <= maxQualifiedWorkerBuild {
 		c.consentReconnect = newConsentReconnectProof(c, conn, b.epoch, hello.LastGrant)
 	}
 	b.mu.Unlock()
