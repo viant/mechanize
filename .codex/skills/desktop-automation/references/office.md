@@ -26,6 +26,13 @@ save/recalculation qualification from the alert alone. Use a declared, enrolled
 outcome contract for future mutation trials; an uncontracted modal transition can
 leave a completed edit impossible to reconcile automatically.
 
+Follow-up inspection of that disposable copy confirmed the input changed from
+2500 to 5000 and the formula result from 100000 to 200000. Computer Use dismissed
+the informational confirmation, closed Find & Replace, saved and reopened the
+copy. Read-only saved-file inspection confirmed the formula and numeric cached
+result. Attribute this to a hybrid recovery, not a successful Mechanize durable
+run: the original unknown effect remained preserved and was never replayed.
+
 PowerPoint: use existing placeholders/objects, preserve chart data and embedded workbook relationships, inspect every affected slide, save and reopen, then export and inspect the PDF. Compare slide count, text, numeric consistency, image crops, native editability and layout. Do not replace editable charts with images or drop slides to meet a time target.
 
 Observed Computer Use baseline: selecting Blank Presentation opened a one-slide
