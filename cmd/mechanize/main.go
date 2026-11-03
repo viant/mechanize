@@ -38,6 +38,7 @@ func run() error {
 	flags.SetOutput(os.Stderr)
 	configPath := flags.String("config", "", "private JSON configuration path")
 	listen := flags.String("listen", "", "authenticated loopback HTTP address; empty selects stdio")
+	diagnostics := flags.String("gops-dir", os.Getenv("MECHANIZE_GOPS_DIR"), "opt-in private directory for local gops diagnostics; disabled when empty")
 	helper := flags.String("helper", "", "native helper absolute path for nonprompting doctor")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -78,6 +79,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	closeDiagnostics, err := startDiagnostics(*diagnostics)
+	if err != nil {
+		return err
+	}
+	defer closeDiagnostics()
 	effectiveListen, err := host.LoadRuntimeListen(cfg.StorageRoot, *listen)
 	if err != nil {
 		return err

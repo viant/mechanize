@@ -35,6 +35,7 @@ func TestEndlyDatlyIntentOutcomeAndRestartBarrier(t *testing.T) {
 			var calls atomic.Int32
 			dispatch := func(ctx context.Context, p auth.Principal, step model.Step, values map[string]model.Value) (integration.StepResult, error) {
 				calls.Add(1)
+				integration.RecordProcessVerification(ctx, 83*time.Millisecond)
 				captured = ctx
 				metadata, ok := integration.ExecutionFromContext(ctx)
 				if !ok {
@@ -126,6 +127,9 @@ func TestEndlyDatlyIntentOutcomeAndRestartBarrier(t *testing.T) {
 					t.Fatal("action timing was not persisted")
 				}
 				recordedTiming = logged.Timing
+				if recordedTiming.ProcessVerification.Checks != 1 || recordedTiming.ProcessVerification.Milliseconds != 83 {
+					t.Fatal("process timing was not persisted", recordedTiming.ProcessVerification)
+				}
 				start, se := time.Parse(time.RFC3339Nano, recordedTiming.StartedAt)
 				end, ee := time.Parse(time.RFC3339Nano, recordedTiming.FinishedAt)
 				if se != nil || ee != nil || end.Before(start) || recordedTiming.TotalMs < recordedTiming.PreparationMs+recordedTiming.ExecutionMs+recordedTiming.VerificationMs {

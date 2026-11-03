@@ -22,10 +22,12 @@ import (
 // cannot call this executor and database retries cannot replay it.
 func (b *Builder) Execute(ctx context.Context, p auth.Principal, step model.Step, values map[string]model.Value) (returned integration.StepResult, returnErr error) {
 	started := time.Now()
+	ctx, processTiming := integration.WithProcessTiming(ctx)
 	timing := &integration.StepTiming{StartedAt: started.UTC().Format(time.RFC3339Nano)}
 	finishTiming := func() {
 		timing.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		timing.TotalMs = time.Since(started).Milliseconds()
+		timing.ProcessVerification = processTiming()
 	}
 	defer func() {
 		if returned.Timing == nil {

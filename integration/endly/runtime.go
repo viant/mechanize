@@ -34,12 +34,13 @@ type StepResult struct {
 // Total ends before the outcome persistence transaction, which stores this
 // record alongside the existing immutable attempt/event correlation.
 type StepTiming struct {
-	StartedAt      string `json:"startedAt"`
-	FinishedAt     string `json:"finishedAt"`
-	PreparationMs  int64  `json:"preparationMs"`
-	ExecutionMs    int64  `json:"executionMs"`
-	VerificationMs int64  `json:"verificationMs"`
-	TotalMs        int64  `json:"totalMs"`
+	ProcessVerification ProcessTiming `json:"processVerification"`
+	StartedAt           string        `json:"startedAt"`
+	FinishedAt          string        `json:"finishedAt"`
+	PreparationMs       int64         `json:"preparationMs"`
+	ExecutionMs         int64         `json:"executionMs"`
+	VerificationMs      int64         `json:"verificationMs"`
+	TotalMs             int64         `json:"totalMs"`
 }
 
 // Execute handles a single action. Durable data operations belong in generated

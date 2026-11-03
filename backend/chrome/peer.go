@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/auth/nativepeer"
+	integration "github.com/viant/mechanize/integration/endly"
 	"github.com/viant/mechanize/session"
 	"net"
 	"sort"
@@ -124,6 +125,7 @@ func (b *Broker) checkChannelProcess(ctx context.Context, c *channel, revokeInva
 	defer cancel()
 	started := time.Now()
 	current, err := b.verifyPeer(bounded, unix)
+	integration.RecordProcessVerification(ctx, time.Since(started))
 	if execution, ok := ctx.Value(playwrightPrivacyKey{}).(*playwrightExecution); ok && execution != nil {
 		execution.mu.Lock()
 		execution.verifyCount++

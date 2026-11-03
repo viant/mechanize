@@ -3,6 +3,7 @@ module github.com/viant/mechanize
 go 1.26.0
 
 require (
+	github.com/google/gops v0.3.23
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/mattn/go-sqlite3 v1.14.18
 	github.com/viant/afs v1.30.1-0.20260914155934-90e95d483861

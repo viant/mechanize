@@ -69,3 +69,25 @@ Development packaging is not release qualification. Distributed production build
 still require appropriate Developer ID signing/notarization and installed/live
 acceptance; see
 [Apple's notarization requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
+
+## Local profiling
+
+Diagnostics are disabled by default. For an operator-requested development
+profile, set `MECHANIZE_GOPS_DIR` to a private, owned physical directory or pass
+`-gops-dir /absolute/private/directory` to `mechanize serve`. The broker starts
+[gops](https://github.com/google/gops) on an ephemeral `127.0.0.1` port and removes
+its port registration on normal shutdown. This endpoint has gops' local-process
+access model; do not enable it on a shared host. It is never an MCP capability.
+
+Install the pinned client with `go install github.com/google/gops@v0.3.23`.
+Set `GOPS_CONFIG_DIR` to the same directory for `gops stack PID`, `gops stats PID`
+and `gops pprof-cpu PID`. The CPU command records 30 seconds and starts Go pprof
+when available. Keep raw stack/profile artifacts private and outside the repo.
+Use a diagnostic workload separately from timed comparisons, then repeat the
+same verified workflow without profiling before claiming a speed improvement.
+
+Durable step timing includes `processVerification.checks` and
+`processVerification.milliseconds` for completed full signed-peer probes.
+These counts are step-scoped metadata, not authorization or cached trust.
+Continuity-only checks do not contribute. The total may include overlapping
+checks and should not be subtracted mechanically from wall time.
