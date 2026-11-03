@@ -65,6 +65,13 @@ do not establish a general speed winner or full-deck reliability. Large cached
 chat context dominated session token counts; retain cached/noncached breakdowns
 and do not interpret these counters as billing estimates.
 
+Check large wall-time discrepancies against actual operation timestamps and
+system sleep/session events. An observed 18.8-second UI attempt had a 68-minute
+measurement interval spanning clamshell sleep. Retain the original failure and raw
+counters, classify the environmental interruption, and exclude that interval from
+executor speed/token comparisons. Safe resume after wake is separate recovery
+evidence; it does not turn the interrupted sample into an uninterrupted pass.
+
 Put a token measurement boundary in its own completed tool call before starting
 long-running work. Verify timestamp alignment with the provider/session usage
 event; a distant event makes that token comparison unavailable. Keep interrupted

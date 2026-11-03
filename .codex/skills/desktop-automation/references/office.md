@@ -16,6 +16,17 @@ confirmed by a fresh screenshot showing the selected cell and formula bar. This
 qualifies navigation only, not arbitrary cell editing or whole-workbook reliability.
 Rediscover the dialog identifiers; do not copy historical transient IDs.
 
+A native-control qualification refusal after earlier successful actions can
+reflect loss of the graphical session, rather than a missing app grant. In one
+verified case, the system power log recorded clamshell sleep/display-off at the
+same time as a pending Save lost qualification. After wake, existing trust still
+worked: current state showed no unresolved effects, the original pending Save
+resumed, and independent file QA plus close/reopen checks passed. Preserve the
+original operation and distinguish confirmed undispatched work from uncertain
+input. Refresh session readiness before resuming; keep lock, ownership and consent
+checks intact. Do not infer a runtime defect or request another app approval from
+the broad qualification message alone.
+
 An observed executor handoff left NSWorkspace reporting the controller app while
 system AX reported Excel. Explicit Mechanize activation established agreement,
 after which the paused menu action safely resumed with no unresolved effects.
