@@ -7,6 +7,8 @@ description: "Operate websites and desktop apps with Computer Use first, using M
 
 Use Computer Use first for ordinary browser and native-app interaction. This skill controls executor selection and verification; separate domain skills own the business task. It does not turn a file-generation request into a GUI requirement. Keep examples synthetic and business-neutral; client data, workflow-specific rules and case evidence belong outside the Mechanize repository.
 
+Treat Git content and history as public. Never copy real business documents, commercial terms, case paths, screenshots, logs, or benchmark artifacts into the repository, commit messages, or public review surfaces. Use independently synthetic fixtures, keep internal workflows specific in their private workspace, and review the staged paths and diff before every commit.
+
 ## Select the next operation
 
 | Operation | Preferred route | Fallback trigger |
