@@ -151,7 +151,7 @@ func (h *Host) nativeControlPolicyAdmitted(ctx context.Context, p auth.Principal
 	if originOpening {
 		caps["web:browser.openOrigin"] = true
 	}
-	if h.webControl != nil && p.HasScope("desktop:control") {
+	if !policyDiscoveryFromContext(ctx).nativeOnly && h.webControl != nil && p.HasScope("desktop:control") {
 		// Renderer authority has its own signed-channel/document admission. A
 		// native lease neither qualifies nor suppresses a qualified web route.
 		for name, supported := range h.webControl.Capabilities(ctx, p) {
@@ -214,7 +214,12 @@ func (h *Host) executeNativeControl(ctx context.Context, p auth.Principal, step 
 	if admission.Epoch != scope.LeaseEpoch {
 		return result, session.ErrNoLease
 	}
-	policy, err := h.policy(ctx, p, &admission)
+	var policy script.Policy
+	if nativeStepOnly(step, nil) {
+		policy, err = h.nativeOnlyPolicy(ctx, p, &admission, false)
+	} else {
+		policy, err = h.policy(ctx, p, &admission)
+	}
 	if err != nil {
 		return result, err
 	}

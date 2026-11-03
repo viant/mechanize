@@ -374,7 +374,7 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 	if err != nil {
 		return fail(err)
 	}
-	h.Server, err = gateway.New(gateway.Dependencies{ExtensionReload: h.ExtensionReload, ExtensionReloadStatus: h.ExtensionReloadStatus, LocalSkills: h.localSkills, CredentialPrepare: h.CredentialPrepare, CredentialRecover: h.CredentialRecover, CredentialResumeManual: h.CredentialResumeManual, CredentialApply: h.CredentialApply, CredentialSubmit: h.CredentialSubmit, CredentialStatus: h.CredentialStatus, BrowserActivateTab: h.BrowserActivateTab, BrowserTabLocationMatches: h.BrowserTabLocationMatches, BrowserOpenOrigin: h.BrowserOpenOrigin, BrowserLocationMatches: h.BrowserLocationMatches, BrowserTabs: h.BrowserTabs, BrowserStatus: h.BrowserStatus, StateStopBoundary: h.durable.StopBoundary, EffectReconcile: h.durable.ReconcileEffect, Recovery: h.recovery, Scenarios: h.scenarios, CaptureWindow: h.CaptureWindow, CaptureWindows: h.CaptureWindows, CaptureWindowFrame: h.CaptureWindowFrame, StateResume: h.ResumeRun, PermissionRequest: h.consent.Request, PermissionStatus: h.consent.RequestStatus, Recording: h.recording, Runtime: h.Runtime, Observe: h.Observe, ObserveNativeRoot: h.ObserveNativeRoot, ObserveNativeWindow: h.ObserveNativeWindow, ObservationPolicy: h.ObservationPolicy, Policy: h.Policy, StateGet: h.durable.StateGet, StatePatch: h.durable.StatePatch, StatePause: h.PauseRun})
+	h.Server, err = gateway.New(gateway.Dependencies{ExtensionReload: h.ExtensionReload, ExtensionReloadStatus: h.ExtensionReloadStatus, LocalSkills: h.localSkills, CredentialPrepare: h.CredentialPrepare, CredentialRecover: h.CredentialRecover, CredentialResumeManual: h.CredentialResumeManual, CredentialApply: h.CredentialApply, CredentialSubmit: h.CredentialSubmit, CredentialStatus: h.CredentialStatus, BrowserActivateTab: h.BrowserActivateTab, BrowserTabLocationMatches: h.BrowserTabLocationMatches, BrowserOpenOrigin: h.BrowserOpenOrigin, BrowserLocationMatches: h.BrowserLocationMatches, BrowserTabs: h.BrowserTabs, BrowserStatus: h.BrowserStatus, StateStopBoundary: h.durable.StopBoundary, EffectReconcile: h.durable.ReconcileEffect, Recovery: h.recovery, Scenarios: h.scenarios, CaptureWindow: h.CaptureWindow, CaptureWindows: h.CaptureWindows, CaptureWindowFrame: h.CaptureWindowFrame, StateResume: h.ResumeRun, PermissionRequest: h.consent.Request, PermissionStatus: h.consent.RequestStatus, Recording: h.recording, Runtime: h.Runtime, Observe: h.Observe, ObserveNativeRoot: h.ObserveNativeRoot, ObserveNativeWindow: h.ObserveNativeWindow, ObservationPolicy: h.ObservationPolicy, Policy: h.Policy, PlanPolicy: h.PlanPolicy, StateGet: h.durable.StateGet, StatePatch: h.durable.StatePatch, StatePause: h.PauseRun})
 	if err != nil {
 		return fail(err)
 	}
@@ -409,6 +409,7 @@ func (h *Host) Policy(ctx context.Context, p auth.Principal) (script.Policy, err
 
 // policy reuses only an admission obtained by this exact synchronous native operation.
 func (h *Host) policy(ctx context.Context, p auth.Principal, admission *NativeControlAdmission) (script.Policy, error) {
+	discovery := policyDiscoveryFromContext(ctx)
 	u, err := h.authorize(ctx, p)
 	if err != nil {
 		return script.Policy{}, err
@@ -417,8 +418,10 @@ func (h *Host) policy(ctx context.Context, p auth.Principal, admission *NativeCo
 	for _, v := range u.NativeBundles {
 		allowed[v] = true
 	}
-	for _, v := range u.WebOrigins {
-		allowed[v] = true
+	if !discovery.nativeOnly {
+		for _, v := range u.WebOrigins {
+			allowed[v] = true
+		}
 	}
 	caps := map[string]bool{}
 	// These describe configured transport/publication, not TCC readiness or a
@@ -427,7 +430,7 @@ func (h *Host) policy(ctx context.Context, p auth.Principal, admission *NativeCo
 	caps["native:captureDiscoveryTransport"] = h.captureHelper != "" && h.captureWindows != nil && (u.DesktopAccess || len(u.NativeBundles) > 0)
 	caps["native:encryptedCapturePublication"] = h.artifacts != nil
 	caps["native:recordingTransport"] = h.nativeRecording != nil && h.recording != nil && u.DesktopAccess && u.RecordingAllowed
-	caps["web:recordingTransport"] = h.chrome != nil && h.recording != nil && u.RecordingAllowed
+	caps["web:recordingTransport"] = !discovery.nativeOnly && h.chrome != nil && h.recording != nil && u.RecordingAllowed
 	reasons := map[string]string{}
 	for _, surface := range []string{"native", "web"} {
 		reason := "Configured transport; recording still requires scoped consent and runtime permission checks"
@@ -539,7 +542,7 @@ func (h *Host) policy(ctx context.Context, p auth.Principal, admission *NativeCo
 			return script.Policy{}, err
 		}
 	}
-	if h.chrome != nil {
+	if !discovery.nativeOnly && h.chrome != nil {
 		capabilities, err := h.chrome.CapabilitiesFor(ctx, p)
 		if err != nil {
 			return script.Policy{}, err
@@ -550,7 +553,10 @@ func (h *Host) policy(ctx context.Context, p auth.Principal, admission *NativeCo
 			}
 		}
 	}
-	allowMutation := h.nativeControlPolicyAdmitted(ctx, p, caps, admission, reasons)
+	allowMutation := false
+	if !discovery.readOnly {
+		allowMutation = h.nativeControlPolicyAdmitted(ctx, p, caps, admission, reasons)
+	}
 	if nativeReadReady && nativeSemanticMenuSupported && caps["native:semanticPress"] {
 		caps["native:semanticMenu"] = true
 	}
@@ -580,7 +586,7 @@ func (h *Host) policy(ctx context.Context, p auth.Principal, admission *NativeCo
 			delete(caps, "native:"+name)
 		}
 	}
-	return script.Policy{AllowAllNative: u.DesktopAccess, AllowAllWeb: u.DesktopAccess, AllowedSurfaces: allowed, AllowMutation: allowMutation, Capabilities: caps, CapabilityReasons: reasons}, nil
+	return script.Policy{AllowAllNative: u.DesktopAccess, AllowAllWeb: !discovery.nativeOnly && u.DesktopAccess, AllowedSurfaces: allowed, AllowMutation: allowMutation, Capabilities: caps, CapabilityReasons: reasons}, nil
 }
 func (h *Host) Observe(ctx context.Context, p auth.Principal, surface model.Surface) (model.Observation, error) {
 	user, err := h.authorize(ctx, p)
@@ -642,6 +648,8 @@ func (h *Host) execute(ctx context.Context, p auth.Principal, step model.Step, v
 	var err error
 	if step.Target.Surface.Kind == "web" {
 		policy, err = h.webReadPolicy(ctx, p)
+	} else if nativeStepOnly(step, nil) {
+		policy, err = h.nativeOnlyPolicy(ctx, p, nil, true)
 	} else {
 		policy, err = h.Policy(ctx, p)
 	}

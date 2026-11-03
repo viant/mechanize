@@ -35,6 +35,7 @@ type ObserveNativeWindow func(context.Context, auth.Principal, model.Surface, st
 type ObserveNativeRoot func(context.Context, auth.Principal, model.Surface, string, ...string) (model.Observation, error)
 type Observe func(context.Context, auth.Principal, model.Surface) (model.Observation, error)
 type Policy func(context.Context, auth.Principal) (script.Policy, error)
+type PlanPolicy func(context.Context, auth.Principal, *model.Plan) (script.Policy, error)
 type StateGet func(context.Context, auth.Principal, string) (durable.State, error)
 type StatePause func(context.Context, auth.Principal, string, int) (durable.State, error)
 type StatePatch func(context.Context, auth.Principal, string, int, map[string]model.Value) (durable.State, error)
@@ -79,7 +80,9 @@ type Dependencies struct {
 	// ObservationPolicy checks enrollment only; nil retains the existing Policy path.
 	ObservationPolicy Policy
 	Policy            Policy
-	Version           string
+	// PlanPolicy may narrow discovery for a compiled plan; policy validation remains mandatory.
+	PlanPolicy PlanPolicy
+	Version    string
 }
 type Empty struct{}
 type SessionInput struct {
@@ -417,7 +420,12 @@ func register(base *protocol.DefaultHandler, d Dependencies) error {
 			if err != nil {
 				return failure(err)
 			}
-			policy, err := d.Policy(ctx, p)
+			var policy script.Policy
+			if d.PlanPolicy != nil {
+				policy, err = d.PlanPolicy(ctx, p, plan)
+			} else {
+				policy, err = d.Policy(ctx, p)
+			}
 			if err != nil {
 				return failure(err)
 			}

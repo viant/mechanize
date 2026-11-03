@@ -18,7 +18,7 @@ import (
 
 const completionRead = `let answer = app("com.example.Fixture").getById("result").read("staticText")`
 
-func completionFixture(t *testing.T, execute automation.Execute, options automation.Options) (*ControllerDispatcher, chrome.ControllerIdentity, context.Context, string) {
+func completionFixture(t *testing.T, execute automation.Execute, options automation.Options, configure ...func(*Dependencies)) (*ControllerDispatcher, chrome.ControllerIdentity, context.Context, string) {
 	t.Helper()
 	p, _ := auth.NewPrincipal("fixture", "", "completion", []string{"desktop:observe", "desktop:control"})
 	p.ClientID = "controller:completion"
@@ -29,7 +29,11 @@ func completionFixture(t *testing.T, execute automation.Execute, options automat
 		t.Fatal(err)
 	}
 	policy := script.Policy{AllowedSurfaces: map[string]bool{"com.example.Fixture": true}, AllowMutation: true, Capabilities: map[string]bool{"native:attributeRead": true, "native:idLocator": true, "native:semanticPress": true}}
-	server, err := New(Dependencies{Runtime: runtime, Policy: func(context.Context, auth.Principal) (script.Policy, error) { return policy, nil }})
+	deps := Dependencies{Runtime: runtime, Policy: func(context.Context, auth.Principal) (script.Policy, error) { return policy, nil }}
+	for _, apply := range configure {
+		apply(&deps)
+	}
+	server, err := New(deps)
 	if err != nil {
 		t.Fatal(err)
 	}
