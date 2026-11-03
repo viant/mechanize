@@ -320,4 +320,13 @@ Set `nativeVault.keyProvider` to `scy-local-v1` to keep Vault encryption indepen
 
 Provisioning remains native-only. Existing ciphertext prevents replacement of a missing key; malformed keys, symlinks, hard links, unsafe permissions and repository locations are refused. No MCP tool reads or returns master keys, credential values or clipboard contents. Keep keys and encrypted records outside source control and back them up together using an appropriate private backup.
 
+The certificate-signed unified development updater can preserve an already
+configured `scy-local-v1` Vault with `helper-v1` protection. It checks that the
+existing broker pin matches the installed app, retains the same native storage
+paths, key alias and version, and updates only the broker pin for the new signed
+runtime. Update and rollback do not read, migrate or replace keys or records.
+Unknown custody fields/providers and Keychain enrollment still require the
+separate reviewed migration route. This compatibility does not provision a Vault,
+grant credential access, or prove a live sign-in flow.
+
 `NativeKeyProvisioner` separates native setup/readiness from the internal cipher key resolver. A future Secret Manager adapter can implement these seams without changing the MCP credential contract or exposing secret values to the model. The legacy default remains `keychain-v1` for existing installations; switching providers requires an explicit local migration or retained-backup reset, never an automatic fallback.

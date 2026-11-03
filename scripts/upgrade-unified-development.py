@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Update an existing certificate-signed, unprovisioned unified developer app.
+"""Update an existing certificate-signed unified developer app.
 
 Preflight is the default. Apply requires an exact idle broker PID. Existing
-credentials, grants, stores, extension bytes and scope remain unchanged. Vault
-custody or a managed broker requires the separately reviewed migration route.
+credentials, grants, stores, extension bytes and scope remain unchanged.
+Keychain custody or a managed broker requires the separately reviewed migration
+route. Existing local Scy Vault routing is preserved without accessing key bytes.
 """
 import argparse
 import copy
@@ -31,9 +32,27 @@ shared = runtime.shared
 package = load('unified_update_package', 'package-runtime-upgrade.py')
 ROLES = {'broker': ('mechanize', 'broker'), 'helper': ('mechanize-native', 'native'), 'nativeHost': ('mechanize-native-host', 'chrome.nativehost')}
 
+def validate_preserved_custody(config, app):
+    if config.get('keychain'):
+        raise ValueError('Keychain custody requires the reviewed migration route')
+    vault = config.get('nativeVault')
+    if vault is None:
+        return
+    fields = {'keyProvider', 'windowProtection', 'root', 'recordRoot', 'keyVersion', 'keyAlias', 'brokerRequirement'}
+    if not isinstance(vault, dict) or set(vault) - fields or vault.get('keyProvider') != 'scy-local-v1' or vault.get('windowProtection') != 'helper-v1':
+        raise ValueError('Only existing helper-protected local Scy custody can be preserved')
+    if vault.get('root') != str(Path.home()/'.secret/vault') or vault.get('recordRoot') not in (None, '', str(Path.home()/'.secret/vault-records')):
+        raise ValueError('Existing native Vault routing changed')
+    for name in ('keyAlias', 'keyVersion'):
+        value = vault.get(name)
+        if not isinstance(value, str) or not runtime.re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value):
+            raise ValueError('Bounded existing local key reference required')
+    info = plistlib.loads(package.read_file(app/'Contents/Info.plist'))
+    if vault.get('brokerRequirement') != info.get('MechanizeBrokerRequirement') or not vault.get('brokerRequirement'):
+        raise ValueError('Existing Vault broker pin disagrees with installed app')
+
 def candidate_config(original, app, source, manifest):
-    if original.get('nativeVault') or original.get('keychain'):
-        raise ValueError('Vault/Keychain custody requires the reviewed migration route')
+    validate_preserved_custody(original, app)
     helpers = app / 'Contents/Helpers'
     if original.get('nativeHelper') != str(helpers / 'mechanize-native') or original.get('nativeLaunch', {}).get('transport') != 'console-v1':
         raise ValueError('Existing same-path console-owned unified runtime required')
@@ -43,6 +62,8 @@ def candidate_config(original, app, source, manifest):
     result['sourceRoot'] = str(source)
     result['nativeLaunch']['helperRequirement'] = manifest['runtime']['helper']['requirement']
     result['nativeConsole']['designatedRequirement'] = manifest['consoleRequirement']
+    if result.get('nativeVault'):
+        result['nativeVault']['brokerRequirement'] = manifest['runtime']['broker']['requirement']
     if result.get('chromeRetirement'):
         result['chromeRetirement']['brokerRequirement'] = manifest['runtime']['broker']['requirement']
     if result.get('chrome'):
@@ -140,7 +161,7 @@ def rollback(root, backup, broker_pid, stopped, listen):
     if package.sha(before)!=record['originalConfigSHA256'] or package.sha(current) not in (record['originalConfigSHA256'],record['candidateConfigSHA256']):raise ValueError('Backup/config revision changed')
     if package.inventory(app)!=record['candidateAppInventory'] or package.inventory(retained)!=record['originalAppInventory']:raise ValueError('Application revision changed')
     if shared.requirement(retained)!=original['nativeConsole']['designatedRequirement']:raise ValueError('Original console pin changed')
-    if original.get('nativeVault') or original.get('keychain'):raise ValueError('Custody rollback is not supported')
+    validate_preserved_custody(original, retained)
     helpers=app/'Contents/Helpers'
     chrome=record.get('chrome')
     if chrome:

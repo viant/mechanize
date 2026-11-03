@@ -14,6 +14,43 @@ u=importlib.util.module_from_spec(spec);spec.loader.exec_module(u)
 def pin(role,letter):return f'identifier "com.viant.mechanize.{role}" and cdhash H"{letter*40}"'
 
 class UnifiedUpdateTests(unittest.TestCase):
+    def local_vault(self, home):
+        return {'keyProvider':'scy-local-v1','windowProtection':'helper-v1',
+                'root':str(home/'.secret/vault'),'recordRoot':str(home/'.secret/vault-records'),
+                'keyAlias':'fixture-master','keyVersion':'fixture-v1','brokerRequirement':pin('broker','a')}
+
+    def test_local_scy_config_preserves_custody_without_reading_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app,_,source,_,_,m,c=self.fixture(tmp)
+            home=Path(tmp).resolve();c['nativeVault']=self.local_vault(home);before=copy.deepcopy(c)
+            read=u.package.read_file
+            def public_metadata_only(path,*args,**kwargs):
+                self.assertEqual(path,app/'Contents/Info.plist')
+                return read(path,*args,**kwargs)
+            with mock.patch.object(Path,'home',return_value=home),mock.patch.object(u.package,'read_file',side_effect=public_metadata_only):
+                result=u.candidate_config(c,app,source,m)
+            expected=copy.deepcopy(before['nativeVault']);expected['brokerRequirement']=pin('broker','b')
+            self.assertEqual(result['nativeVault'],expected)
+            self.assertEqual(c,before)
+
+    def test_local_scy_rejects_custody_changes_and_unknown_profiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app,_,source,_,_,m,c=self.fixture(tmp);home=Path(tmp).resolve()
+            cases=[{'keyProvider':'keychain-v1'},{'keyProvider':'future-v1'},
+                   {'windowProtection':''},{'root':'/other/vault'},{'recordRoot':'/other/records'},
+                   {'keyAlias':'../key'},{'keyVersion':'version/2'},
+                   {'brokerRequirement':pin('broker','c')},{'unknownField':'value'}]
+            with mock.patch.object(Path,'home',return_value=home):
+                for change in cases:
+                    with self.subTest(change=change):
+                        bad=copy.deepcopy(c);bad['nativeVault']={**self.local_vault(home),**change}
+                        with self.assertRaises(ValueError):u.candidate_config(bad,app,source,m)
+                for malformed in [{},[],False,'unexpected']:
+                    with self.subTest(malformed=malformed):
+                        with self.assertRaises(ValueError):u.candidate_config({**c,'nativeVault':malformed},app,source,m)
+                bad={**c,'nativeVault':self.local_vault(home),'keychain':{'items':{'other':{}}}}
+                with self.assertRaises(ValueError):u.candidate_config(bad,app,source,m)
+
     def test_console_starts_before_broker(self):
         with tempfile.TemporaryDirectory() as tmp:
             app,_,_,state,_,_,_=self.fixture(tmp);events=[]
@@ -68,8 +105,22 @@ class UnifiedUpdateTests(unittest.TestCase):
             with self.assertRaises(ValueError):u.verify_bundle(candidate,m,verify=lambda *a:None)
 
     def test_apply_preserves_state_and_retains_original_app(self):
+        self.assert_apply_and_rollback(False)
+
+    def test_local_scy_apply_and_rollback_preserve_key_and_records(self):
+        self.assert_apply_and_rollback(True)
+
+    def assert_apply_and_rollback(self, with_vault):
         with tempfile.TemporaryDirectory() as tmp:
             app,candidate,source,state,mp,m,c=self.fixture(tmp)
+            private_files={}
+            if with_vault:
+                c['nativeVault']=self.local_vault(Path(tmp).resolve())
+                u.shared.atomic(state/'config.json',json.dumps(c).encode())
+                for name in ['vault-keys/fixture-master','vault-records/fixture-record','vault/fixture-entry']:
+                    path=Path(tmp)/'.secret'/name;path.parent.mkdir(parents=True,exist_ok=True)
+                    path.write_bytes(b'independently-synthetic-custody-fixture')
+                    private_files[path]=path.read_bytes()
             old=u.package.inventory(app);new=u.package.inventory(candidate);events=[]
             real_verify=u.verify_bundle
             def swap(a,b):
@@ -87,5 +138,6 @@ class UnifiedUpdateTests(unittest.TestCase):
             self.assertEqual(u.package.inventory(Path(record['retainedApp'])),new)
             self.assertEqual((state/'storage/grants').read_bytes(),b'preserved-grants')
             self.assertEqual(json.loads((state/'config.json').read_text()),c)
+            for path,content in private_files.items():self.assertEqual(path.read_bytes(),content)
 
 if __name__=='__main__':unittest.main()
