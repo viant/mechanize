@@ -23,6 +23,8 @@ An explicit user choice of executor takes precedence. Prefer native app identity
 
 Define the requested end result and an observable completion check before input. Reuse the signed-in session and the user's designated app/tab. Read the Computer Use documentation returned on entry. Use fresh controls and exact target scopes; batch known deterministic actions only until a navigation, dialog or selection boundary requires observation.
 
+When Chrome DOM calls or Mechanize reconnect inspection stall, inspect the native Chrome window for a modal dialog before restarting or requesting consent. Closing an unsaved test form can leave a “Leave site?” dialog even when the close call returns. Cancel to preserve an unidentified draft, verify dismissal, then recheck the original connection. In one observed case, native Cancel clicks left the dialog present while Escape dismissed it and the existing Mechanize qualification recovered automatically. Never accept leaving a user draft merely to clear a timeout. Verify tab cleanup one tab at a time.
+
 Treat stale or failed observations separately from failed actions. If a click errors while opening a document, read state before clicking again. For editable controls, a setter return is not a committed value or selection. Verify focus and application state before dependent input.
 
 Use [Office checks](references/office.md) for native files. Use [private credentials](references/credentials.md) only for authentication. Do not expose passwords, token contents or Vault records in prompts, screenshots, tool arguments or logs.

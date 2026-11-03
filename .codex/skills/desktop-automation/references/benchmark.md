@@ -64,3 +64,8 @@ unresolved effects in those measured runs. These sequential, small-sample result
 do not establish a general speed winner or full-deck reliability. Large cached
 chat context dominated session token counts; retain cached/noncached breakdowns
 and do not interpret these counters as billing estimates.
+
+Put a token measurement boundary in its own completed tool call before starting
+long-running work. Verify timestamp alignment with the provider/session usage
+event; a distant event makes that token comparison unavailable. Keep interrupted
+trials and startup failures separately identified, including recovery time.
