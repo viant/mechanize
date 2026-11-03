@@ -134,7 +134,7 @@ struct ScopedNativeRoot {
                 // while their reverse AXParent crosses the save-panel service.
                 // Prove membership using fresh same-app child edges instead;
                 // never traverse or authorize input in the helper process.
-                try validateAttachedSheetChildren(target, check: check, runtime: runtime)
+                _ = try verifiedAttachedSheetPath(target, check: check, runtime: runtime)
                 return
             }
             try Self.validateOwner(parent, pid: pid, uid: uid, birth: birth, bundle: bundle, check: check, runtime: runtime, stage: "ancestor-\(depth)")
@@ -147,7 +147,7 @@ struct ScopedNativeRoot {
         }
         throw NativeFailure("staleReference", "Scoped target ancestry exceeds the snapshot depth boundary")
     }
-    private func validateAttachedSheetChildren(_ target: AXUIElement, check: () throws -> Void, runtime: ScopedNativeRootRuntime) throws {
+    func verifiedAttachedSheetPath(_ target: AXUIElement, check: () throws -> Void, runtime: ScopedNativeRootRuntime) throws -> [AXUIElement] {
         var queue: [(AXUIElement, [AXUIElement], Bool)] = [(element, [], false)]
         var visited: [AXUIElement] = []
         while !queue.isEmpty {
@@ -180,7 +180,7 @@ struct ScopedNativeRoot {
                 }
                 guard stillAttached else { throw NativeFailure("staleReference", "Attached sheet disappeared from child path") }
                 try Self.validateOwner(target, pid: pid, uid: uid, birth: birth, bundle: bundle, check: check, runtime: runtime, stage: "target")
-                return
+                return path
             }
             let children = try runtime.children(node, check)
             guard children.complete, queue.count + visited.count + children.elements.count <= 1000 else { throw NativeFailure("staleReference", "Attached-sheet child census incomplete or exceeds bounds") }

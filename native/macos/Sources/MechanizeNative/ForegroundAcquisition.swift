@@ -62,7 +62,7 @@ struct AXSemanticForegroundRecipient {
   try budget.check();let owner=runtime.owner(element);try budget.check()
   guard owner.status==AXError.success.rawValue,owner.pid==pid,owner.uid==uid,owner.birth==birth,owner.bundle==bundle else{throw NativeFailure("foregroundAXOwnerMismatch","Exact AX recipient owner changed; business input was not dispatched")}
  }
- private func scopedWindowForPanelOwner(_ candidate:AXUIElement,_ budget:Budget,_ runtime:ScopedNativeRootRuntime)throws->AXUIElement? {
+ private func scopedWindowForPanelOwner(_ candidate:AXUIElement,_ budget:Budget,_ runtime:ScopedNativeRootRuntime)throws->(AXUIElement,[AXUIElement])? {
   let owner=runtime.owner(candidate)
   guard owner.status==AXError.success.rawValue,let helperPID=owner.pid,helperPID>0,helperPID != pid,owner.uid==uid,owner.birth?.isEmpty==false,
         owner.bundle=="com.apple.appkit.xpc.openAndSavePanelService",
@@ -70,7 +70,8 @@ struct AXSemanticForegroundRecipient {
   // Reuse the exact app-window membership proof; no helper-owned control is
   // adopted as a foreground/input recipient. This is semantic-only at binding.
   try root.validate(referenceElement:element,check:{try budget.check()},runtime:runtime)
-  return root.element
+  let path=try root.verifiedAttachedSheetPath(element,check:{try budget.check()},runtime:runtime)
+  return(root.element,path)
  }
  private func currentRecipient(_ budget:Budget,_ runtime:ScopedNativeRootRuntime)throws->(AXUIElement?,[AXUIElement]) {
   try owned(element,budget,runtime)
@@ -80,7 +81,7 @@ struct AXSemanticForegroundRecipient {
   let raw=try read(element,kAXWindowAttribute,budget,runtime)
   if raw.0 == .success,let value=raw.1,CFGetTypeID(value)==AXUIElementGetTypeID(){
    let associated=value as! AXUIElement
-   if let root=try scopedWindowForPanelOwner(associated,budget,runtime){return(root,[])}
+   if let recipient=try scopedWindowForPanelOwner(associated,budget,runtime){return recipient}
    try owned(associated,budget,runtime)
    let associatedRole=try read(associated,kAXRoleAttribute,budget,runtime)
    if associatedRole.0 == .success,associatedRole.1 as? String==kAXWindowRole{return(associated,[])}
@@ -96,7 +97,7 @@ struct AXSemanticForegroundRecipient {
   var path:[AXUIElement]=[],current=element,sawSheet=false
   for _ in 0..<32 {
    guard !path.contains(where:{CFEqual($0,current)}),!CFEqual(current,application) else{throw NativeFailure("foregroundAXWindowUnavailable","Attached-sheet parent path is cyclic or incomplete")}
-   if let root=try scopedWindowForPanelOwner(current,budget,runtime){return(root,[])}
+   if let recipient=try scopedWindowForPanelOwner(current,budget,runtime){return recipient}
    try owned(current,budget,runtime);path.append(current)
    let role=try read(current,kAXRoleAttribute,budget,runtime)
    guard role.0 == .success,let name=role.1 as? String else{throw NativeFailure("foregroundAXWindowUnavailable","Attached-sheet parent role unavailable")}

@@ -16,14 +16,16 @@ final class AttachedSheetMembershipTests {
         for mode in ["valid", "foreignTarget", "foreignSheet", "absent", "noSheet", "wrongHelper", "cycle", "changed", "incomplete", "roleChanged", "oversized", "foreignHelperUser"] {
             let app = AXUIElementCreateApplication(pid), root = AXUIElementCreateApplication(42_001)
             let sheet = AXUIElementCreateApplication(42_002), child = AXUIElementCreateApplication(42_003), helper = AXUIElementCreateApplication(42_004)
-            var sheetReads = 0, sheetRoleReads = 0, helperChildrenRead = false
+            let otherSheet = AXUIElementCreateApplication(42_005)
+            var sheetReads = 0, sheetRoleReads = 0, helperChildrenRead = false, focusSheet = false, focusOtherSheet = false
             let runtime = ScopedNativeRootRuntime(attribute: { element, name in
                 switch name {
                 case kAXWindowsAttribute: return (.success, [root] as CFArray)
                 case kAXTitleAttribute: return (.success, "Fixture" as CFString)
                 case kAXWindowAttribute: return (.success, helper)
-                case kAXFocusedWindowAttribute: return (.success, root)
+                case kAXFocusedWindowAttribute: return (.success, focusOtherSheet ? otherSheet : focusSheet ? sheet : root)
                 case kAXRoleAttribute:
+                    if CFEqual(element, otherSheet) { return (.success, kAXSheetRole as CFString) }
                     if CFEqual(element, sheet) {
                         sheetRoleReads += 1
                         if mode == "roleChanged" && sheetRoleReads > 1 { return (.success, kAXGroupRole as CFString) }
@@ -58,6 +60,10 @@ final class AttachedSheetMembershipTests {
                 let recipient = try AXSemanticForegroundRecipient.bind(element: child, application: app, pid: pid, uid: uid, birth: birth, bundle: bundle, menuRoot: false, scopedWindow: proof, budget: Budget(milliseconds: 1000), runtime: runtime)
                 #expect(try recipient.focused(Budget(milliseconds: 1000), runtime: runtime))
                 #expect(CFEqual(try #require(recipient.window), root))
+                focusSheet = true
+                #expect(try recipient.focused(Budget(milliseconds: 1000), runtime: runtime))
+                focusOtherSheet = true
+                #expect(throws: (any Error).self) { try recipient.focused(Budget(milliseconds: 1000), runtime: runtime) }
             }
             else { #expect(throws: (any Error).self) { try proof.validate(referenceElement: child, check: {}, runtime: runtime) } }
             #expect(!helperChildrenRead, "Never inspect or authorize helper controls")
