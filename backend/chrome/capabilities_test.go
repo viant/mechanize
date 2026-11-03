@@ -124,3 +124,23 @@ func TestActorScopedChromeCapabilitiesRejectForgedActorAndCancellation(t *testin
 		}
 	}
 }
+
+func TestReadCapabilitiesRetainQualifiedReadsWithoutMetadataActions(t *testing.T) {
+	f := newReadFixtureScope(t, TrustScopeDesktop)
+	caps, err := f.g.ReadCapabilitiesFor(auth.WithPrincipal(context.Background(), f.p), f.p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range caps {
+		if c.Name == "attributeRead" && c.Supported {
+			found = true
+		}
+		if c.Name == "browser.openOrigin" || c.Name == "browser.activateTab" {
+			t.Fatal("read policy probed unrelated metadata actions")
+		}
+	}
+	if !found {
+		t.Fatal("qualified read capability lost")
+	}
+}

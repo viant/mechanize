@@ -638,7 +638,13 @@ func (h *Host) execute(ctx context.Context, p auth.Principal, step model.Step, v
 		}
 		return h.executeNativeControl(ctx, p, step, values)
 	}
-	policy, err := h.Policy(ctx, p)
+	var policy script.Policy
+	var err error
+	if step.Target.Surface.Kind == "web" {
+		policy, err = h.webReadPolicy(ctx, p)
+	} else {
+		policy, err = h.Policy(ctx, p)
+	}
 	if err != nil {
 		return automation.StepResult{}, err
 	}

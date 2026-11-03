@@ -64,6 +64,16 @@ func (g *Gateway) Capabilities() []model.Capability {
 // CapabilitiesFor reports only read routes available to this authenticated
 // owner. Mutation qualification belongs to the separate control manager.
 func (g *Gateway) CapabilitiesFor(ctx context.Context, p auth.Principal) ([]model.Capability, error) {
+	return g.capabilitiesFor(ctx, p, true)
+}
+
+// ReadCapabilitiesFor excludes browser visibility/creation discovery. It still
+// verifies the current signed channel before advertising any read capability.
+func (g *Gateway) ReadCapabilitiesFor(ctx context.Context, p auth.Principal) ([]model.Capability, error) {
+	return g.capabilitiesFor(ctx, p, false)
+}
+
+func (g *Gateway) capabilitiesFor(ctx context.Context, p auth.Principal, metadataActions bool) ([]model.Capability, error) {
 	if err := authorize(ctx, p, false); err != nil {
 		return nil, err
 	}
@@ -139,6 +149,9 @@ func (g *Gateway) CapabilitiesFor(ctx context.Context, p auth.Principal) ([]mode
 	}
 	capabilities = append(capabilities, model.Capability{Name: "indexedQuery", Surface: "web", Supported: indexedReady, Reason: "Qualified local Playwright exact nth locator in document order; plural all reads remain unavailable"})
 	capabilities = append(capabilities, model.Capability{Name: "localPlaywright", Surface: "web", Supported: playwrightReady, Reason: "Hash-qualified local Node runtime and enrolled extension relay; exact typed actions only"})
+	if !metadataActions {
+		return capabilities, nil
+	}
 	openReady := false
 	if g != nil && g.broker != nil {
 		b := g.broker
