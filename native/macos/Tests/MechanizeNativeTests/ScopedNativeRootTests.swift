@@ -33,6 +33,23 @@ final class ScopedNativeRootTests: XCTestCase {
         let proof = try ScopedNativeRoot.resolve(.focusedElement, application: app, pid: pid, uid: uid, birth: birth, bundle: bundle, check: {}, runtime: runtime)
         XCTAssertTrue(CFEqual(proof.element, focused)); XCTAssertEqual(attributes, [kAXFocusedUIElementAttribute])
     }
+    func testOwnershipDiagnosticIdentifiesAncestorWithoutExportingPrivateMetadata() throws {
+        let app = AXUIElementCreateApplication(pid), root = AXUIElementCreateApplication(42_001)
+        let child = AXUIElementCreateApplication(42_002), parent = AXUIElementCreateApplication(42_003)
+        let runtime = ScopedNativeRootRuntime(attribute: { _, name in
+            name == kAXFocusedUIElementAttribute ? (.success, root) : (.success, parent)
+        }, owner: { element in
+            CFEqual(element, parent) ? self.owner(77, birth: "PRIVATE_BIRTH", bundle: "PRIVATE_BUNDLE") : self.owner()
+        })
+        let proof = try ScopedNativeRoot.resolve(.focusedElement, application: app, pid: pid, uid: uid, birth: birth, bundle: bundle, check: {}, runtime: runtime)
+        XCTAssertThrowsError(try proof.validate(referenceElement: child, check: {}, runtime: runtime)) { error in
+            guard let failure = error as? NativeFailure else { return XCTFail("Expected native failure") }
+            XCTAssertEqual(failure.code, "rootOwnerMismatch")
+            XCTAssertTrue(failure.message.contains("stage=ancestor-0, expectedPID=42000, observedPID=77"))
+            XCTAssertTrue(failure.message.contains("birthMatch=false, bundleMatch=false"))
+            XCTAssertFalse(failure.message.contains("PRIVATE"))
+        }
+    }
     func testMissingMalformedAndWrongMenuRoleRootsFailClosed() {
         let app = AXUIElementCreateApplication(pid), root = AXUIElementCreateApplication(42_001)
         let missing: [(AXError, CFTypeRef?)] = [(.noValue, nil), (.attributeUnsupported, nil), (.cannotComplete, nil), (.success, "not-an-element" as CFString), (.success, NSNumber(value: 1))]

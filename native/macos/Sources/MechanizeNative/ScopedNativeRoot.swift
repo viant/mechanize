@@ -87,22 +87,25 @@ struct ScopedNativeRoot {
         return try Self.resolve(scope, application: application, pid: pid, uid: uid, birth: birth, bundle: bundle, nativeMenu:nativeMenu, check: check, runtime: runtime)
     }
     private static func validateOwner(_ element: AXUIElement, pid: pid_t, uid: uid_t, birth: String, bundle: String,
-                                      check: () throws -> Void, runtime: ScopedNativeRootRuntime) throws {
+                                      check: () throws -> Void, runtime: ScopedNativeRootRuntime, stage: String = "root") throws {
         try check()
         let owner = runtime.owner(element)
         try check()
         guard owner.status == AXError.success.rawValue, owner.pid == pid, owner.uid == uid, owner.birth == birth, owner.bundle == bundle else {
-            throw NativeFailure("rootOwnerMismatch", "Native root does not belong to the exact enrolled application process")
+            // Closed phase, numeric PIDs/status and equality bits only: never
+            // expose accessibility content, titles, paths or credential values.
+            let observedPID = owner.pid.map { String($0) } ?? "unavailable"
+            throw NativeFailure("rootOwnerMismatch", "Native ownership mismatch (stage=\(stage), expectedPID=\(pid), observedPID=\(observedPID), axStatus=\(owner.status), uidMatch=\(owner.uid == uid), birthMatch=\(owner.birth == birth), bundleMatch=\(owner.bundle == bundle))")
         }
     }
     private func validateContainment(_ target: AXUIElement, check: () throws -> Void, runtime: ScopedNativeRootRuntime) throws {
-        try Self.validateOwner(target, pid: pid, uid: uid, birth: birth, bundle: bundle, check: check, runtime: runtime)
+        try Self.validateOwner(target, pid: pid, uid: uid, birth: birth, bundle: bundle, check: check, runtime: runtime, stage: "target")
         if CFEqual(target, element) { return }
         var current = target
         var visited = [target]
         // Match the snapshot's depth-20 boundary. Every edge is read fresh;
         // ownership alone never proves membership in this selected subtree.
-        for _ in 0..<20 {
+        for depth in 0..<20 {
             try check()
             AXUIElementSetMessagingTimeout(current, 0.1)
             let (status, value) = runtime.attribute(current, kAXParentAttribute)
@@ -114,7 +117,7 @@ struct ScopedNativeRoot {
             guard !visited.contains(where: { CFEqual($0, parent) }) else {
                 throw NativeFailure("staleReference", "Scoped target ancestry contains a cycle")
             }
-            try Self.validateOwner(parent, pid: pid, uid: uid, birth: birth, bundle: bundle, check: check, runtime: runtime)
+            try Self.validateOwner(parent, pid: pid, uid: uid, birth: birth, bundle: bundle, check: check, runtime: runtime, stage: "ancestor-\(depth)")
             if CFEqual(parent, element) { return }
             guard !CFEqual(parent, application) else {
                 throw NativeFailure("staleReference", "Target is no longer contained in the selected native root")
