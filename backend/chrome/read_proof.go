@@ -98,14 +98,20 @@ func (g *Gateway) PinReadDocument(ctx context.Context, p auth.Principal, surface
 	return g.captureReadBinding(ctx, p, c, d)
 }
 func (g *Gateway) PinControlRead(ctx context.Context, p auth.Principal, a ControlAuthority) (ReadBinding, error) {
-	if err := g.VerifyControl(ctx, p, a); err != nil {
+	if err := g.VerifyControlContinuity(ctx, p, a); err != nil {
 		return ReadBinding{}, err
 	}
 	c := g.controlChannel(a)
 	if c == nil {
 		return ReadBinding{}, auth.ErrUnauthorized
 	}
-	return g.captureReadBinding(ctx, p, c, a.Document)
+	// Pinning captures metadata, not DOM values. ReadPinned independently
+	// performs full verification when this binding is used for an actual read.
+	scoped, err := g.admissionProcessContext(ctx, a, c)
+	if err != nil {
+		return ReadBinding{}, err
+	}
+	return g.captureReadBinding(scoped, p, c, a.Document)
 }
 func (g *Gateway) checkReadBinding(ctx context.Context, p auth.Principal, pin ReadBinding) (Document, error) {
 	if err := authorize(ctx, p, false); err != nil {

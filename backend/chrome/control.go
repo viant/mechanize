@@ -339,7 +339,7 @@ func (g *Gateway) executeControl(ctx context.Context, p auth.Principal, step mod
 		return result, auth.ErrUnauthorized
 	}
 
-	if err := g.VerifyControl(ctx, p, a); err != nil {
+	if err := g.VerifyControlContinuity(ctx, p, a); err != nil {
 		return result, err
 	}
 	var locator *Locator
@@ -375,6 +375,12 @@ func (g *Gateway) executeControl(ctx context.Context, p auth.Principal, step mod
 		cmd.Args = map[string]any{"value": value.String}
 	}
 	c := g.controlChannel(a)
+	// Reuse admission only for metadata checks in this invocation. The broker
+	// forces a fresh full signed check under the write lock before input.
+	ctx, err = g.admissionProcessContext(ctx, a, c)
+	if err != nil {
+		return result, err
+	}
 	if step.Action == "browser.navigate" {
 		args, e := step.ResolveArguments(bindings)
 		if e != nil {
@@ -440,6 +446,12 @@ func (g *Gateway) RetireControl(ctx context.Context, p auth.Principal, a Control
 	}
 	if err := g.broker.verifyChannelProcess(ctx, c); err != nil {
 		return false, err
+	}
+	// Retirement sends no input. A fresh full check above qualifies this
+	// metadata exchange; retain exact kernel/fence checks through its ACK.
+	// Special inhibited/retirement paths keep their existing full-check route.
+	if scoped, err := g.admissionProcessContext(ctx, a, c); err == nil {
+		ctx = scoped
 	}
 	g.broker.mu.Lock()
 	proven := !g.broker.closed && ctx.Err() == nil && targetRetirementProvenLocked(c, a)

@@ -472,7 +472,12 @@ func (b *Broker) callPrepared(ctx context.Context, c *channel, command Command, 
 		defer c.writeMu.Unlock()
 		err := ctx.Err()
 		if err == nil {
-			err = b.verifyChannelProcess(ctx, c)
+			if mutation {
+				// Admission/metadata continuity is never sufficient at the input boundary.
+				err = b.checkChannelProcess(ctx, c, true)
+			} else {
+				err = b.verifyChannelProcess(ctx, c)
+			}
 		}
 		if err == nil {
 			for _, check := range beforeSend {
