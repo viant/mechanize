@@ -16,6 +16,16 @@ confirmed by a fresh screenshot showing the selected cell and formula bar. This
 qualifies navigation only, not arbitrary cell editing or whole-workbook reliability.
 Rediscover the dialog identifiers; do not copy historical transient IDs.
 
+An observed executor handoff left NSWorkspace reporting the controller app while
+system AX reported Excel. Explicit Mechanize activation established agreement,
+after which the paused menu action safely resumed with no unresolved effects.
+Find & Replace fields accepted a two-step semantic fill batch. Replace All then
+returned AX error -25204 although Excel displayed a one-replacement confirmation.
+That attempt remains uncertain in the durable ledger: do not repeat it or claim
+save/recalculation qualification from the alert alone. Use a declared, enrolled
+outcome contract for future mutation trials; an uncontracted modal transition can
+leave a completed edit impossible to reconcile automatically.
+
 PowerPoint: use existing placeholders/objects, preserve chart data and embedded workbook relationships, inspect every affected slide, save and reopen, then export and inspect the PDF. Compare slide count, text, numeric consistency, image crops, native editability and layout. Do not replace editable charts with images or drop slides to meet a time target.
 
 Observed Computer Use baseline: selecting Blank Presentation opened a one-slide

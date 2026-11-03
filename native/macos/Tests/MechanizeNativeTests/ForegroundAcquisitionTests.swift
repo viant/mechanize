@@ -3,6 +3,22 @@ import AppKit
 import MechanizeNativeCore
 @testable import MechanizeNative
 final class ForegroundAcquisitionTests:XCTestCase {
+ func testForegroundDisagreementRequiresActivationAndFreshAgreement()throws {
+  var activated=0,reads=0;var receipt=ForegroundAcquisitionReceipt()
+  let runtime=ForegroundAcquisitionRuntime(validate:{},ready:{
+   reads+=1
+   if reads<=2{throw NativeFailure("foregroundCorroborationConflict","fixture")}
+   return true
+  },activate:{activated+=1;return true},needsRaise:{false},raise:{XCTFail("unexpected raise");return false},pause:{_ in})
+  try acquireNativeForeground(Budget(milliseconds:1000),runtime:runtime,reserve:{},publish:{receipt=$0})
+  XCTAssertEqual(activated,1);XCTAssertEqual(reads,3);XCTAssertTrue(receipt.confirmed)
+ }
+ func testPersistentForegroundDisagreementNeverConfirmsOrRepeatsActivation() {
+  var activated=0;var receipt=ForegroundAcquisitionReceipt()
+  let runtime=ForegroundAcquisitionRuntime(validate:{},ready:{throw NativeFailure("foregroundCorroborationConflict","fixture")},activate:{activated+=1;return true},needsRaise:{false},raise:{false},pause:{_ in})
+  XCTAssertThrowsError(try acquireNativeForeground(Budget(milliseconds:1000),runtime:runtime,reserve:{},publish:{receipt=$0}))
+  XCTAssertEqual(activated,1);XCTAssertTrue(receipt.activationRequested);XCTAssertFalse(receipt.confirmed)
+ }
  func testDelayedPreparationActivatesAndRaisesOnceBeforeBusinessInput()throws {
   var activated=0,raised=0,observations=0,inputs=0,reservations=0;var last=ForegroundAcquisitionReceipt()
   let runtime=ForegroundAcquisitionRuntime(validate:{},ready:{observations+=1;return observations>=4},activate:{activated+=1;return true},needsRaise:{true},raise:{raised+=1;return true},pause:{_ in})

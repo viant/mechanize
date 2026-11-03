@@ -22,7 +22,11 @@ func acquireNativeForeground(_ budget:Budget,runtime:ForegroundAcquisitionRuntim
  func validate()throws{try budget.check();try runtime.validate();try budget.check()}
  func ready()throws->Bool{
   do{return try runtime.ready()}catch let f as NativeFailure{
-   if ["foregroundChanged","foregroundNotActive","foregroundUnavailable","foregroundRefreshUnavailable"].contains(f.code){return false};throw f
+   // An executor handoff can leave NSWorkspace and system AX on different
+   // apps. Treat disagreement as not ready, never as foreground proof. One
+   // exact authorized activation may settle it; every subsequent ready check
+   // must still pass qualifiedForeground before document input is admitted.
+   if ["foregroundChanged","foregroundNotActive","foregroundUnavailable","foregroundRefreshUnavailable","foregroundCorroborationConflict"].contains(f.code){return false};throw f
   }
  }
  try validate()
