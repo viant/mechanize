@@ -269,6 +269,23 @@ func (g *Gateway) admitControlOnce(ctx context.Context, p auth.Principal, surfac
 	admission.Confirmed = true
 	return admission, nil
 }
+
+// VerifyControlContinuity is a metadata-only preflight for an already admitted
+// authority. It rechecks the exact kernel peer, process birth, channel and lease.
+// It grants no dispatch authority: ExecuteControl and its wire callback retain
+// full signed verification. Its scoped proof never escapes this invocation.
+func (g *Gateway) VerifyControlContinuity(ctx context.Context, p auth.Principal, a ControlAuthority) error {
+	c := g.controlChannel(a)
+	if c == nil {
+		return auth.ErrUnauthorized
+	}
+	scoped, err := g.admissionProcessContext(ctx, a, c)
+	if err != nil {
+		return err
+	}
+	return g.VerifyControl(scoped, p, a)
+}
+
 func (g *Gateway) VerifyControl(ctx context.Context, p auth.Principal, a ControlAuthority) error {
 	g.controlMu.Lock()
 	record := g.controlRecordLocked(a)

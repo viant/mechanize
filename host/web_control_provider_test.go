@@ -543,3 +543,38 @@ func TestProductionProviderUnpublishedLateCompletionRecoversWithoutStaleAuthorit
 		t.Fatal("accepted unpublished completion entry accumulated", err)
 	}
 }
+
+type continuityProviderFixture struct {
+	*providerGatewayFixture
+	checks int
+	denied error
+}
+
+func (f *continuityProviderFixture) VerifyControlContinuity(ctx context.Context, p auth.Principal, a chrome.ControlAuthority) error {
+	f.checks++
+	if f.denied != nil {
+		return f.denied
+	}
+	return f.providerGatewayFixture.VerifyControl(ctx, p, a)
+}
+func TestProductionProviderUsesContinuityOnlyForMetadata(t *testing.T) {
+	ctx, p, s := providerActor(t)
+	f := &continuityProviderFixture{providerGatewayFixture: &providerGatewayFixture{}}
+	provider := newProductionWebControlProvider(f)
+	ready, err := provider.Qualify(ctx, p, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = provider.VerifyChannel(ctx, p, ready.Authority); err != nil || f.checks != 1 {
+		t.Fatal("metadata continuity not used", err)
+	}
+	f.denied = errors.New("changed process")
+	if err = provider.VerifyChannel(ctx, p, ready.Authority); !errors.Is(err, f.denied) {
+		t.Fatal("continuity refusal ignored", err)
+	}
+	// A successful metadata check does not replace the actual executor.
+	f.denied = nil
+	if _, err = provider.ExecutePinned(ctx, p, model.Step{}, nil, ready.Authority); err == nil {
+		t.Fatal("metadata check granted input")
+	}
+}

@@ -246,6 +246,13 @@ func newProductionWebControlProvider(gateway webControlProviderGateway, bound ..
 			if err != nil {
 				return err
 			}
+			// This hook only checks continuity around durable preparation/consent.
+			// The executor independently performs full signed checks before input.
+			if continuity, ok := gateway.(interface {
+				VerifyControlContinuity(context.Context, auth.Principal, chrome.ControlAuthority) error
+			}); ok {
+				return continuity.VerifyControlContinuity(ctx, p, stored)
+			}
 			return gateway.VerifyControl(ctx, p, stored)
 		},
 		ExecutePinned: func(ctx context.Context, p auth.Principal, step model.Step, values map[string]model.Value, a WebControlAuthority) (automation.StepResult, error) {
