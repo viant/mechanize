@@ -61,7 +61,7 @@ func assertNoBrowserCommand(t *testing.T, conn net.Conn) {
 	}
 }
 
-func TestGatewayRejectsUnsupportedCheckedOperationsBeforeWire(t *testing.T) {
+func TestGatewayRejectsUnsupportedReadOperationsBeforeWire(t *testing.T) {
 	gateway, broker, conn, user := checkedGuardFixture(t)
 	ctx := auth.WithPrincipal(context.Background(), user)
 	steps := []struct {
@@ -69,8 +69,8 @@ func TestGatewayRejectsUnsupportedCheckedOperationsBeforeWire(t *testing.T) {
 		step model.Step
 		code string
 	}{
-		{name: "checked read", step: unsupportedReadStep("element.read", "checked", "", nil), code: "unsupportedAttribute"},
-		{name: "checked assertion", step: unsupportedReadStep("expect", "", "toBeChecked", nil), code: "unsupportedAssertion"},
+		{name: "arbitrary attribute", step: unsupportedReadStep("element.read", "innerHTML", "", nil)},
+		{name: "arbitrary assertion", step: unsupportedReadStep("expect", "", "toBeSelected", nil)},
 		{name: "missing expected value", step: unsupportedReadStep("expect", "", "toHaveValue", nil)},
 		{name: "missing expected text", step: unsupportedReadStep("expect", "", "toHaveText", nil)},
 	}

@@ -90,6 +90,7 @@ type Reply struct {
 	Truncated                   bool                  `json:"truncated"`
 	Coverage                    []string              `json:"coverage"`
 	Value                       *string               `json:"value"`
+	Checked                     *bool                 `json:"checked,omitempty"`
 	Name                        string                `json:"name"`
 	Visible                     *bool                 `json:"visible"`
 	Enabled                     *bool                 `json:"enabled"`

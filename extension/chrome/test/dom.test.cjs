@@ -16,6 +16,40 @@ function fixture(html) {
 const identity = {profileChannel: 'profile1', browserInstance: 'browser1', tabId: 7, frameId: 0, documentId: 'doc1', documentGeneration: 1};
 const binding = {identity, brokerEpoch: 'broker1', channelEpoch: 'channel1', scopeHash: 'scope1'};
 const command = (action, extra = {}) => ({requestId: 'request1', action, ...binding, deadlineUnixMs: Date.now() + 5000, ...extra});
+test('checked reads preserve true and false without toggling public controls',()=>{
+ const f=fixture('<input id="a" type="checkbox" checked value="not-state"><input id="b" type="checkbox" disabled><input id="c" type="radio" checked><div id="d" role="checkbox" aria-checked="true"></div><div id="e" role="switch" aria-checked="false"></div>');
+ let events=0;for(const kind of ['click','input','change'])f.document.addEventListener(kind,()=>events++);
+ for(const [id,expected] of [['a',true],['b',false],['c',true],['d',true],['e',false]]){
+  const result=f.api.act(f.document,'read',{strategy:'id',value:id,exact:true},{attribute:'checked'});
+  assert.deepEqual(JSON.parse(JSON.stringify(result)),{checked:expected});
+ }
+ assert.equal(events,0);assert.equal(f.document.querySelector('#a').value,'not-state');
+ f.document.querySelector('#a').checked=false;
+ assert.equal(f.api.act(f.document,'read',{strategy:'id',value:'a'},{attribute:'checked'}).checked,false);
+ f.window.close();
+});
+test('content replies carry explicit false as well as true checked state',t=>{
+ const f=fixture('<input id="box" type="checkbox">');t.after(()=>f.window.close());
+ f.send({type:'bind',binding});
+ for(const state of [false,true]){
+  f.document.querySelector('#box').checked=state;
+  const reply=f.send(command('read',{locator:{strategy:'id',value:'box'},args:{attribute:'checked'}}));
+  assert.equal(reply.checked,state);assert.equal(reply.value,undefined);assert.equal(reply.error,undefined);
+ }
+});
+test('mixed, missing and non-checkable states never become false',()=>{
+ const f=fixture('<input id="a" type="checkbox"><div id="b" role="checkbox" aria-checked="mixed"></div><div id="c" role="checkbox"></div><div id="d" aria-checked="true"></div><input id="e" value="on"><div id="f" role="radio" aria-checked="invalid"></div>');
+ f.document.querySelector('#a').indeterminate=true;
+ for(const id of ['a','b','c','d','e','f'])assert.throws(()=>f.api.act(f.document,'read',{strategy:'id',value:id},{attribute:'checked'}),e=>e.code==='attributeUnavailable');
+ f.window.close();
+});
+test('checked reads retain private-field and credential-document protection',()=>{
+ const f=fixture('<input id="a" type="checkbox" data-mechanize-secret checked>');
+ const result=f.api.act(f.document,'read',{strategy:'id',value:'a'},{attribute:'checked'});
+ assert.equal(result.checked,undefined);assert.equal(result.value,'[redacted]');f.window.close();
+ const login=fixture('<input type="password"><input id="remember" type="checkbox" checked>');
+ assert.throws(()=>login.api.act(login.document,'read',{strategy:'id',value:'remember'},{attribute:'checked'}));login.window.close();
+});
 test('completed login allows ordinary page control while sensitive fields remain redacted',()=>{
  const f=fixture('<button id="history">History</button><p>KNOWN-SECRET</p>');
  f.api.installPrivateDocumentRedactor(f.document,value=>String(value).replaceAll('KNOWN-SECRET','[redacted]'));

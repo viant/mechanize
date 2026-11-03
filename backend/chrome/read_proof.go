@@ -154,8 +154,8 @@ func (g *Gateway) checkReadBinding(ctx context.Context, p auth.Principal, pin Re
 // acquires a mutation lease, executes scripts, or confirms a dispatch receipt.
 func (g *Gateway) ReadPinned(ctx context.Context, p auth.Principal, pin ReadBinding, target model.Selector, attribute string, values map[string]model.Value) (model.Value, ReadProof, error) {
 	failure := func(err error) (model.Value, ReadProof, error) { return model.Value{}, ReadProof{}, err }
-	if attribute != "value" && attribute != "text" && attribute != "name" {
-		return failure(browserError("unsupportedAttribute", "Protected web read supports value, text and name", "notDispatched"))
+	if attribute != "value" && attribute != "text" && attribute != "name" && attribute != "checked" {
+		return failure(browserError("unsupportedAttribute", "Protected web read supports value, text, name and checked", "notDispatched"))
 	}
 	if err := target.Validate(); err != nil {
 		return failure(err)
@@ -205,18 +205,27 @@ func (g *Gateway) ReadPinned(ctx context.Context, p auth.Principal, pin ReadBind
 	if reply.RequestID == "" || !sameReadDocument(Document{Identity: reply.Identity, Origin: d.Origin}, pin.document) || reply.Identity.Generation < observed.Identity.Generation {
 		return failure(browserError("receiptMismatch", "Actual protected read identity mismatch", "notDispatched"))
 	}
-	if reply.Value == nil || *reply.Value == "[redacted]" {
-		return failure(browserError("attributeUnavailable", "Protected web read unavailable or redacted", "notDispatched"))
-	}
-	// Only the exact-value renderer protocol certifies complete, unnormalized
-	// strings. The signal is received on the same authenticated, identity-bound
-	// exchange above; old renderers retain their conservative truncation guard.
-	if reply.ValueReadVersion != 0 || reply.ValueReadBytes != nil {
-		if attribute != "value" || reply.ValueReadVersion != 1 || reply.ValueReadBytes == nil || *reply.ValueReadBytes != len(*reply.Value) || len(*reply.Value) > 32768 {
-			return failure(browserError("readCoverageUnknown", "Exact value read completeness could not be verified", "notDispatched"))
+	var value model.Value
+	if attribute == "checked" {
+		value, err = checkedReplyValue(reply)
+		if err != nil {
+			return failure(err)
 		}
-	} else if len(utf16.Encode([]rune(*reply.Value))) >= 256 {
-		return failure(browserError("readCoverageUnknown", "Web read reached its unqualified truncation boundary", "notDispatched"))
+	} else {
+		if reply.Value == nil || *reply.Value == "[redacted]" {
+			return failure(browserError("attributeUnavailable", "Protected web read unavailable or redacted", "notDispatched"))
+		}
+		// Only the exact-value renderer protocol certifies complete, unnormalized
+		// strings. The signal is received on the same authenticated, identity-bound
+		// exchange above; old renderers retain their conservative truncation guard.
+		if reply.ValueReadVersion != 0 || reply.ValueReadBytes != nil {
+			if attribute != "value" || reply.ValueReadVersion != 1 || reply.ValueReadBytes == nil || *reply.ValueReadBytes != len(*reply.Value) || len(*reply.Value) > 32768 {
+				return failure(browserError("readCoverageUnknown", "Exact value read completeness could not be verified", "notDispatched"))
+			}
+		} else if len(utf16.Encode([]rune(*reply.Value))) >= 256 {
+			return failure(browserError("readCoverageUnknown", "Web read reached its unqualified truncation boundary", "notDispatched"))
+		}
+		value = model.Value{Kind: model.StringValue, String: *reply.Value}
 	}
 	proof := pin.Identity()
 	proof.Document = d
@@ -224,7 +233,6 @@ func (g *Gateway) ReadPinned(ctx context.Context, p auth.Principal, pin ReadBind
 	proof.RequestID = reply.RequestID
 	proof.StartedAt = started
 	proof.ReturnedAt = returned
-	value := model.Value{Kind: model.StringValue, String: *reply.Value}
 	if err := value.Validate(); err != nil {
 		return failure(errors.New("invalid protected web read value"))
 	}

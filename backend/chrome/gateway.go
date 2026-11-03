@@ -121,10 +121,10 @@ func (g *Gateway) capabilitiesFor(ctx context.Context, p auth.Principal, metadat
 		return nil, err
 	}
 	capabilities := []model.Capability{}
-	for _, name := range []string{"observe", "element.read", "browser.listTabs", "observe.delta", "boundedObservation", "attributeRead", "roleLocator", "idLocator", "testIdLocator", "labelRelationships"} {
+	for _, name := range []string{"observe", "element.read", "browser.listTabs", "observe.delta", "boundedObservation", "attributeRead", "checkedObservation", "roleLocator", "idLocator", "testIdLocator", "labelRelationships"} {
 		capabilities = append(capabilities, model.Capability{Name: name, Surface: "web", Supported: ready, Reason: "Qualified owned root document; exact unique DOM selectors and bounded protected reads"})
 	}
-	for _, name := range []string{"element.press", "element.fill", "browser.navigate", "browser.activate", "recording", "nameLocator", "textLocator", "cssLocator", "frameScope", "windowScope", "ancestorScope", "orderedQuery", "checkedObservation", "trustedInput", "fileSelection"} {
+	for _, name := range []string{"element.press", "element.fill", "browser.navigate", "browser.activate", "recording", "nameLocator", "textLocator", "cssLocator", "frameScope", "windowScope", "ancestorScope", "orderedQuery", "trustedInput", "fileSelection"} {
 		capabilities = append(capabilities, model.Capability{Name: name, Surface: "web", Supported: false})
 	}
 	playwrightReady := false
@@ -752,6 +752,8 @@ func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step
 			attribute = "text"
 		case "toHaveValue":
 			attribute = "value"
+		case "toBeChecked":
+			attribute = "checked"
 		case "toBeVisible", "toBeEnabled":
 			command.Action = "resolve"
 		}
@@ -764,6 +766,15 @@ func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step
 		return result, err
 	}
 	if step.Action == "element.read" {
+		if attribute == "checked" {
+			value, err := checkedReplyValue(reply)
+			if err != nil {
+				return result, err
+			}
+			result.Value = &value
+			result.VerificationState = "verified"
+			return result, nil
+		}
 		if reply.Value == nil || *reply.Value == "[redacted]" {
 			return result, browserError("attributeUnavailable", "Requested value is unavailable or redacted", "notDispatched")
 		}
@@ -771,7 +782,13 @@ func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step
 		result.Value = &value
 	} else {
 		var holds bool
-		if command.Action == "resolve" {
+		if attribute == "checked" {
+			value, err := checkedReplyValue(reply)
+			if err != nil {
+				return result, err
+			}
+			holds = value.Bool
+		} else if command.Action == "resolve" {
 			value := reply.Visible
 			if step.Assertion.Matcher == "toBeEnabled" {
 				value = reply.Enabled
@@ -802,10 +819,10 @@ func validateReadOperation(step model.Step) error {
 	switch step.Action {
 	case "element.read":
 		switch step.Arguments["attribute"].String {
-		case "text", "value", "name":
+		case "text", "value", "name", "checked":
 			return nil
 		default:
-			return browserError("unsupportedAttribute", "Chrome reads support only text, value, and name", "notDispatched")
+			return browserError("unsupportedAttribute", "Chrome reads support only text, value, name, and checked", "notDispatched")
 		}
 	case "expect":
 		if step.Assertion == nil {
@@ -816,12 +833,12 @@ func validateReadOperation(step model.Step) error {
 			if step.Assertion.Expected == nil {
 				return browserError("invalidAssertion", "Chrome text/value assertions require an expected value", "notDispatched")
 			}
-		case "toBeVisible", "toBeEnabled":
+		case "toBeVisible", "toBeEnabled", "toBeChecked":
 			if step.Assertion.Expected != nil {
-				return browserError("invalidAssertion", "Chrome visible/enabled assertions do not accept an expected value", "notDispatched")
+				return browserError("invalidAssertion", "Chrome boolean assertions do not accept an expected value", "notDispatched")
 			}
 		default:
-			return browserError("unsupportedAssertion", "Chrome assertions support text, value, visible, and enabled", "notDispatched")
+			return browserError("unsupportedAssertion", "Chrome assertions support text, value, visible, enabled, and checked", "notDispatched")
 		}
 	}
 	return nil

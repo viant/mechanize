@@ -310,8 +310,19 @@ globalThis.MechanizeDOM = globalThis.MechanizeDOM || (() => {
     if (action === "resolve") return {role: role(el), name: secret(el) ? "[redacted]" : name(el, doc), visible: visible(el), enabled: !el.disabled};
     if (action === "read") {
       const attribute = args.attribute || "value";
-      if (!["value", "text", "name"].includes(attribute)) fail("unsupportedAttribute", "Read supports value, text and name");
+      if (!["value", "text", "name", "checked"].includes(attribute)) fail("unsupportedAttribute", "Read supports value, text, name and checked");
       if(secret(el))return {value:"[redacted]"};
+      if(attribute==="checked") {
+        if(el.tagName==="INPUT"&&["checkbox","radio"].includes(el.type)) {
+          if(el.indeterminate)fail("attributeUnavailable","Mixed checked state is not a boolean");
+          return {checked:el.checked};
+        }
+        if(["checkbox","radio","switch","menuitemcheckbox","menuitemradio"].includes(role(el))) {
+          const checked=el.getAttribute("aria-checked");
+          if(checked==="true"||checked==="false")return {checked:checked==="true"};
+        }
+        fail("attributeUnavailable","Explicit boolean checked state unavailable");
+      }
       if(attribute==="value")return exactValue(el.value);
       return {value:attribute==="name"?name(el,doc):text(scopedElementText(el))};
     }

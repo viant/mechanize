@@ -18,6 +18,7 @@ import (
 )
 
 type readFixture struct {
+	checkedReply          atomic.Int64
 	publicReadDelay       atomic.Int64
 	publicReadMarked      atomic.Int64
 	lastValidationMarked  atomic.Bool
@@ -178,6 +179,13 @@ func newReadFixtureScope(t *testing.T, trustScope string) *readFixture {
 				f.reads.Add(1)
 				value := f.value.Load().(string)
 				reply.Value = &value
+				if cmd.Args["attribute"] == "checked" && f.checkedReply.Load() != 0 {
+					checked := f.checkedReply.Load() == 2
+					reply.Checked = &checked
+					if f.checkedReply.Load() != 3 {
+						reply.Value = nil
+					}
+				}
 				if version := f.valueReadVersion.Load(); version != 0 {
 					reply.ValueReadVersion = int(version)
 					if !f.valueReadCountMissing.Load() {

@@ -30,12 +30,12 @@ func TestActorScopedChromeCapabilitiesValidateCanonicalReadonlyDSLWithoutControl
 			p.Scopes = []string{"desktop:observe"}
 			ctx := auth.WithPrincipal(context.Background(), p)
 			caps := scopedCapabilityMap(t, f.g, ctx, p)
-			for _, name := range []string{"attributeRead", "boundedObservation", "roleLocator", "idLocator", "testIdLocator", "labelRelationships"} {
+			for _, name := range []string{"attributeRead", "checkedObservation", "boundedObservation", "roleLocator", "idLocator", "testIdLocator", "labelRelationships"} {
 				if !caps["web:"+name] {
 					t.Fatalf("missing read capability %s", name)
 				}
 			}
-			for _, name := range []string{"element.press", "element.fill", "browser.navigate", "recording", "nameLocator", "textLocator", "frameScope", "windowScope", "ancestorScope", "orderedQuery", "checkedObservation"} {
+			for _, name := range []string{"element.press", "element.fill", "browser.navigate", "recording", "nameLocator", "textLocator", "frameScope", "windowScope", "ancestorScope", "orderedQuery"} {
 				if caps["web:"+name] {
 					t.Fatalf("unqualified route advertised: %s", name)
 				}

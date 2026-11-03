@@ -199,7 +199,7 @@ func (g *Gateway) admitControlOnce(ctx context.Context, p auth.Principal, surfac
 			return ControlAdmission{}, browserError("staleAuthority", "Original acquisition target changed", "notDispatched")
 		}
 		reply, err := g.broker.call(ctx, channel, Command{Action: "executor.validate", Identity: candidate.Document.Identity}, false, func() error { return g.controlCheck(ctx, p, candidate, channel, true) })
-		if err != nil || !reply.Validated || reply.Error != nil || reply.Identity.DocumentID != candidate.Document.DocumentID || reply.Identity.TabID != candidate.Document.TabID || reply.Value != nil || len(reply.Nodes) != 0 || reply.NewDocument != nil || reply.ControlLease != nil || len(reply.Events) != 0 || reply.Name != "" {
+		if err != nil || !reply.Validated || reply.Error != nil || reply.Identity.DocumentID != candidate.Document.DocumentID || reply.Identity.TabID != candidate.Document.TabID || reply.Value != nil || reply.Checked != nil || len(reply.Nodes) != 0 || reply.NewDocument != nil || reply.ControlLease != nil || len(reply.Events) != 0 || reply.Name != "" {
 			return ControlAdmission{}, errors.Join(err, browserError("authorityUnconfirmed", "Metadata-only renderer binding unconfirmed", "notDispatched"))
 		}
 	}
