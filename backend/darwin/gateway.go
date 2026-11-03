@@ -55,6 +55,7 @@ type Gateway struct {
 	processExitEnabled           bool
 	nativeRootScopes             map[string]bool
 	nativeMenuScopeEnabled       bool
+	applicationLookupEnabled     bool
 	windowTitleScopeEnabled      bool
 	windowPositionEnabled        bool
 	windowSessionKeyboardEnabled bool
@@ -210,29 +211,31 @@ func (g *Gateway) ready(ctx context.Context) error {
 	reply, err := g.call(ctx, "doctor", map[string]any{}, nil)
 	if err == nil {
 		var doctor struct {
-			AXTrusted               bool     `json:"axTrusted"`
-			MutationEnabled         bool     `json:"mutationEnabled"`
-			SemanticEnabled         bool     `json:"semanticEnabled"`
-			TargetedKeyboardEnabled bool     `json:"targetedKeyboardEnabled"`
-			SessionKeyboardEnabled  bool     `json:"sessionKeyboardEnabled"`
-			SessionTextEnabled      bool     `json:"sessionTextEnabled"`
-			WindowFrameClickEnabled bool     `json:"windowFrameClickEnabled"`
-			CaptureGranted          bool     `json:"captureGranted"`
-			LaunchEnabled           bool     `json:"launchEnabled"`
-			QuitEnabled             bool     `json:"quitEnabled"`
-			SupportedMethods        []string `json:"supportedMethods"`
-			NativeRootScopes        []string `json:"nativeRootScopes"`
-			NativeMenuScopeVersion  int      `json:"nativeMenuScopeVersion"`
-			NativeWindowScopes      []string `json:"nativeWindowScopes"`
-			NativeWindowActions     []string `json:"nativeWindowActions"`
-			NativeBooleanReads      []string `json:"nativeBooleanReads"`
-			NativeTextActions       []string `json:"nativeTextActions"`
-			NativeTextReads         []string `json:"nativeTextReads"`
-			NativeSemanticMenus     []string `json:"nativeSemanticMenus"`
+			AXTrusted                      bool     `json:"axTrusted"`
+			MutationEnabled                bool     `json:"mutationEnabled"`
+			SemanticEnabled                bool     `json:"semanticEnabled"`
+			TargetedKeyboardEnabled        bool     `json:"targetedKeyboardEnabled"`
+			SessionKeyboardEnabled         bool     `json:"sessionKeyboardEnabled"`
+			SessionTextEnabled             bool     `json:"sessionTextEnabled"`
+			WindowFrameClickEnabled        bool     `json:"windowFrameClickEnabled"`
+			CaptureGranted                 bool     `json:"captureGranted"`
+			LaunchEnabled                  bool     `json:"launchEnabled"`
+			QuitEnabled                    bool     `json:"quitEnabled"`
+			SupportedMethods               []string `json:"supportedMethods"`
+			NativeRootScopes               []string `json:"nativeRootScopes"`
+			NativeMenuScopeVersion         int      `json:"nativeMenuScopeVersion"`
+			NativeApplicationLookupVersion int      `json:"nativeApplicationLookupVersion"`
+			NativeWindowScopes             []string `json:"nativeWindowScopes"`
+			NativeWindowActions            []string `json:"nativeWindowActions"`
+			NativeBooleanReads             []string `json:"nativeBooleanReads"`
+			NativeTextActions              []string `json:"nativeTextActions"`
+			NativeTextReads                []string `json:"nativeTextReads"`
+			NativeSemanticMenus            []string `json:"nativeSemanticMenus"`
 		}
 		err = json.Unmarshal(reply.Result, &doctor)
 		g.axTrusted = doctor.AXTrusted
 		g.nativeMenuScopeEnabled = doctor.NativeMenuScopeVersion == 1
+		g.applicationLookupEnabled = doctor.NativeApplicationLookupVersion == 1
 		g.mutationEnabled = doctor.MutationEnabled
 		g.semanticEnabled = doctor.SemanticEnabled
 		g.semanticMenuEnabled = false
@@ -380,7 +383,7 @@ func (g *Gateway) observeWindowSnapshot(ctx context.Context, surface model.Surfa
 	if nativeRoot != "" && !g.nativeRootScopes[nativeRoot] {
 		return model.Observation{}, nativeError("unsupportedScope", "Native helper does not advertise the requested root scope")
 	}
-	reply, err := g.call(ctx, "apps.list", map[string]any{"expectedApp": surface.BundleID}, nil)
+	reply, err := g.applicationInventory(ctx, surface)
 	if err != nil {
 		return model.Observation{}, err
 	}

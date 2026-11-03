@@ -93,7 +93,7 @@ func (r *ReadOnlyCaller) prepare(ctx context.Context) (uint64, error) {
 }
 func readonlyMethod(method string) bool {
 	switch method {
-	case "controlBadge.begin", "controlBadge.renew", "controlBadge.end", "controlBadge.stop", "controlBadge.releaseSession", "input.releasedState", "doctor", "apps.list", "app.exitStatus", "windows.list", "elements.snapshot", "elements.read", "elements.valueMatches":
+	case "controlBadge.begin", "controlBadge.renew", "controlBadge.end", "controlBadge.stop", "controlBadge.releaseSession", "input.releasedState", "doctor", "apps.list", "app.lookup", "app.exitStatus", "windows.list", "elements.snapshot", "elements.read", "elements.valueMatches":
 		return true
 	}
 	return false

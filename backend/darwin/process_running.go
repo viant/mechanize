@@ -37,7 +37,7 @@ func (g *Gateway) ProcessRunning(ctx context.Context, p auth.Principal, surface 
 	if err := g.ready(ctx); err != nil {
 		return ProcessRunningObservation{}, err
 	}
-	reply, err := g.call(ctx, "apps.list", map[string]any{"expectedApp": surface.BundleID}, nil)
+	reply, err := g.applicationInventory(ctx, surface)
 	if err != nil || reply.Error != nil {
 		return ProcessRunningObservation{}, errors.Join(err, reply.Error)
 	}

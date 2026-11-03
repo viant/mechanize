@@ -19,7 +19,7 @@ type applicationIdentity struct {
 }
 
 func (g *Gateway) currentApplication(ctx context.Context, surface model.Surface) (applicationIdentity, error) {
-	reply, err := g.call(ctx, "apps.list", map[string]any{"expectedApp": surface.BundleID}, nil)
+	reply, err := g.applicationInventory(ctx, surface)
 	if err != nil || reply.Error != nil {
 		if reply.Error != nil {
 			err = errors.Join(err, reply.Error)

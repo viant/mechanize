@@ -523,7 +523,7 @@ type nativeControlCaller struct {
 // transport failure is unavailable observation, not unknown key/button state.
 func nativeRequestIsReadOnly(method string) bool {
 	switch method {
-	case "doctor", "apps.list", "elements.snapshot", "elements.read", "elements.valueMatches", "windows.list", "app.exitStatus":
+	case "doctor", "apps.list", "app.lookup", "elements.snapshot", "elements.read", "elements.valueMatches", "windows.list", "app.exitStatus":
 		return true
 	}
 	return false
@@ -551,12 +551,12 @@ func (c *nativeControlCaller) Call(ctx context.Context, request native.Request) 
 		return native.Reply{}, session.ErrNoLease
 	}
 	expected := native.Lease{ID: lease.ID, Generation: lease.Generation}
-	if m.options.LaunchOnly && request.Method != "doctor" && request.Method != "apps.list" && request.Method != "app.launch" && request.Method != "lease.install" {
+	if m.options.LaunchOnly && request.Method != "doctor" && request.Method != "apps.list" && request.Method != "app.lookup" && request.Method != "app.launch" && request.Method != "lease.install" {
 		return native.Reply{}, auth.ErrUnauthorized
 	}
 	switch request.Method {
 	case "doctor", "apps.list":
-	case "windows.captureFrame", "windows.clickFrame", "windows.list", "windows.setPosition", "windows.pressSessionKey", "windows.typeText", "elements.snapshot", "elements.read", "elements.valueMatches", "elements.replaceText", "elements.focus", "elements.pressKey", "elements.pressSessionKey", "elements.press", "elements.showMenu", "elements.setValue", "elements.submit", "app.launch", "app.activate", "app.quit", "app.exitStatus":
+	case "windows.captureFrame", "windows.clickFrame", "windows.list", "windows.setPosition", "windows.pressSessionKey", "windows.typeText", "elements.snapshot", "elements.read", "elements.valueMatches", "elements.replaceText", "elements.focus", "elements.pressKey", "elements.pressSessionKey", "elements.press", "elements.showMenu", "elements.setValue", "elements.submit", "app.launch", "app.activate", "app.quit", "app.exitStatus", "app.lookup":
 		var scope struct {
 			BundleID    string `json:"bundleID"`
 			ExpectedApp string `json:"expectedApp"`
