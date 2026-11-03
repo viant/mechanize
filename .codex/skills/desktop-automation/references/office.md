@@ -100,6 +100,37 @@ unknown effect. UI transition verification establishes that transition; saved
 artifact correctness remains a separate mandatory check. Include recovery calls
 and file review in timing/token comparisons.
 
+A later 19-slide preservation test used Computer Use to focus two embedded
+Find/Replace fields and Mechanize for entry, a capture-bound Replace click, Save,
+local PDF export, Close and reopen. Label that route hybrid. The editable chart
+and embedded workbook remained byte-identical, and the saved deck hash survived
+reopening. Full-window AX observation was incomplete; focused-field and fresh
+capture routes supplied bounded evidence. Cmd+F opened a separate floating Find
+toolbar, not the embedded replacement field. Do not repeat its known unsupported
+setter route. Capture clicks use `clickWindowFrame(captureRef:...,x:...,y:...)`;
+window identity is already bound by the permit, so there is no `windowId` option.
+Use original image pixels and the same session, grant and returned purpose.
+
+For local PowerPoint PDFs, explicitly verify Best for printing; a new deck may
+instead default to the Microsoft online-service option. A window-scoped Return
+can commit the observed Export sheet. A predeclared File-menu Save enabled-state
+transition supplied the original postcondition after asynchronous export. Named
+menu inputs must match the declared scope. A successful reconciliation requires
+its stopped-runtime guard, exact revisions and `commitConfirmed`; checkpoint
+publication alone is not proof. Resume skipped the confirmed export, verified by
+unchanged PDF hash and modification time. Keep failures and recovery overhead in
+performance records. If a window shortcut is refused before dispatch, fresh
+active-document evidence plus an observed semantic File command may provide a
+qualified route; never replay unknown input or bypass denied consent.
+
+This test also exposed malformed generated raster fallback data in its input
+fixture. A valid ZIP/PPTX structure does not prove that every image decodes.
+Validate raster payloads and resolve image relationships by content, since native
+Save can rename media parts. Preserve failed checks, repair the baseline in a
+separate local-artifact revision, and restart comparisons rather than silently
+repairing outputs claimed as native. A raster reference PDF is not an identical
+rendering-method baseline for a native PDF timing comparison.
+
 Word: preserve paragraph styles, pagination, comments/revisions and fields required by the task. Outlook: draft, attachment, send and Sent verification are different outcomes; no sending unless explicitly authorized.
 
 For Mechanize fallback, retrieve `skill://mechanize-microsoft-office/SKILL.md` and only its relevant case. An offline QA reader must not silently repair or rewrite files claimed to be native-authored. Declare a hybrid route if local authoring is part of the work.
