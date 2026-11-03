@@ -96,7 +96,7 @@ final class AXSemanticForegroundTests:XCTestCase {
    case "association":f.associated=f.other
    default:f.missingRole=true
    }
-   do{if try proof.focused(Budget(milliseconds:100),runtime:f.runtime){input+=1};XCTFail("invalid recipient accepted: \(mode)")}catch let failure as NativeFailure{XCTAssertTrue(["foregroundAXWindowUnavailable","foregroundAXFocusUnavailable","foregroundAXOwnerMismatch","foregroundAXWindowChanged"].contains(failure.code))}
+   do{if try proof.focused(Budget(milliseconds:100),runtime:f.runtime){input+=1};XCTFail("invalid recipient accepted: \(mode)")}catch let failure as NativeFailure{XCTAssertTrue(["foregroundAXWindowUnavailable","foregroundAXFocusUnavailable","foregroundAXOwnerMismatch","foregroundAXOwnerUnavailable","foregroundAXWindowChanged"].contains(failure.code))}
    XCTAssertEqual(input,0)
   }
  }

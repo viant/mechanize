@@ -59,8 +59,7 @@ struct AXSemanticForegroundRecipient {
   let result=runtime.attribute(element,name);try budget.check();return result
  }
  private func owned(_ element:AXUIElement,_ budget:Budget,_ runtime:ScopedNativeRootRuntime)throws {
-  try budget.check();let owner=runtime.owner(element);try budget.check()
-  guard owner.status==AXError.success.rawValue,owner.pid==pid,owner.uid==uid,owner.birth==birth,owner.bundle==bundle else{throw NativeFailure("foregroundAXOwnerMismatch","Exact AX recipient owner changed; business input was not dispatched")}
+  try requireAXElementOwner(element,pid:pid,uid:uid,birth:birth,bundle:bundle,budget:budget,owner:runtime.owner)
  }
  private func scopedWindowForPanelOwner(_ candidate:AXUIElement,_ budget:Budget,_ runtime:ScopedNativeRootRuntime)throws->(AXUIElement,[AXUIElement])? {
   let owner=runtime.owner(candidate)

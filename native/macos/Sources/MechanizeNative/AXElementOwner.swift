@@ -35,3 +35,26 @@ func inspectAXElementOwner(_ element:AXUIElement,runtime:AXElementOwnerRuntime =
     guard let before,!before.isEmpty,before==after else {return AXElementOwner(pid:pid,uid:nil,birth:nil,bundle:nil,status:status.rawValue)}
     return AXElementOwner(pid:pid,uid:uid,birth:before,bundle:bundle,status:status.rawValue)
 }
+
+// Missing metadata is not a mismatching owner. Re-read only the same retained
+// element, within the original budget, before any input. Every available fact
+// must agree; no foreign owner, changed birth, or invalid AX reference is retried.
+func requireAXElementOwner(_ element:AXUIElement,pid:pid_t,uid:uid_t,birth:String,bundle:String,budget:Budget,
+                           owner:(AXUIElement)->AXElementOwner={inspectAXElementOwner($0)},
+                           pause:(TimeInterval)->Void={Thread.sleep(forTimeInterval:$0)})throws {
+    for attempt in 0..<3 {
+        try budget.check()
+        let facts=owner(element)
+        try budget.check()
+        if facts.pid.map({$0 != pid}) == true || facts.uid.map({$0 != uid}) == true ||
+           facts.birth.map({$0 != birth}) == true || facts.bundle.map({$0 != bundle}) == true {
+            throw NativeFailure("foregroundAXOwnerMismatch","Exact AX recipient owner changed; business input was not dispatched")
+        }
+        if facts.status == AXError.success.rawValue,facts.pid==pid,facts.uid==uid,facts.birth==birth,facts.bundle==bundle {return}
+        guard facts.status == AXError.success.rawValue || facts.status == AXError.cannotComplete.rawValue else {
+            throw NativeFailure("foregroundAXOwnerUnavailable","Exact AX recipient ownership is unavailable; business input was not dispatched")
+        }
+        if attempt < 2 {pause(min(0.015,Double(budget.remainingSeconds)))}
+    }
+    throw NativeFailure("foregroundAXOwnerUnavailable","Exact AX recipient ownership did not settle; business input was not dispatched")
+}
