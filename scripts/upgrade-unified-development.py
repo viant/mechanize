@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import plistlib
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -83,7 +84,28 @@ def certificate(path):
         if not leaf.is_file(): raise ValueError('Certificate-signed update required; ad-hoc is not supported')
         return hashlib.sha1(leaf.read_bytes()).hexdigest()
 
+def start_console(app, root):
+    config=package.decode(shared.private(root/'config.json'))
+    endpoint=Path(config['nativeConsole']['socketPath']+'.helper')
+    executable=app/'Contents/MacOS/MechanizeConsent'
+    shared.run('open','-g',str(app))
+    deadline=time.monotonic()+10
+    while time.monotonic()<deadline:
+        for line in shared.run('ps','-axo','pid=,uid=,comm=').stdout.decode().splitlines():
+            fields=line.strip().split(None,2)
+            if len(fields)==3 and fields[1]==str(os.getuid()) and fields[2]==str(executable):
+                shared.process_identity(int(fields[0]),executable)
+                try:info=endpoint.lstat()
+                except FileNotFoundError:continue
+                if stat.S_ISSOCK(info.st_mode) and info.st_uid==os.getuid() and not info.st_mode&0o077:
+                    return
+        time.sleep(.1)
+    raise RuntimeError('Console helper listener did not become ready')
+
 def start(app, root, listen):
+    # console-v1 broker initialization needs the signed app's helper launcher.
+    # Starting the broker first strands it before its HTTP listener exists.
+    start_console(app,root)
     broker = app/'Contents/Helpers/mechanize'
     logs = root/'logs';logs.mkdir(mode=0o700,exist_ok=True)
     with (logs/'broker.stdout.log').open('ab') as out, (logs/'broker.stderr.log').open('ab') as err:

@@ -14,6 +14,13 @@ u=importlib.util.module_from_spec(spec);spec.loader.exec_module(u)
 def pin(role,letter):return f'identifier "com.viant.mechanize.{role}" and cdhash H"{letter*40}"'
 
 class UnifiedUpdateTests(unittest.TestCase):
+    def test_console_starts_before_broker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app,_,_,state,_,_,_=self.fixture(tmp);events=[]
+            with mock.patch.object(u,'start_console',side_effect=lambda *a:events.append('console')),mock.patch.object(u.subprocess,'Popen',side_effect=lambda *a,**k:(events.append('broker') or mock.Mock(pid=77))),mock.patch.object(u.time,'sleep'),mock.patch.object(u.shared,'process_identity',side_effect=lambda *a:events.append('verify')):
+                self.assertEqual(u.start(app,state,'127.0.0.1:4987'),77)
+            self.assertEqual(events,['console','broker','verify'])
+
     def fixture(self,root):
         root=Path(root).resolve();root.chmod(0o700)
         installed=root/'Applications/Mechanize.app';candidate=root/'candidate/Mechanize.app'
