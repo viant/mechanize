@@ -21,11 +21,12 @@ final class WindowSessionKeyTests: XCTestCase {
         try KeyboardPosting.press(inputs: inputs, token: "key:53", delivery: .session, preflight: { try self.qualify(runtime) }, down: { route in XCTAssertEqual(route, .session); downs += 1; return true }, up: { _ in ups += 1; return true })
         XCTAssertEqual(downs, 1); XCTAssertEqual(ups, 1); XCTAssertEqual(inputs.inhibitAndRelease().unknown, 0)
     }
-    func testModalAndFloatingWindowsQualifyWithoutTargetingUnderlyingDocument() throws {
-        for layer in [NSWindow.Level.normal.rawValue, NSWindow.Level.floating.rawValue, NSWindow.Level.modalPanel.rawValue] {
+    func testNormalAndModalWindowsQualifyWithoutTargetingUnderlyingDocument() throws {
+        for layer in [NSWindow.Level.normal.rawValue, NSWindow.Level.modalPanel.rawValue] {
             try qualify(runtime([window(layer: layer), window(100)]))
             XCTAssertThrowsError(try qualify(runtime([window(100, layer: layer), window()])))
         }
+        XCTAssertThrowsError(try qualify(runtime([window(layer: NSWindow.Level.floating.rawValue), window(100)])))
         for layer in [NSWindow.Level.popUpMenu.rawValue, NSWindow.Level.statusBar.rawValue] {
             XCTAssertThrowsError(try qualify(runtime([window(100, layer: layer), window()])))
             XCTAssertThrowsError(try qualify(runtime([window(layer: layer)])))

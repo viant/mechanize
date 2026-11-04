@@ -89,10 +89,13 @@ private func qualifySessionWindow(pid: pid_t, uid: uid_t, birth: String, bundle:
     let requestedLayer = windows.first(where: { $0.id == windowID })?.layer ?? -1
     let topID = owned.first?.id ?? 0
     var candidate = requireForeground ? owned.first : owned.first(where: { $0.id == windowID })
-    let needsFocusedProof = requireForeground && candidate?.id != windowID
+    // Floating panels may be visually topmost while refusing key status. Their
+    // stacking position alone cannot identify the session keyboard recipient.
+    let needsFocusedProof = requireForeground && (candidate?.id != windowID || requestedLayer == NSWindow.Level.floating.rawValue)
     let focused = textPlan == nil ? runtime.focusedWindow : runtime.focusedTextWindow
-    if needsFocusedProof && focusedSessionWindowMatches(windows, pid:pid, uid:uid, birth:birth, bundle:bundle, windowID:windowID, focused:focused?(pid),textPlan:textPlan) {
-        candidate = owned.first(where: { $0.id == windowID })
+    if needsFocusedProof {
+        candidate = focusedSessionWindowMatches(windows, pid:pid, uid:uid, birth:birth, bundle:bundle, windowID:windowID, focused:focused?(pid),textPlan:textPlan)
+            ? owned.first(where: { $0.id == windowID }) : nil
     }
     guard owned.allSatisfy({ $0.alpha.isFinite && $0.alpha > 0 && $0.alpha <= 1 }), let first = candidate, first.id == windowID, supportedSessionInputWindowLayer(first.layer), windows.filter({ $0.id == windowID }).count == 1,
           first.bounds.minX.isFinite, first.bounds.minY.isFinite, first.bounds.maxX.isFinite, first.bounds.maxY.isFinite,

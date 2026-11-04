@@ -48,6 +48,30 @@ struct FocusedSessionWindowTests {
 
 
 extension FocusedSessionWindowTests {
+    @Test func topFloatingPanelNeedsStableExactKeyboardFocus() throws {
+        let rows=[row(layer:NSWindow.Level.floating.rawValue),row(9,"Other document")]
+        #expect(!NativeForegroundTarget.physicalWindowReady(rows,pid:42,windowID:7,pointerDelivery:false))
+        #expect(NativeForegroundTarget.physicalWindowReady(rows,pid:42,windowID:7,pointerDelivery:true))
+        for mode in ["missing","other","unverified","changed","exact"] {
+            var reads=0,downs=0,ups=0
+            var runtime=WindowSessionKeyRuntime(process:{_ in (502,"birth","com.example.Editor")},foreground:{42},windows:{rows},session:{true},secure:{false})
+            runtime.focusedWindow={_ in
+                reads += 1
+                if mode=="missing" {return nil}
+                if mode=="other" || mode=="changed" && reads>1 {return focus(title:"Other document")}
+                return focus(verified:mode != "unverified")
+            }
+            let inputs=InputSafety();inputs.enable()
+            let post={
+                try KeyboardPosting.press(inputs:inputs,token:"key:53",delivery:.session,
+                    preflight:{try qualifyWindowSessionKey(pid:42,uid:502,birth:"birth",bundle:"com.example.Editor",windowID:7,check:{},runtime:runtime)},
+                    down:{_ in downs += 1;return true},up:{_ in ups += 1;return true})
+            }
+            if mode=="exact" {try post();#expect(downs==1);#expect(ups==1)}
+            else {#expect(throws:(any Error).self){try post()};#expect(downs==0);#expect(ups==0)}
+            #expect(inputs.inhibitAndRelease().unknown==0)
+        }
+    }
     @Test func declaredTextFieldCanUseExactKeyboardProofPastNonKeyOverlay() throws {
         let plan=try WindowTextPlan(text:"fixture",role:"AXTextArea",identifier:"editor",name:"")
         var f=focus();f.textControl=FocusedTextControl(role:"AXTextArea",identifier:"editor",name:"Public editor")

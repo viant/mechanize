@@ -280,7 +280,10 @@ struct NativeForegroundTarget {
    let matches=rows.filter{$0.id==windowID}
    return matches.count==1 && matches[0].pid==pid && matches[0].visible && matches[0].alpha.isFinite && matches[0].alpha>0 && matches[0].alpha<=1 && supportedSessionInputWindowLayer(matches[0].layer)
   }
-  return rows.first{$0.pid==pid&&$0.visible&&$0.alpha>0}?.id==windowID
+  guard let top=rows.first(where:{$0.pid==pid&&$0.visible&&$0.alpha>0}),top.id==windowID else{return false}
+  // A non-key floating palette can be topmost; let windowReady obtain the
+  // exact AX keyboard-recipient proof instead of accepting stacking alone.
+  return top.layer != NSWindow.Level.floating.rawValue
  }
  func windowReady(_ budget:Budget)throws->Bool {
   if let semanticRecipient {
