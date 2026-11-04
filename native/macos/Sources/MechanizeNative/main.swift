@@ -915,7 +915,9 @@ final class Helper {
                 } catch {
                     AutomationPointer.hide()
                     let failure = error as? NativeFailure ?? NativeFailure("windowClickUnknown", "Window click outcome unknown")
-                    let state = attempted ? "unknown" : "notDispatched"
+                    // Only the driver's explicit pre-post rejection proves that
+                    // this attempted click never entered MouseDown.
+                    let state = attempted && failure.code != "inputDownNotPosted" ? "unknown" : "notDispatched"
                     reply["error"] = ["code": failure.code, "message": failure.message, "stage": "native", "dispatchState": state, "retryableRead": false]
                     reply["receipt"] = ["dispatchState": state, "targetRef": "window:\(permit.windowId)", "startedAt": started, "returnedAt": iso.string(from: Date()), "businessSuccess": false]
                     _ = inputs.inhibitAndRelease(); lease = nil

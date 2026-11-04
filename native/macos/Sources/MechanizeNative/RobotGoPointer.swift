@@ -10,6 +10,12 @@ enum RobotGoPointer {
             throw NativeFailure("robotGoMoveUnconfirmed", "RobotGo cursor movement was not confirmed")
         }
     }
-    static func down(at point: CGPoint) -> Bool { MechanizeRobotGoDown(point.x, point.y) == 0 }
+    static func classifiedDown(at point: CGPoint) -> InputDownOutcome {
+        switch MechanizeRobotGoDown(point.x, point.y) {
+        case 0: return .posted
+        case 2: return .notPosted
+        default: return .unknown
+        }
+    }
     static func up() -> Bool { MechanizeRobotGoUp() == 0 }
 }

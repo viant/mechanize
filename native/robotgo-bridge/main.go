@@ -50,17 +50,23 @@ func MechanizeRobotGoMove(x, y C.double) (result C.int) {
 }
 
 //export MechanizeRobotGoDown
-func MechanizeRobotGoDown(x, y C.double) (result C.int) {
+func MechanizeRobotGoDown(x, y C.double) C.int {
+	return C.int(pointerDown(float64(x), float64(y), pointMatches, func() error { return darwin.MouseDown("left") }))
+}
+
+func pointerDown(x, y float64, matches func(float64, float64) bool, post func() error) (result int) {
 	result = 1
 	defer func() {
 		if recover() != nil {
 			result = 1
 		}
 	}()
-	if !validPoint(float64(x), float64(y)) || !pointMatches(float64(x), float64(y)) {
-		return
+	if !validPoint(x, y) || !matches(x, y) {
+		// No MouseDown call occurred. Keep this distinct from an uncertain
+		// driver error or panic after entering the posting boundary.
+		return 2
 	}
-	if darwin.MouseDown("left") == nil {
+	if post() == nil {
 		return 0
 	}
 	return

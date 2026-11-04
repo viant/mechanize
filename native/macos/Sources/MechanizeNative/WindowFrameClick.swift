@@ -122,9 +122,11 @@ func postWindowFrameClick(inputs: InputSafety, point: CGPoint, preflight: @escap
             try RobotGoPointer.move(to: point)
             try preflight()
         }
-        postDown = { willPost(); return RobotGoPointer.down(at: point) }
         // Release never re-targets/retries a down after a click destroys a dialog.
         postUp = { guard sessionKeyReleaseAllowed() else { return false }; return RobotGoPointer.up() }
+        try inputs.pressClassified(token: "mouse:left", preflight: qualifiedPreflight,
+            down: { willPost(); return RobotGoPointer.classifiedDown(at: point) }, up: postUp)
+        return
     }
     try inputs.press(token: "mouse:left", preflight: qualifiedPreflight, down: postDown, up: postUp)
 }

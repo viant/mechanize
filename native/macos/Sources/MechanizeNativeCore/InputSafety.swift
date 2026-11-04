@@ -1,5 +1,7 @@
 import Foundation
 
+public enum InputDownOutcome { case posted, notPosted, unknown }
+
 /// Shared by the serialized action lane and independent watchdog. Native posting
 /// closures run under the lock; no down event can race after inhibition.
 public final class InputSafety {
@@ -9,13 +11,23 @@ public final class InputSafety {
     public init() {}
     public func enable() { lock.lock(); inhibited = false; lock.unlock() }
     public func press(token: String, preflight: () throws -> Void = {}, down: () -> Bool, up: @escaping () -> Bool) throws {
+        try pressClassified(token: token, preflight: preflight, down: { down() ? .posted : .unknown }, up: up)
+    }
+    public func pressClassified(token: String, preflight: () throws -> Void = {}, down: () -> InputDownOutcome, up: @escaping () -> Bool) throws {
         lock.lock(); defer { lock.unlock() }
         guard !inhibited else { throw NativeFailure("inputInhibited", "Input authority has been revoked") }
         guard cleanup[token] == nil else { throw NativeFailure("inputAlreadyHeld", "Input is already held") }
         try preflight()
         // Retain the cleanup before the uncertain posting boundary.
         cleanup[token] = up
-        guard down() else { throw NativeFailure("inputDispatchUnknown", "Input down posting failed") }
+        switch down() {
+        case .notPosted:
+            cleanup.removeValue(forKey: token)
+            throw NativeFailure("inputDownNotPosted", "Driver rejected input before posting")
+        case .unknown:
+            throw NativeFailure("inputDispatchUnknown", "Input down posting failed")
+        case .posted: break
+        }
         guard up() else { throw NativeFailure("inputDispatchUnknown", "Input release posting failed") }
         cleanup.removeValue(forKey: token)
     }
