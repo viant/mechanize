@@ -1,6 +1,6 @@
 ---
 name: desktop-automation
-description: "Operate websites and desktop apps with Computer Use first, using Mechanize for private credential entry or qualified Microsoft Office fallback. Use for UI automation, saved-file verification, and recovery across those executors."
+description: "Operate websites and desktop apps with Computer Use first, using Mechanize for private credential entry or qualified Microsoft Office fallback. Use for UI automation, native PDF export, saved-file verification, and recovery across those executors."
 ---
 
 # Desktop automation
@@ -37,7 +37,7 @@ Use when reporting execution or comparing timing; it is not a DOM benchmark.
 
 Treat stale or failed observations separately from failed actions. If a click errors while opening a document, read state before clicking again. For editable controls, a setter return is not a committed value or selection. Verify focus and application state before dependent input.
 
-Use [Office checks](references/office.md) for native files. Use [private credentials](references/credentials.md) only for authentication. Do not expose passwords, token contents or Vault records in prompts, screenshots, tool arguments or logs.
+Use [Office checks](references/office.md) for native files and [PDF creation and export](references/pdf.md) when PDF is a requested output. Use [private credentials](references/credentials.md) only for authentication. Do not expose passwords, token contents or Vault records in prompts, screenshots, tool arguments or logs.
 
 ## Switch executors without duplicate effects
 
