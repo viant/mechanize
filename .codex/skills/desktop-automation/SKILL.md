@@ -83,4 +83,7 @@ When comparing Computer Use with Mechanize, use identical synthetic inputs, outp
 
 For measured optimization, read [time, tokens and quality](references/benchmark.md). Compare individual Mechanize actions with Endly batches as separate routes, and use authoritative usage counters rather than token estimates.
 
+For requested Endly orchestration, read [conditional discovery](references/endly.md)
+before branching on prior tool responses or skipping app setup.
+
 At handoff, name the actual executor per stage and the remaining limitations. Say “verified for this operation and environment,” not “fully reliable” without matching end-to-end evidence. Preserve user-owned files and keep test copies separate.

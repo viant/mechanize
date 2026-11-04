@@ -106,6 +106,23 @@ before attributing the change to an automation tool.
 
 ## PowerPoint
 
+For the embedded Find/Replace panel, paste literal search and replacement text
+into the focused fields; typing can trigger macOS substitutions, and an AX setter
+can update displayed text without updating the value consumed by Replace. Check
+the exact field values, match count, case option and destination slide before
+Replace. Accessibility output may put `Value` before or after `Placeholder`;
+compare the field's value rather than assuming one rendered attribute order.
+Check saved shape text after a batch. Split multiline replacements by paragraph
+only when each match is independently scoped and unambiguous.
+
+An exposed thumbnail may be off-screen and refuse a click before input. Focus a
+visible thumbnail and navigate by keyboard, checking the current slide number
+after navigation before pasting. Rapid key sequences can miss a transition;
+reconcile the observed slide instead of replaying the paste. For an authorized
+editable status label, copy only the named shape from the reference, then verify
+exactly one added shape per intended slide and unchanged original media. Review
+placement on every slide; a shared position can overlap existing branding.
+
 Preserve existing placeholders, editable shapes/charts, embedded workbook data,
 image relationships, slide count and requested layout. Inspect every affected
 slide, save/reopen, then export and review every PDF page. Valid ZIP/PPTX structure
