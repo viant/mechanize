@@ -819,21 +819,7 @@ func (b *Broker) serve(conn net.Conn) {
 				}
 				prior := c.documents
 				c.documents = append([]Document(nil), event.Documents...)
-				if len(c.protectionSources) > 0 {
-					for _, old := range prior {
-						if protectedSourceIdentityLocked(c, old.Identity) {
-							found := false
-							for _, fresh := range c.documents {
-								if fresh.Identity == old.Identity {
-									found = true
-								}
-							}
-							if !found {
-								c.documents = append(c.documents, old)
-							}
-						}
-					}
-				}
+				retainProtectedInventoryLocked(c, prior)
 				c.credentialCandidates = append([]credentialCandidate(nil), event.CredentialCandidates...)
 				c.inventoryComplete = true
 				c.observeConsentReconnectInventory()

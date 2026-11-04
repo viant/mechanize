@@ -135,3 +135,38 @@ func inactivePrivacyControlPlaneFrameLocked(c *channel, raw []byte) bool {
 func inactivePrivacyReplacementLocked(c *channel) bool {
 	return c.privacy != nil && !c.privacy.active && c.privacy.conn != c.conn && c.privateFlow == nil && c.privateCredential == nil && c.privateInspection == nil && c.privateAdvance == nil && c.privacyPending == nil && c.manualPending == nil
 }
+
+// retainProtectedInventoryLocked preserves private source metadata across public inventory refreshes.
+// Caller holds the broker mutex.
+func retainProtectedInventoryLocked(c *channel, prior []Document) {
+	// Public inventories intentionally omit quarantined documents. An incomplete
+	// inventory can also have emptied prior. Retain the original, confirmed
+	// submission's immutable source metadata rather than manufacturing a new
+	// document from public inventory or relaxing VerifyControl. This is usable
+	// only by the existing private continuation; ordinary dispatch stays gated.
+	if f := c.privateFlow; f != nil && !f.poisoned && !f.retired && f.retireAttempt == "" && f.submitConfirmed && f.submitState == "dispatched" && fingerprintV2Hash.MatchString(f.submitAttempt) {
+		d := f.authority.Document
+		for _, source := range c.protectionSources {
+			i := source.Identity
+			if source.Origin == d.Origin && i.ProfileChannel == d.ProfileChannel && i.BrowserInstance == d.BrowserInstance && i.TabID == d.TabID && i.FrameID == d.FrameID && i.DocumentID == d.DocumentID {
+				prior = append(append([]Document(nil), prior...), d)
+				break
+			}
+		}
+	}
+	if len(c.protectionSources) > 0 {
+		for _, old := range prior {
+			if protectedSourceIdentityLocked(c, old.Identity) {
+				found := false
+				for _, fresh := range c.documents {
+					if fresh.Identity == old.Identity {
+						found = true
+					}
+				}
+				if !found {
+					c.documents = append(c.documents, old)
+				}
+			}
+		}
+	}
+}
