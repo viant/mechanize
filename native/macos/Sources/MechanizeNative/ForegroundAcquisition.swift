@@ -179,6 +179,7 @@ struct NativeForegroundTarget {
  let window:AXUIElement?
  let reference:Reference?
  var pointerDelivery=false
+ var pointerReadiness:(()throws->Bool)?=nil
  var semanticRecipient:AXSemanticForegroundRecipient?=nil
  var keyboardRecipient=false
  var windowTextPlan:WindowTextPlan?=nil
@@ -291,6 +292,10 @@ struct NativeForegroundTarget {
    return try semanticRecipient.focused(budget)
   }
   guard let windowID else{return true};let rows=try Self.ownedRows(pid:pid,birth:birth,bundle:bundle,budget:budget)
+  if pointerDelivery,let pointerReadiness {
+   guard Self.physicalWindowReady(rows,pid:pid,windowID:windowID,pointerDelivery:true) else{return false}
+   try budget.check();let ready=try pointerReadiness();try budget.check();return ready
+  }
   if Self.physicalWindowReady(rows,pid:pid,windowID:windowID,pointerDelivery:pointerDelivery){return true}
   guard !pointerDelivery else{return false}
   let read = windowTextPlan == nil ? WindowSessionKeyRuntime.system.focusedWindow : WindowSessionKeyRuntime.system.focusedTextWindow

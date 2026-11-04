@@ -161,7 +161,10 @@ extension Helper {
         // RobotGo's public pointer API uses integer screen points. Qualify the
         // actual posted point, including at Retina edges, rather than a proxy.
         let point = CGPoint(x: mappedPoint.x.rounded(), y: mappedPoint.y.rounded())
-        let foreground=try NativeForegroundTarget.physical(pid:permit.pid,birth:permit.processStartToken,bundle:permit.bundleId,windowID:permit.windowId,budget:budget,pointerDelivery:true)
+        var foreground=try NativeForegroundTarget.physical(pid:permit.pid,birth:permit.processStartToken,bundle:permit.bundleId,windowID:permit.windowId,budget:budget,pointerDelivery:true)
+        foreground.pointerReadiness = {
+            try windowFramePointReadyForForeground(permit,point:point,uid:getuid(),check:{try budget.check()})
+        }
         try acquire(foreground)
         try qualifyWindowFramePoint(permit, point: point, uid: getuid(), check: { try budget.check() })
         let exact = try await exactFrameCapture(permit, budget)

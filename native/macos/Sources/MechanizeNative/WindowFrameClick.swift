@@ -32,6 +32,20 @@ func qualifyWindowFrameCapture(_ permit: WindowFramePermit, uid: uid_t, check: (
     try check()
 }
 
+// Readiness may request raising this exact window, never clicking through an
+// occluder. Stale capture metadata and unavailable hit-test evidence remain
+// errors. The caller still rechecks pixels and ownership before mouse down.
+func windowFramePointReadyForForeground(_ permit: WindowFramePermit, point: CGPoint, uid: uid_t, check: () throws -> Void,
+                                       runtime: WindowFrameClickRuntime = .system) throws -> Bool {
+    try qualifyWindowFrameCapture(permit,uid:uid,check:check,runtime:runtime)
+    do {
+        try qualifyWindowFramePoint(permit,point:point,uid:uid,check:check,runtime:runtime)
+        return true
+    } catch let failure as NativeFailure where failure.code == "windowClickOccluded" {
+        return false
+    }
+}
+
 // The point must hit the requested window before every down. Unlike keyboard
 // routing, windows from any process may occlude a global pointer location.
 func qualifyWindowFramePoint(_ permit: WindowFramePermit, point: CGPoint, uid: uid_t, check: () throws -> Void,
