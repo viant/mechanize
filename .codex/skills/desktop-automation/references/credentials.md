@@ -26,3 +26,14 @@ the one-shot encrypted-record flow; never reveal its output in chat, public inpu
 tools or logs. Require a private owned source and the supported local cipher.
 Reject OAuth/SDK resources as website passwords. Preserve failed/uncertain writes
 and inspect before retrying; an import does not prove successful sign-in.
+
+After a broker redeployment, an already-open authenticated page can retain the
+old renderer binding. `publicReadIdentityChanged` may persist after selecting the
+current tab. If the original credential submission is confirmed, independent
+native inspection verifies the expected signed-in dashboard, and no input is
+pending or unknown, one normal reload of that exact non-editing page can create a
+fresh renderer binding. Preserve the original credential receipt and requalify
+the resulting document through Mechanize. Do not reload an unsaved form, repeat
+login, clear credential protection or treat this as a remedy for denied access.
+Record the native recovery separately from subsequent Mechanize reads; a passing
+read does not qualify plan creation or a new login's automatic handoff.
