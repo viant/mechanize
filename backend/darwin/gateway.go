@@ -561,6 +561,8 @@ func ValidateNativeWindowRequest(surface model.Surface, title, role string) erro
 
 // ValidateNativeWindowObservation checks an untrusted returned metadata graph
 // against the exact requested process and scope; it does not query Accessibility.
+// Truncated metadata remains explicitly truncated, never sufficient for action
+// resolution. Every returned node must still belong to the exact selected root.
 func ValidateNativeWindowObservation(observed model.Observation, surface model.Surface, title, role string) error {
 	if err := ValidateNativeWindowRequest(surface, title, role); err != nil {
 		return err
@@ -575,7 +577,7 @@ func ValidateNativeWindowObservation(observed model.Observation, surface model.S
 	if observed.ID == "" || observed.Epoch == "" || observed.Sequence == 0 || observed.Started.IsZero() || observed.Ended.IsZero() || observed.Ended.Before(observed.Started) {
 		return nativeError("incompleteObservation", "Fresh native snapshot identity required")
 	}
-	graph, err := validatedParentGraph(observed)
+	graph, err := validatedObservedParentGraph(observed)
 	if err != nil {
 		return err
 	}

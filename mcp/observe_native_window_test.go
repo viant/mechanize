@@ -113,7 +113,7 @@ func TestObserveNativeWindowToolRoutingConsentAndClosedScope(t *testing.T) {
 				args["surface"] = surface
 			}
 			result, err := client.CallTool(ctx, &schema.CallToolRequestParams{Name: "mechanize_observe", Arguments: args})
-			success := mode == "allowed" || mode == "AXWindow"
+			success := mode == "allowed" || mode == "AXWindow" || mode == "partial"
 			accepted := err == nil && result != nil && (result.IsError == nil || !*result.IsError)
 			if accepted != success {
 				t.Fatalf("unexpected exact-window tool acceptance: mode=%s err=%v", mode, err)
@@ -127,6 +127,10 @@ func TestObserveNativeWindowToolRoutingConsentAndClosedScope(t *testing.T) {
 			}
 			if success {
 				raw, _ := json.Marshal(result.StructuredContent)
+				var returned model.Observation
+				if err := json.Unmarshal(raw, &returned); err != nil || returned.Truncated != (mode == "partial") || len(returned.Nodes) != 2 || returned.WindowScope["title"] != "Insert Sheet" {
+					t.Fatal("window metadata lost scope, nodes or explicit truncation", err)
+				}
 				if strings.Contains(string(raw), "PRIVATE_VALUE") {
 					t.Fatal("window tool exported plaintext values")
 				}

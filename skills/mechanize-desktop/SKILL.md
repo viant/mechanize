@@ -285,6 +285,11 @@ application has no discoverable foreground window, activate that application
 once and repeat window discovery; do not reuse an old physical window ID.
 An exact native `windowScope` also requires the discovered `surface.processId`
 and `surface.processStartToken`; a window title and bundle ID alone are insufficient.
+Named-window metadata reads can return an explicitly `truncated` tree. Returned
+nodes still require exact owner, scope and ancestry validation. Use this partial
+metadata to choose a narrower observation or visual route; it cannot prove a
+locator unique or an unseen control absent. Action resolution continues to reject
+truncated lookup evidence.
 Use the current discovery result rather than guessing the native window title
 from a browser tab's title. An `invalidScope` result is an argument repair, not
 a request for another permission approval.

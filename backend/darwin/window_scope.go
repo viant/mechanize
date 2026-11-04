@@ -136,8 +136,17 @@ func windowScopedNodes(observation model.Observation, scope map[string]model.Val
 }
 
 func validatedParentGraph(observation model.Observation) (map[string]model.Node, error) {
-	if observation.Truncated || len(observation.Nodes) == 0 || len(observation.Nodes) > 1000 {
+	if observation.Truncated {
 		return nil, nativeError("incompleteObservation", "Native scope requires a complete bounded AX tree")
+	}
+	return validatedObservedParentGraph(observation)
+}
+
+// validatedObservedParentGraph validates only the returned graph. It preserves
+// truncation and cannot establish locator uniqueness or absence of unseen nodes.
+func validatedObservedParentGraph(observation model.Observation) (map[string]model.Node, error) {
+	if len(observation.Nodes) == 0 || len(observation.Nodes) > 1000 {
+		return nil, nativeError("incompleteObservation", "Bounded nonempty AX graph required")
 	}
 	byID := make(map[string]model.Node, len(observation.Nodes))
 	for _, node := range observation.Nodes {

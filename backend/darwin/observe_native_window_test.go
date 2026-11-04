@@ -106,9 +106,65 @@ func TestObserveNativeWindowExactMetadataWithoutBroadFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestObserveNativeWindowReturnsPartialMetadataWithoutQualifyingLookup(t *testing.T) {
+	ctx, p := nativeActor(t)
+	f := &nativeWindowObserveCaller{mode: "partial"}
+	g, err := NewGateway(f, GatewayOptions{AllowedBundles: []string{"fixture.app"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface := model.Surface{Kind: "native", BundleID: "fixture.app", ProcessID: 1, ProcessStartToken: "123:4"}
+	observed, err := g.ObserveNativeWindow(ctx, p, surface, "Insert Sheet", "")
+	if err != nil || !observed.Truncated || len(observed.Nodes) != 2 || len(f.scopes) != 1 {
+		t.Fatal("partial owned metadata not returned with truncation", err)
+	}
+	raw, _ := json.Marshal(observed)
+	if strings.Contains(string(raw), "PRIVATE_VALUE") {
+		t.Fatal("partial metadata exposed field contents")
+	}
+	target := scopedWindowSelector()
+	target.Surface = surface
+	target.Scope.Window["title"] = model.Value{Kind: model.StringValue, String: "Insert Sheet"}
+	target.Locator.Value.String = "sheet-name"
+	if _, err := resolve(observed, target, nil); err == nil {
+		t.Fatal("partial metadata qualified an apparently unique action target")
+	}
+	for _, method := range f.calls {
+		if method != "doctor" && method != "apps.list" && method != "elements.snapshot" {
+			t.Fatal("metadata discovery dispatched input", method)
+		}
+	}
+	for _, mode := range []string{"foreignOwner", "orphan", "cycle", "duplicate", "extraRoot", "values", "wrongTitle"} {
+		t.Run(mode, func(t *testing.T) {
+			bad := observed
+			bad.Nodes = append([]model.Node(nil), observed.Nodes...)
+			switch mode {
+			case "foreignOwner":
+				bad.Nodes[1].NativeOwnerProcessID++
+			case "orphan":
+				bad.Nodes[1].ParentID = "unobserved"
+			case "cycle":
+				bad.Nodes[1].ParentID = bad.Nodes[1].Ref.ID
+			case "duplicate":
+				bad.Nodes = append(bad.Nodes, bad.Nodes[1])
+			case "extraRoot":
+				bad.Nodes[1].ParentID = ""
+			case "values":
+				bad.Nodes[1].Values = map[string]model.Value{"value": {Kind: model.StringValue, String: "private fixture"}}
+			case "wrongTitle":
+				bad.Nodes[0].Name = "Other"
+			}
+			if err := ValidateNativeWindowObservation(bad, surface, "Insert Sheet", ""); err == nil {
+				t.Fatal("truncation bypassed metadata ownership/structure checks")
+			}
+		})
+	}
+}
+
 func TestObserveNativeWindowRejectsIncompleteUnownedAndWrongScope(t *testing.T) {
 	ctx, p := nativeActor(t)
-	for _, mode := range []string{"unsupported", "staleProcess", "badEcho", "missingEcho", "partial", "wrongOwner", "missingOwner", "orphan", "cycle", "duplicate", "foreignUID", "extraRoot"} {
+	for _, mode := range []string{"unsupported", "staleProcess", "badEcho", "missingEcho", "wrongOwner", "missingOwner", "orphan", "cycle", "duplicate", "foreignUID", "extraRoot"} {
 		t.Run(mode, func(t *testing.T) {
 			f := &nativeWindowObserveCaller{mode: mode}
 			g, err := NewGateway(f, GatewayOptions{AllowedBundles: []string{"fixture.app"}})
