@@ -63,6 +63,14 @@ the intended scope, required text and numbers, reading order where required, and
 absence of unexpected blank or omitted pages. Confirm required fonts, images and
 charts render correctly; text extraction alone cannot detect clipping or overlap.
 
+For workbook PDFs, match a distinctive heading or required content from every
+intended worksheet to the exported pages. An Entire Workbook or Workbook radio
+selection and plausible page count do not prove coverage. Check rendered text
+size after scaling: one-page-wide output can be technically complete but unreadable.
+If Print-to-PDF and native Save As both fail the same content/layout gates, retain
+both failures and diagnose source pagination or export scope before another run;
+changing the executor alone is not evidence that the output will improve.
+
 Render every page and inspect it at a legible scale. Check table edges, long labels,
 footnotes, headers/footers, page breaks, glyphs and chart legends. Match calculations
 to the verified source. For a paired comparison, render both outputs at identical

@@ -43,6 +43,15 @@ Use [Office checks](references/office.md) for native files and [PDF creation and
 
 Keep one controller per affected app/tab. Before a handoff, confirm the original executor is terminal/quiescent and reconcile possibly dispatched input. Preserve operation IDs, intended effect, observed result and saved-file revision. Then obtain fresh state with the destination executor and perform only remaining work. Do not use a new executor or run to bypass a denied permission, active input guard, or unresolved durable effect.
 
+An explicitly authorized reset of a disposable local test copy is a separate
+recovery boundary. Verify the original executor is stopped, the affected document
+is closed or its unsaved state is explicitly authorized for disposal, and the
+preserved source matches its recorded revision. Preserve the failed attempt and
+any unresolved ledger record; do not relabel it successful or resume it. A fresh
+copy may start a new test when no active guard or possibly pending external effect
+applies. This does not authorize resetting production data, discarding unrelated
+open documents, replaying sends/submissions, or clearing runtime barriers.
+
 For Mechanize, discover its current capabilities and retrieve its desktop skill, plus the relevant Office case when needed. Reuse existing permanent grants automatically; a missing grant ID is not a reason to prompt. Request consent only after `permissionRequired`, scoped to the failing operation. A user message saying “approved” does not replace the runtime grant. Never approve the agent's own consent requests.
 
 Distinguish app grants, macOS permissions, browser connection, process identity and executor readiness. If the permission panel and operation disagree, inspect the actual helper launch route and signed identity before asking for another approval. Do not reset TCC, weaken trust or broaden grants as a diagnostic shortcut.

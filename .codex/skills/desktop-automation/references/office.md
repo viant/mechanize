@@ -58,6 +58,30 @@ copy and verify its expected dependent result. Restore the input only when the
 task calls for a temporary change; do not undo the user's requested final edit.
 Sort/filter behavior needs its own checks when relevant.
 
+Qualify text conversion for the actual input route. Keyboard entry of a leading
+apostrophe can preserve a literal date, while a TSV clipboard paste can retain
+that apostrophe as data. Month-name dates and percentage-formatted destination
+cells need explicit checks: Excel may convert the date or append a percent sign
+while entering replacement text. Read back the complete buffer before commit and
+verify saved cell types afterward. Cancel a known incorrect uncommitted edit
+before applying a corrected entry route; do not repair by blindly appending keys.
+
+For a bounded table paste, verify the single destination cell, exact rectangular
+extent and every source field; exclude embedded tabs/newlines unless their import
+behavior is qualified. Verify every saved destination value/type and preservation
+of cells outside the range. Use a separate proven route for conversion-sensitive
+fields. Keep batches within the tool's execution limit, with headroom for slower
+observations. After a timeout, inspect the current edit buffer and saved progress;
+do not rerun the batch. A kernel reset does not prove the last input was absent.
+
+When an authorized reference provides the desired layout, native Paste Special
+can transfer Formats and Column widths separately without copying values. Verify
+the actual radio selection; a generic clipboard-format dialog is not Excel's
+cell-format paste. Keep the reference unchanged and recheck all content afterward.
+Raw style differences may reflect theme-font resolution or unused solid-fill
+background metadata. Retain and classify those differences; visual review is still
+required. Exact values and row dimensions alone do not establish layout fidelity.
+
 Observed navigation routes on Excel 16.114.3:
 
 - Computer Use: a NameBox `setValue` did not commit navigation. Clicking the box,
