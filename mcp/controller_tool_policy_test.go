@@ -105,9 +105,9 @@ func TestControllerCatalogCapacityIsConnectionBoundAndCallsMatch(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			expected := 30
+			expected := 31
 			if cap == 64 {
-				expected = 34
+				expected = 35
 			}
 			if len(listed.Tools) != expected {
 				t.Fatalf("catalog=%d want%d", len(listed.Tools), expected)
@@ -116,7 +116,7 @@ func TestControllerCatalogCapacityIsConnectionBoundAndCallsMatch(t *testing.T) {
 			for _, tool := range listed.Tools {
 				present[tool.Name] = true
 			}
-			for _, name := range []string{"mechanize_browser_open_origin", "skill_list", "skill_get", "mechanize_capture", "mechanize_browser_tabs"} {
+			for _, name := range []string{"mechanize_browser_open_origin", "skill_list", "skill_get", "mechanize_capture", "mechanize_browser_tabs", "mechanize_application_presence"} {
 				if !present[name] {
 					t.Fatal("baseline tool lost", name)
 				}

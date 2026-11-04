@@ -115,6 +115,8 @@ func decodeControllerArgs(raw []byte, out any) error {
 func controllerArgs(name string, raw json.RawMessage) (map[string]any, string, error) {
 	var typed any
 	switch name {
+	case "mechanize_application_presence":
+		typed = &ApplicationPresenceInput{}
 	case "mechanize_capture_windows":
 		typed = &CaptureWindowsInput{}
 	case "mechanize_capture", "mechanize_capture_window_frame":
@@ -168,6 +170,10 @@ func controllerArgs(name string, raw json.RawMessage) (map[string]any, string, e
 		return nil, "", err
 	}
 	switch v := typed.(type) {
+	case *ApplicationPresenceInput:
+		if !controllerSurfaceAllowed(model.Surface{Kind: "native", BundleID: v.BundleID}) {
+			return nil, "", errors.New("native authority surface unavailable")
+		}
 	case *CaptureWindowsInput:
 		if !controllerSurfaceAllowed(v.Surface) {
 			return nil, "", errors.New("native authority surface unavailable")
@@ -483,6 +489,8 @@ func (d *ControllerDispatcher) CallTool(ctx context.Context, id chrome.Controlle
 	}
 	var safe any
 	switch call.Name {
+	case "mechanize_application_presence":
+		safe = &native.ApplicationPresence{}
 	case "mechanize_capture_windows":
 		safe = &native.CaptureWindowList{}
 	case "skill_list":

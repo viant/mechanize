@@ -111,6 +111,22 @@ resend input, or request duplicate approval merely because the connection change
 
 ## Choose a website or native application
 
+When advertised, `mechanize_application_presence` reads one exact native bundle
+under the existing owned session and observe grant. `running` includes a fresh
+PID and process birth checked again against the helper; reuse those only with
+fresh target observations. `ambiguous` selects no process. `notObserved` means
+the complete application inventory did not list a process; it is not independent
+proof that every process has exited. Missing, malformed or unavailable inventory
+returns an error, never a false running flag. This tool does not launch, activate,
+read window titles or prove that a document, inbox or input control is ready.
+
+Endly can branch on the returned `StructuredContent.state` with `when`, and bind
+the returned identity through `post` for the next scoped readiness read. Reset
+per-invocation status markers so a skipped step cannot reuse an old successful
+output. Skip app opening when the current process and required UI predicate are
+already proven. Any separately authorized open remains a single durable action;
+after an uncertain result inspect its original operation rather than replaying it.
+
 To start an installed native application when no process is running, use the
 discovered bundle ID with `app("com.example.Editor").open(timeout:3s)` or the
 typed `app.open` action. The capability is named `native:appLaunch`; its DSL

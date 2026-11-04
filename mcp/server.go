@@ -44,6 +44,7 @@ type CaptureWindow func(context.Context, auth.Principal, model.Surface, int32, u
 type CaptureWindows func(context.Context, auth.Principal, model.Surface, int) (native.CaptureWindowList, error)
 type CaptureWindowFrame func(context.Context, auth.Principal, model.Surface, int32, uint32) (data.ArtifactReference, data.ArtifactReference, native.WindowFrameCapture, error)
 type Dependencies struct {
+	ApplicationPresence       ApplicationPresence
 	ExtensionReload           ExtensionMaintenance
 	ExtensionReloadStatus     ExtensionMaintenance
 	BrowserActivateTab        BrowserActivateTab
@@ -304,6 +305,9 @@ func register(base *protocol.DefaultHandler, d Dependencies) error {
 		return err
 	}
 	if err := registerScenarios(base, d.Scenarios); err != nil {
+		return err
+	}
+	if err := registerApplicationPresence(base, d); err != nil {
 		return err
 	}
 	if err := registerCapture(base, d); err != nil {
