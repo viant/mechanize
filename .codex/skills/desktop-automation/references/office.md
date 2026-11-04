@@ -43,6 +43,16 @@ an old element reference to obtain a faster result.
    sheets, merged ranges, formatting and absence of formula errors. Check dates,
    percentages and leading-zero identifiers according to the task contract.
 
+Before replacing nonempty editor text by keyboard input, establish full-text
+selection independently of the Select All receipt. When Mechanize advertises
+`native:textSelectionObservation`, use the exact editor's
+`hasFullTextSelection` boolean as the replacement precondition. True means stable,
+nonempty full selection; false includes a caret, partial selection or empty text.
+Unavailable evidence is not false or permission to type. For an empty-field route,
+prove emptiness separately. Verify the complete resulting text before Return or
+Save. Focus, entering edit mode and a successful shortcut do not prove selection.
+This check does not repair an existing uncertain edit or clear its durable effect.
+
 For recalculation qualification, use a controlled input change on a disposable
 copy and verify its expected dependent result. Restore the input only when the
 task calls for a temporary change; do not undo the user's requested final edit.

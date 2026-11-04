@@ -80,7 +80,13 @@ For the next benchmark, time observations, captures, file inspection, tool waits
 
 ## Recovery without repeated discovery
 
-Activate the intended app before semantic menu actions. For known first-use tips, inspect and dismiss the actual observed informational button. For Outlook Contacts completion, staging the next text in Excel and returning to Outlook cleared the popup in the recorded case; verify it is gone before main-window Tab.
+Use the current native action's qualified foreground contract. Do not prepend
+activation when semantic dispatch already acquires and verifies the exact app;
+qualify both foreground and background cases before removing an older setup step.
+For known first-use tips, inspect and dismiss the actual observed informational
+button. For Outlook Contacts completion, staging the next text in Excel and
+returning to Outlook cleared the popup in the recorded case; verify it is gone
+before main-window Tab.
 
 After a refusal or uncertain result, record the original operation and inspect current state. Do not repeat the same unsupported action as a diagnostic. Use an applicable recorded recovery if fresh evidence establishes its prerequisites. Unknown effects block replay. Resume the original run when supported, preserving its predicates and verified progress; a separate continuation must contain only proven undispatched work. Do not change permissions or weaken checks to reduce latency.
 

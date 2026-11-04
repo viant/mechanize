@@ -49,6 +49,16 @@ Distinguish app grants, macOS permissions, browser connection, process identity 
 
 ## Reliability and efficiency
 
+Load only the reference needed for the current operation. Keep a compact task-local
+record of verified progress, exact target identity and pending operation IDs; refresh
+transient controls after transitions. Prefer a scoped value or boolean check when
+it answers the next decision; use screenshots for visual acceptance and discovery
+that accessibility cannot resolve. Return concise status and required evidence,
+without repeatedly dumping complete trees or durable histories. Preserve errors,
+unavailable evidence and unresolved effects in that summary. Poll the original
+operation through completion and batch only across already-qualified boundaries.
+Apply the same efficiencies to Computer Use when its documented API supports them.
+
 Before resuming a consequential action, reconcile the current status summary with
 its original operation, receipt, input revision and outcome evidence. An old
 summary or still-prepared intent does not override a confirmed send, save or
