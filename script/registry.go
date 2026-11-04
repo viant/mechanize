@@ -94,6 +94,9 @@ func (Registry) CheckCapabilities(plan *model.Plan, supported map[string]bool) e
 		if !supported[s.Target.Surface.Kind+":"+need] {
 			return &CapabilityUnavailableError{Action: s.Action, Surface: s.Target.Surface.Kind, Capability: need}
 		}
+		if s.Action == "element.read" && s.Arguments["attribute"].String == "hasFullTextSelection" && !supported["native:textSelectionObservation"] {
+			return fmt.Errorf("step %s requires textSelectionObservation capability", s.ID)
+		}
 		if s.Assertion != nil && s.Assertion.Matcher == "toBeChecked" && !supported[s.Target.Surface.Kind+":checkedObservation"] {
 			return fmt.Errorf("step %s requires checkedObservation capability", s.ID)
 		}

@@ -528,7 +528,7 @@ func (c *compiler) eval(e *Expression) (typed, *model.Step, error) {
 					if step.Target.Surface.Kind != "native" {
 						return v, nil, c.err(call.Position, "native metadata/text read requires native surface")
 					}
-				case "focused", "enabled":
+				case "focused", "enabled", "hasFullTextSelection":
 					if step.Target.Surface.Kind != "native" {
 						return v, nil, c.err(call.Position, "native boolean read requires native surface")
 					}

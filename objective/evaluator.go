@@ -169,7 +169,7 @@ func outcomeUnavailableReason(err error) string {
 	if errors.As(err, &failure) && failure != nil && failure.Stage == "native" && failure.DispatchState == "notDispatched" {
 		switch failure.Code {
 		case "valueMatchUnsupported", "valueMatchUnconfirmed", "valueMatchDenied",
-			"valueComparisonDenied", "valueComparisonUnavailable", "readonlyMethodDenied":
+			"valueComparisonDenied", "valueComparisonUnavailable", "selectionReadDenied", "selectionReadUnavailable", "readonlyMethodDenied":
 			return "outcome source unavailable: " + failure.Code
 		}
 	}

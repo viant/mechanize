@@ -520,6 +520,9 @@ func (h *Host) policy(ctx context.Context, p auth.Principal, admission *NativeCo
 						if name == "checked" {
 							caps["native:checkedObservation"] = true
 						}
+						if name == "hasFullTextSelection" {
+							caps["native:textSelectionObservation"] = true
+						}
 					}
 					for _, action := range doctor.NativeSemanticMenus {
 						if action == "AXShowMenu" {
@@ -584,7 +587,7 @@ func (h *Host) policy(ctx context.Context, p auth.Principal, admission *NativeCo
 		// The control helper can independently qualify selectors and target
 		// scopes even when the read gateway has no fresh AX doctor evidence.
 		// Only capabilities that require the read gateway itself are withheld.
-		for _, name := range []string{"boundedObservation", "attributeRead", "menuBarScope", "focusedElementScope", "focusedWindowScope", "valueMatches"} {
+		for _, name := range []string{"boundedObservation", "attributeRead", "menuBarScope", "focusedElementScope", "focusedWindowScope", "valueMatches", "textSelectionObservation"} {
 			delete(caps, "native:"+name)
 		}
 	}

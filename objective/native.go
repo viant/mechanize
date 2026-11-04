@@ -96,7 +96,7 @@ func transientNativeObservation(err error) bool {
 		return false
 	}
 	switch detail.Code {
-	case "incompleteObservation", "targetNotFound", "attributeUnavailable", "rootUnavailable", "valueComparisonUnavailable":
+	case "incompleteObservation", "targetNotFound", "attributeUnavailable", "rootUnavailable", "valueComparisonUnavailable", "selectionReadUnavailable":
 		// A classified nonsecure field can temporarily lack a complete value
 		// while an app applies input. Only the bounded postcondition read loop
 		// reaches here; every comparison repeats its own classification/proof.
@@ -168,17 +168,17 @@ func (a *NativeAdapter) evaluateOnce(ctx context.Context, p auth.Principal, name
 	if err != nil {
 		return Result{}, err
 	}
-	attribute, err := boundedNativeString(inputs["attribute"], 16, false)
+	attribute, err := boundedNativeString(inputs["attribute"], 32, false)
 	if err != nil {
 		return Result{}, err
 	}
 	switch attribute {
-	case "value", "name", "identifier", "role", "staticText", "focused", "enabled", "checked":
+	case "value", "name", "identifier", "role", "staticText", "focused", "enabled", "checked", "hasFullTextSelection":
 	default:
 		return Result{}, errors.New("unsupported native observation attribute")
 	}
 	expected := ""
-	booleanAttribute := attribute == "focused" || attribute == "enabled" || attribute == "checked"
+	booleanAttribute := attribute == "focused" || attribute == "enabled" || attribute == "checked" || attribute == "hasFullTextSelection"
 	if booleanAttribute {
 		if inputs["expected"].Kind != model.BoolValue || inputs["expected"].Validate() != nil {
 			return Result{}, errors.New("native boolean comparison requires typed boolean expectation")

@@ -137,3 +137,39 @@ func replaceNativeText(_ element: AXUIElement, expected: String, verify: Bool, r
             failure: NativeFailure("textReplacementUnconfirmed", "Selected-text replacement lacks complete proof; reconcile before another write"))
     }
 }
+
+// Read selection metadata without returning text or changing focus/selection.
+// A missing, invalid or changing range is unavailable, never a negative proof.
+func nativeHasFullTextSelection(_ element: AXUIElement, revalidate: () throws -> Void,
+                           runtime: NativeTextRuntime = .system) throws -> Bool {
+    func sample() throws -> (Int, CFRange) {
+        try revalidate()
+        guard classifiedNativeText(element, runtime: runtime, comparison: true) else {
+            throw NativeFailure("selectionReadDenied", "Known nonsecure text classification required")
+        }
+        let role = runtime.attribute(element, kAXRoleAttribute)
+        guard role.0 == .success, let role = role.1 as? String,
+              [kAXTextFieldRole, kAXTextAreaRole].contains(role) else {
+            throw NativeFailure("selectionReadDenied", "Exact text field or area required")
+        }
+        let count = try textCharacterCount(element, runtime: runtime)
+        let (status, raw) = runtime.attribute(element, kAXSelectedTextRangeAttribute)
+        guard status == .success, let raw, CFGetTypeID(raw) == AXValueGetTypeID() else {
+            throw NativeFailure("selectionReadUnavailable", "Complete selected-text range unavailable")
+        }
+        let value = raw as! AXValue
+        var range = CFRange(location: 0, length: 0)
+        guard AXValueGetType(value) == .cfRange, AXValueGetValue(value, .cfRange, &range),
+              range.location >= 0, range.length >= 0, range.location <= count,
+              range.length <= count - range.location else {
+            throw NativeFailure("selectionReadUnavailable", "Selected-text range is invalid")
+        }
+        try revalidate()
+        return (count, range)
+    }
+    let before = try sample(), after = try sample()
+    guard before.0 == after.0, before.1.location == after.1.location, before.1.length == after.1.length else {
+        throw NativeFailure("selectionReadUnavailable", "Text selection changed during observation")
+    }
+    return after.0 > 0 && after.1.location == 0 && after.1.length == after.0
+}

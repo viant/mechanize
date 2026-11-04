@@ -67,6 +67,7 @@ type Gateway struct {
 	textReplaceEnabled           bool
 	valueMatchesEnabled          bool
 	checkedReadEnabled           bool
+	textSelectionReadEnabled     bool
 }
 
 func NewGateway(caller Caller, options GatewayOptions) (*Gateway, error) {
@@ -112,6 +113,7 @@ func (g *Gateway) Capabilities() []model.Capability {
 	caps = append(caps, model.Capability{Name: "indexedQuery", Surface: "native", Supported: g.axTrusted && g.windowTitleScopeEnabled, Reason: "Exact-window role nth in complete AX tree order; no all queries or new value-read authority"})
 	caps = append(caps, model.Capability{Name: "windowPosition", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.mutationEnabled || g.semanticEnabled) && g.windowPositionEnabled, Reason: "Explicit AXWindow position setter, external fence and exact readback required"})
 	caps = append(caps, model.Capability{Name: "semanticMenu", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.mutationEnabled || g.semanticEnabled) && g.semanticMenuEnabled, Reason: "Explicit advertised AXShowMenu on a menu control; no AXPress or keyboard substitution"})
+	caps = append(caps, model.Capability{Name: "textSelectionObservation", Surface: "native", Supported: g.axTrusted && g.textSelectionReadEnabled, Reason: "Stable nonempty whole-field selection boolean; no plaintext or selection mutation"})
 	caps = append(caps, model.Capability{Name: "checkedObservation", Surface: "native", Supported: g.axTrusted && g.checkedReadEnabled, Reason: "Exact checkbox/radio booleans; mixed or unavailable states stay unknown"})
 	caps = append(caps, model.Capability{Name: "windowSessionText", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && g.semanticEnabled && g.sessionTextEnabled && g.windowSessionTextEnabled, Reason: "Explicit bounded literal text with exact window/focus identity; result requires verification"})
 	caps = append(caps, model.Capability{Name: "windowSessionKeyboard", Surface: "native", Supported: g.options.Lease != nil && g.axTrusted && (g.semanticEnabled || g.mutationEnabled) && g.sessionKeyboardEnabled && g.windowSessionKeyboardEnabled, Reason: "Explicit captured CGWindow login-session chord; no AX lookup or automatic success"})
@@ -204,6 +206,7 @@ func (g *Gateway) ready(ctx context.Context) error {
 			g.textReplaceEnabled = false
 			g.valueMatchesEnabled = false
 			g.checkedReadEnabled = false
+			g.textSelectionReadEnabled = false
 		}
 	}
 	if g.epoch != "" {
@@ -251,9 +254,13 @@ func (g *Gateway) ready(ctx context.Context) error {
 		g.sessionKeyboardEnabled = doctor.SessionKeyboardEnabled
 		g.sessionTextEnabled = doctor.SessionTextEnabled
 		g.checkedReadEnabled = false
+		g.textSelectionReadEnabled = false
 		for _, name := range doctor.NativeBooleanReads {
 			if name == "checked" {
 				g.checkedReadEnabled = true
+			}
+			if name == "hasFullTextSelection" {
+				g.textSelectionReadEnabled = true
 			}
 		}
 		g.windowFrameClickEnabled = doctor.WindowFrameClickEnabled && doctor.CaptureGranted
@@ -1055,6 +1062,9 @@ func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step
 	if attribute == "checked" && (!g.checkedReadEnabled || (node.NativeRole != "AXCheckBox" && node.NativeRole != "AXRadioButton")) {
 		return result, nativeError("unsupportedAttribute", "Qualified checkbox or radio state required")
 	}
+	if attribute == "hasFullTextSelection" && (!g.textSelectionReadEnabled || (node.NativeRole != "AXTextField" && node.NativeRole != "AXTextArea")) {
+		return result, nativeError("unsupportedAttribute", "Qualified text-selection observation required")
+	}
 	if attribute == "value" {
 		if !g.values[step.Target.Surface.BundleID][node.Identifier] {
 			return result, nativeError("valueReadDenied", "Value read identifier is not explicitly permitted")
@@ -1080,12 +1090,19 @@ func (g *Gateway) Execute(ctx context.Context, p auth.Principal, step model.Step
 	if err = json.Unmarshal(reply.Result, &read); err != nil {
 		return result, err
 	}
+	if attribute == "hasFullTextSelection" {
+		for _, missing := range read.Unavailable {
+			if missing == attribute {
+				return result, nativeError("attributeUnavailable", "Text selection unavailable")
+			}
+		}
+	}
 	raw, ok := read.Values[attribute]
 	if !ok {
 		return result, nativeError("attributeUnavailable", "Requested attribute unavailable")
 	}
 	var value model.Value
-	if attribute == "enabled" || attribute == "focused" || attribute == "checked" {
+	if attribute == "enabled" || attribute == "focused" || attribute == "checked" || attribute == "hasFullTextSelection" {
 		value.Kind = model.BoolValue
 		var boolean *bool
 		err = json.Unmarshal(raw, &boolean)

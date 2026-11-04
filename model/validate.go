@@ -349,7 +349,7 @@ func (s Step) Validate() error {
 	}
 	if s.Action == "element.read" {
 		result := StringValue
-		if s.Arguments["attribute"].String == "checked" || s.Arguments["attribute"].String == "focused" || s.Arguments["attribute"].String == "enabled" {
+		if s.Arguments["attribute"].String == "checked" || s.Arguments["attribute"].String == "focused" || s.Arguments["attribute"].String == "enabled" || s.Arguments["attribute"].String == "hasFullTextSelection" {
 			result = BoolValue
 		}
 		if s.Target.Cardinality == "all" {
@@ -364,7 +364,7 @@ func (s Step) Validate() error {
 		}
 		switch v.String {
 		case "text", "value", "name", "checked":
-		case "staticText", "focused", "enabled", "identifier", "role":
+		case "staticText", "focused", "enabled", "identifier", "role", "hasFullTextSelection":
 			if s.Target.Surface.Kind != "native" {
 				return fmt.Errorf("%s requires a native surface", v.String)
 			}

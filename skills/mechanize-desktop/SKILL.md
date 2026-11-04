@@ -327,6 +327,19 @@ A dispatched Enter or fill does not establish its business postcondition. If
 verification fails, preserve the original outcome and inspect fresh state;
 never repeat the input merely to obtain a passing postcondition.
 
+## Verify text selection before typing
+
+When `native:textSelectionObservation` is advertised, an exact native text-field
+locator can `read("hasFullTextSelection")`. It returns true only for a stable,
+nonempty selection covering the complete field text. Empty text, a caret or a
+valid partial selection returns false; missing, invalid, protected or changing
+evidence remains unavailable. The read neither selects text nor exports it.
+
+Use this as a precondition before replacing nonempty text by keyboard input.
+A successful Select All key receipt alone does not establish selection. Verify
+the resulting content separately before commit/save. This metadata does not prove
+that an arbitrary app accepts editing, and it cannot clear an unresolved effect.
+
 ## Large native menu bars
 
 When whole-menu observation is truncated, use the advertised `native:menuScope`
