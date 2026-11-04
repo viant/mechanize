@@ -181,6 +181,7 @@ struct NativeForegroundTarget {
  var pointerDelivery=false
  var semanticRecipient:AXSemanticForegroundRecipient?=nil
  var keyboardRecipient=false
+ var windowTextPlan:WindowTextPlan?=nil
  private static func bounds(_ window:AXUIElement,pid:pid_t,budget:Budget)throws->CGRect {
   try budget.check();AXUIElementSetMessagingTimeout(window,min(0.05,budget.remainingSeconds))
   guard let rect=AutomationPointer.windowBounds(element:window,pid:pid) else{throw NativeFailure("foregroundGeometryUnavailable","Exact owned window geometry unavailable")};try budget.check();return rect
@@ -289,7 +290,8 @@ struct NativeForegroundTarget {
   guard let windowID else{return true};let rows=try Self.ownedRows(pid:pid,birth:birth,bundle:bundle,budget:budget)
   if Self.physicalWindowReady(rows,pid:pid,windowID:windowID,pointerDelivery:pointerDelivery){return true}
   guard !pointerDelivery else{return false}
-  return focusedSessionWindowMatches(rows,pid:pid,uid:getuid(),birth:birth,bundle:bundle,windowID:windowID,focused:WindowSessionKeyRuntime.system.focusedWindow?(pid))
+  let read = windowTextPlan == nil ? WindowSessionKeyRuntime.system.focusedWindow : WindowSessionKeyRuntime.system.focusedTextWindow
+  return focusedSessionWindowMatches(rows,pid:pid,uid:getuid(),birth:birth,bundle:bundle,windowID:windowID,focused:read?(pid),textPlan:windowTextPlan)
  }
  func ready(_ budget:Budget)throws->Bool {
   _=try qualifiedForeground(ForegroundIdentity(pid:pid,uid:getuid(),birth:birth,bundle:bundle,active:true),budget)
@@ -340,11 +342,14 @@ extension Helper {
   if NativeForegroundRoutes.physical.contains(method){
    let fields:Set<String>=method=="windows.pressSessionKey" ? ["expectedApp","pid","processStartToken","windowId","key"]:["expectedApp","pid","processStartToken","windowId","text","focusRole","focusIdentifier","focusName"]
    guard Set(params.keys)==fields,let bundle=params["expectedApp"] as? String,concreteApplicationBundle(bundle),let birth=params["processStartToken"] as? String,validApplicationProcessStartToken(birth) else{throw NativeFailure("invalidScope","Exact window action scope required")}
+   var textPlan:WindowTextPlan?
    if method=="windows.pressSessionKey"{guard let key=params["key"] as? String else{throw NativeFailure("invalidKey","Named chord required")};_=try TargetedKeyChord(key)}
-   else {guard let text=params["text"] as? String,let role=params["focusRole"] as? String,let identifier=params["focusIdentifier"] as? String,let name=params["focusName"] as? String else{throw NativeFailure("invalidText","Typed literal target required")};_=try WindowTextPlan(text:text,role:role,identifier:identifier,name:name)}
+   else {guard let text=params["text"] as? String,let role=params["focusRole"] as? String,let identifier=params["focusIdentifier"] as? String,let name=params["focusName"] as? String else{throw NativeFailure("invalidText","Typed literal target required")};textPlan=try WindowTextPlan(text:text,role:role,identifier:identifier,name:name)}
    let pid=try RecordingConsentLease.integer(params["pid"],maximum:UInt64(Int32.max)),window=try RecordingConsentLease.integer(params["windowId"],maximum:UInt64(UInt32.max))
    guard pid>0,window>0 else{throw NativeFailure("invalidScope","Positive process/window required")}
-   return try NativeForegroundTarget.physical(pid:pid_t(pid),birth:birth,bundle:bundle,windowID:UInt32(window),budget:budget)
+   var target=try NativeForegroundTarget.physical(pid:pid_t(pid),birth:birth,bundle:bundle,windowID:UInt32(window),budget:budget)
+   target.windowTextPlan=textPlan
+   return target
   }
   return nil
  }

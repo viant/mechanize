@@ -29,6 +29,7 @@ struct WindowSessionKeyRuntime {
     var refresh: () throws -> Void = {}
     var foregroundSample: (() -> SessionKeyForegroundSample?)? = nil
     var focusedWindow: ((pid_t) -> FocusedSessionWindow?)? = nil
+    var focusedTextWindow: ((pid_t) -> FocusedSessionWindow?)? = nil
     static let system = WindowSessionKeyRuntime(process: { pid in
         guard let uid = applicationLoginUID(pid), let birth = applicationProcessStartToken(pid), let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { return nil }
         return (uid, birth, bundle)
@@ -52,16 +53,16 @@ struct WindowSessionKeyRuntime {
     }, foregroundSample: {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         return SessionKeyForegroundSample(pid: app.processIdentifier, bundle: app.bundleIdentifier, active: app.isActive)
-    }, focusedWindow: readFocusedSessionWindow)
+    }, focusedWindow: readFocusedSessionWindow, focusedTextWindow: readFocusedTextSessionWindow)
 }
 func supportedSessionInputWindowLayer(_ layer: Int) -> Bool {
     [NSWindow.Level.normal.rawValue, NSWindow.Level.floating.rawValue, NSWindow.Level.modalPanel.rawValue].contains(layer)
 }
 
 func qualifyWindowSessionKey(pid: pid_t, uid: uid_t, birth: String, bundle: String, windowID: UInt32, check: () throws -> Void,
-                             runtime: WindowSessionKeyRuntime = .system) throws {
+                             runtime: WindowSessionKeyRuntime = .system, textPlan: WindowTextPlan? = nil) throws {
     try qualifySessionWindow(pid: pid, uid: uid, birth: birth, bundle: bundle, windowID: windowID,
-                             requireForeground: true, check: check, runtime: runtime)
+                             requireForeground: true, check: check, runtime: runtime, textPlan: textPlan)
 }
 
 // Pointer delivery is qualified separately by the exact mouse-down recipient.
@@ -73,7 +74,7 @@ func qualifyWindowFrameTarget(pid: pid_t, uid: uid_t, birth: String, bundle: Str
 }
 
 private func qualifySessionWindow(pid: pid_t, uid: uid_t, birth: String, bundle: String, windowID: UInt32,
-                                  requireForeground: Bool, check: () throws -> Void, runtime: WindowSessionKeyRuntime) throws {
+                                  requireForeground: Bool, check: () throws -> Void, runtime: WindowSessionKeyRuntime, textPlan: WindowTextPlan? = nil) throws {
     try check()
     guard pid > 0, windowID > 0, let identity = runtime.process(pid), identity.0 == uid, identity.1 == birth, identity.2 == bundle else { throw NativeFailure("staleReference", "Exact window process identity changed") }
     guard runtime.session(), !runtime.secure() else { throw NativeFailure("sessionUnqualified", "Current console event permission and nonsecure session required") }
@@ -89,7 +90,8 @@ private func qualifySessionWindow(pid: pid_t, uid: uid_t, birth: String, bundle:
     let topID = owned.first?.id ?? 0
     var candidate = requireForeground ? owned.first : owned.first(where: { $0.id == windowID })
     let needsFocusedProof = requireForeground && candidate?.id != windowID
-    if needsFocusedProof && focusedSessionWindowMatches(windows, pid:pid, uid:uid, birth:birth, bundle:bundle, windowID:windowID, focused:runtime.focusedWindow?(pid)) {
+    let focused = textPlan == nil ? runtime.focusedWindow : runtime.focusedTextWindow
+    if needsFocusedProof && focusedSessionWindowMatches(windows, pid:pid, uid:uid, birth:birth, bundle:bundle, windowID:windowID, focused:focused?(pid),textPlan:textPlan) {
         candidate = owned.first(where: { $0.id == windowID })
     }
     guard owned.allSatisfy({ $0.alpha.isFinite && $0.alpha > 0 && $0.alpha <= 1 }), let first = candidate, first.id == windowID, supportedSessionInputWindowLayer(first.layer), windows.filter({ $0.id == windowID }).count == 1,
@@ -99,7 +101,7 @@ private func qualifySessionWindow(pid: pid_t, uid: uid_t, birth: String, bundle:
     guard let after = runtime.process(pid), after.0 == uid, after.1 == birth, after.2 == bundle else { throw NativeFailure("windowKeyboardUnqualified", "Window keyboard qualification changed") }
     if requireForeground { try requireSessionKeyForeground(pid: pid, phase: "final", runtime: runtime) }
     if needsFocusedProof {
-        guard let fresh=runtime.windows(), focusedSessionWindowMatches(fresh,pid:pid,uid:uid,birth:birth,bundle:bundle,windowID:windowID,focused:runtime.focusedWindow?(pid)) else {
+        guard let fresh=runtime.windows(), focusedSessionWindowMatches(fresh,pid:pid,uid:uid,birth:birth,bundle:bundle,windowID:windowID,focused:focused?(pid),textPlan:textPlan) else {
             throw NativeFailure("windowKeyboardUnqualified", "Exact focused window changed before keyboard delivery")
         }
     }

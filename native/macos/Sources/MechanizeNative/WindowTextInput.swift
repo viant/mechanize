@@ -79,7 +79,7 @@ extension Helper {
         let pid = Int32(rawPID), windowID = UInt32(rawWindow)
         let plan = try WindowTextPlan(text: text, role: role, identifier: identifier, name: name)
         func authority() throws {
-            try qualifyWindowSessionKey(pid: pid, uid: getuid(), birth: birth, bundle: bundle, windowID: windowID, check: { try budget.check() })
+            try qualifyWindowSessionKey(pid: pid, uid: getuid(), birth: birth, bundle: bundle, windowID: windowID, check: { try budget.check() }, textPlan: plan)
             let modifiers: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
             guard CGEventSource.flagsState(.hidSystemState).intersection(modifiers).isEmpty else {
                 throw NativeFailure("textModifiersHeld", "Physical modifiers must be released before literal text")

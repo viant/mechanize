@@ -1,5 +1,6 @@
 import AppKit
 import Testing
+import MechanizeNativeCore
 @testable import MechanizeNative
 
 struct FocusedSessionWindowTests {
@@ -41,6 +42,43 @@ struct FocusedSessionWindowTests {
         reads=0
         runtime.focusedWindow={_ in reads+=1;return reads==1 ? focus():focus(title:"Different document")}
         #expect(throws:(any Error).self){try qualifyWindowSessionKey(pid:42,uid:502,birth:"birth",bundle:"com.example.Editor",windowID:7,check:{},runtime:runtime)}
+        #expect(reads==2)
+    }
+}
+
+
+extension FocusedSessionWindowTests {
+    @Test func declaredTextFieldCanUseExactKeyboardProofPastNonKeyOverlay() throws {
+        let plan=try WindowTextPlan(text:"fixture",role:"AXTextArea",identifier:"editor",name:"")
+        var f=focus();f.textControl=FocusedTextControl(role:"AXTextArea",identifier:"editor",name:"Public editor")
+        for layer in [0,3] {
+            let rows=[row(8,"Owned overlay",layer:layer),row()]
+            #expect(!matches(rows,f)) // Ordinary window shortcuts retain their barrier.
+            #expect(focusedSessionWindowMatches(rows,pid:42,uid:502,birth:"birth",bundle:"com.example.Editor",windowID:7,focused:f,textPlan:plan))
+            for control in [nil,FocusedTextControl(role:"AXLayoutArea",identifier:"editor",name:"Public editor"),FocusedTextControl(role:"AXTextArea",identifier:"other",name:"Public editor"),FocusedTextControl(role:"AXTextArea",identifier:"editor",name:"Password")] {
+                var invalid=f;invalid.textControl=control
+                #expect(!focusedSessionWindowMatches(rows,pid:42,uid:502,birth:"birth",bundle:"com.example.Editor",windowID:7,focused:invalid,textPlan:plan))
+            }
+            var unverified=focus(verified:false);unverified.textControl=f.textControl
+            #expect(!focusedSessionWindowMatches(rows,pid:42,uid:502,birth:"birth",bundle:"com.example.Editor",windowID:7,focused:unverified,textPlan:plan))
+        }
+        #expect(!focusedSessionWindowMatches([row(8,"Modal",layer:8),row()],pid:42,uid:502,birth:"birth",bundle:"com.example.Editor",windowID:7,focused:f,textPlan:plan))
+        let canvasPlan=try WindowTextPlan(text:"fixture",role:"AXLayoutArea",identifier:"",name:"Content Area")
+        var canvas=focus(bundle:"com.microsoft.Excel");canvas.textControl=FocusedTextControl(role:"AXLayoutArea",identifier:"",name:"Content Area")
+        #expect(!focusedSessionWindowMatches([row(8,"Owned overlay",layer:3),row()],pid:42,uid:502,birth:"birth",bundle:"com.microsoft.Excel",windowID:7,focused:canvas,textPlan:canvasPlan))
+    }
+    @Test func textQualificationRechecksDeclaredFieldAndNeverChangesWindow() throws {
+        let plan=try WindowTextPlan(text:"fixture",role:"AXTextArea",identifier:"editor",name:"")
+        var f=focus();f.textControl=FocusedTextControl(role:"AXTextArea",identifier:"editor",name:"Public editor")
+        var reads=0
+        var runtime=WindowSessionKeyRuntime(process:{_ in (502,"birth","com.example.Editor")},foreground:{42},windows:{[row(8,"Owned overlay",layer:3),row()]},session:{true},secure:{false})
+        runtime.focusedTextWindow={_ in reads+=1;return f}
+        try qualifyWindowSessionKey(pid:42,uid:502,birth:"birth",bundle:"com.example.Editor",windowID:7,check:{},runtime:runtime,textPlan:plan)
+        #expect(reads==2)
+        #expect(throws:(any Error).self){try qualifyWindowSessionKey(pid:42,uid:502,birth:"birth",bundle:"com.example.Editor",windowID:7,check:{},runtime:runtime)}
+        reads=0
+        runtime.focusedTextWindow={_ in reads+=1;var result=f;if reads>1{result.textControl=FocusedTextControl(role:"AXTextArea",identifier:"changed",name:"Public editor")};return result}
+        #expect(throws:(any Error).self){try qualifyWindowSessionKey(pid:42,uid:502,birth:"birth",bundle:"com.example.Editor",windowID:7,check:{},runtime:runtime,textPlan:plan)}
         #expect(reads==2)
     }
 }
