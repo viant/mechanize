@@ -449,3 +449,9 @@ username/pair stages are refused. Real browser/native adapters and live form
 qualification remain required. Native-form preparation is not established by
 this web preparation API. Existing credential application remains on its private
 DOM route; no denied scope or unresolved input guard is bypassed.
+
+The isolated browser receiver has a clipboard receipt lifecycle for an exact
+focused password-only form. It verifies the synthetic probe, its removal and the
+private final value before retaining the original form for one separate submit.
+This receiver component does not dispatch a paste: worker/broker transport and
+the native recipient adapter still require integration and live qualification.

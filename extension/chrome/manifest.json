@@ -21,7 +21,7 @@
   },
   "options_page": "options.html",
   "action": {
-    "default_title": "Mechanize browser automation (0.1.86)"
+    "default_title": "Mechanize browser automation (0.1.87)"
   },
   "minimum_chrome_version": "106",
   "incognito": "not_allowed",

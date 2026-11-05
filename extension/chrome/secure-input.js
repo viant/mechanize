@@ -92,11 +92,11 @@ globalThis.MechanizeSecureInput = (() => {
   }
   function create() {
     const attempts = new Set();
-    let blocked = false, retained = null;
+    let blocked = false, retained = null, clipboard = null;
     function fill(doc, payload, revalidate) {
       let wrote = false;
       try {
-        if (blocked || retained || !payload || Object.keys(payload).sort().join() !== [...keys].sort().join() ||
+        if (blocked || retained || clipboard || !payload || Object.keys(payload).sort().join() !== [...keys].sort().join() ||
             !/^[a-f0-9]{64}$/.test(payload.attemptId) || attempts.has(payload.attemptId) || attempts.size >= 256 ||
             typeof revalidate !== 'function' || typeof payload.username !== 'string' || typeof payload.password !== 'string' ||
             !payload.username || !payload.password || new TextEncoder().encode(payload.username).length > 1024 ||
@@ -139,6 +139,86 @@ globalThis.MechanizeSecureInput = (() => {
         return {status: wrote ? 'unknown' : 'notDispatched'};
       }
     }
+    // Private clipboard receipt lifecycle. This does not paste or authorize OS
+    // input. A trusted transport must retain its physical recipient fence and
+    // bind these calls to the original document, lease and durable attempt.
+    function beginClipboard(doc, payload, revalidate) {
+      try {
+        if (blocked || retained || clipboard || !payload ||
+            Object.keys(payload).sort().join() !== 'attemptId,deadlineUnixMs,origin' ||
+            !/^[a-f0-9]{64}$/.test(payload.attemptId) || attempts.has(payload.attemptId) || attempts.size >= 256 ||
+            typeof revalidate !== 'function' || typeof payload.origin !== 'string' ||
+            !payload.origin.startsWith('https://') || new URL(payload.origin).origin !== payload.origin) throw Error();
+        const check = () => {
+          if (!Number.isSafeInteger(payload.deadlineUnixMs) || payload.deadlineUnixMs <= Date.now() ||
+              payload.deadlineUnixMs > Date.now()+10000 || doc.location.origin !== payload.origin ||
+              doc.defaultView.top !== doc.defaultView) throw Error();
+          const result = revalidate(); if (result !== undefined && result !== true) throw Error();
+        };
+        check();
+        const fields = pair(doc, payload.origin);
+        if (fields.stage !== 'password' || doc.activeElement !== fields.password || fields.password.value !== '') throw Error();
+        const button = submitter(doc, payload.origin, fields.form);
+        const pin = pinRecipient(doc, payload.origin);
+        guardNativeSubmission(doc, payload.origin, fields.form);
+        fields.password.setAttribute('data-mechanize-secret','');
+        if (!globalThis.MechanizeDOM?.protectedDocument(doc)) throw Error();
+        check(); if (!pin.current() || doc.activeElement !== fields.password || fields.password.value !== '') throw Error();
+        attempts.add(payload.attemptId);
+        clipboard = {...fields,button,pin,phase:'probe',attemptId:payload.attemptId,origin:payload.origin,
+          deadlineUnixMs:payload.deadlineUnixMs,action:fields.form.action,method:fields.form.method,
+          buttonType:button.type,buttonAction:button.getAttribute('formaction'),
+          buttonMethod:button.getAttribute('formmethod'),buttonTarget:button.getAttribute('formtarget')};
+        return {status:'dispatched'};
+      } catch { return {status:'notDispatched'}; }
+    }
+    function checkClipboard(doc, payload, revalidate) {
+      const pending = clipboard;
+      if (!pending) return {status:'notDispatched'};
+      try {
+        if (!payload || Object.keys(payload).sort().join() !== 'attemptId,origin,phase' ||
+            payload.attemptId !== pending.attemptId || payload.origin !== pending.origin ||
+            payload.phase !== pending.phase || !['probe','empty'].includes(payload.phase) ||
+            typeof revalidate !== 'function') throw Error();
+        const result = revalidate(); if (result !== undefined && result !== true) throw Error();
+        if (Date.now() >= pending.deadlineUnixMs || doc.location.origin !== pending.origin ||
+            doc.defaultView.top !== doc.defaultView || !pending.pin.current(true) ||
+            doc.activeElement !== pending.password || pending.password.type !== 'password' ||
+            pending.password.value !== (payload.phase === 'probe' ? 'x' : '')) throw Error();
+        pending.phase = payload.phase === 'probe' ? 'empty' : 'ready';
+        return {status:'dispatched'};
+      } catch {
+        pending.pin.retire(); clipboard = null; blocked = true;
+        return {status:'unknown'};
+      }
+    }
+    function verifyClipboard(doc, payload, revalidate) {
+      // Calling verification consumes the original receipt, even if the page
+      // changed. Never adopt a later replacement field or permit DOM-fill replay.
+      const pending = clipboard;
+      if (!pending) return {status:'notDispatched'};
+      clipboard = null; blocked = true;
+      try {
+        if (pending.phase !== 'ready' || !payload || Object.keys(payload).sort().join() !== 'attemptId,origin,password' ||
+            payload.attemptId !== pending.attemptId || payload.origin !== pending.origin ||
+            typeof payload.password !== 'string' || !payload.password ||
+            new TextEncoder().encode(payload.password).length > 4096 || typeof revalidate !== 'function') throw Error();
+        const check = () => {
+          const result = revalidate(); if (result !== undefined && result !== true) throw Error();
+          if (Date.now() >= pending.deadlineUnixMs || doc.location.origin !== pending.origin ||
+              doc.defaultView.top !== doc.defaultView || !pending.pin.current(true) ||
+              doc.activeElement !== pending.password || pending.password.type !== 'password') throw Error();
+        };
+        check();
+        if (pending.password.value !== payload.password) throw Error();
+        check();
+        if (pending.password.value !== payload.password) throw Error();
+        const {pin,phase,deadlineUnixMs,...receipt} = pending;
+        retained = {...receipt,submitted:false}; blocked = false;
+        return {status:'dispatched'};
+      } catch { return {status:'unknown'}; }
+      finally { pending.pin.retire(); }
+    }
     function submit(doc,payload,revalidate) {
       let dispatched=false;
       try {
@@ -169,7 +249,7 @@ globalThis.MechanizeSecureInput = (() => {
         check();return {ready:false,stage};
       }catch{return {ready:false,stage:'pending'};}
     }
-    return Object.freeze({fill,submit,postSubmitStatus});
+    return Object.freeze({fill,beginClipboard,checkClipboard,verifyClipboard,submit,postSubmitStatus});
   }
   // Private recipient identity is independent of unrelated page mutation.
   // This closure is ISOLATED-world custody only: it exposes no node, selector,

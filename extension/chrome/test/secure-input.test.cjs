@@ -235,3 +235,82 @@ test('public obligation identifier does not become a username-first login form',
  const login=fixture('<form><h1>Zaloguj się</h1><label for="identifier">identyfikator</label><input id="identifier"><button>Continue</button></form>');
  assert.equal(login.window.MechanizeSecureInput.privacyReady(login.doc,'https://fixture.example.test'),false);
 });
+
+const passwordOnly = '<form method="post" action="/authenticate"><input type="password" autocomplete="current-password"><button>Login</button></form>';
+function clipboardRequest() { return {attemptId:'d'.repeat(64),origin:'https://fixture.example.test',deadlineUnixMs:Date.now()+5000}; }
+function beginClipboardFixture() {
+ const f=fixture(passwordOnly),request=clipboardRequest();
+ f.doc.querySelector('input').focus();
+ assert.equal(f.receiver.beginClipboard(f.doc,request,()=>true).status,'dispatched');
+ f.doc.querySelector('input').value='x';
+ assert.equal(f.receiver.checkClipboard(f.doc,{attemptId:request.attemptId,origin:request.origin,phase:'probe'},()=>true).status,'dispatched');
+ f.doc.querySelector('input').value='';
+ assert.equal(f.receiver.checkClipboard(f.doc,{attemptId:request.attemptId,origin:request.origin,phase:'empty'},()=>true).status,'dispatched');
+ return {...f,request};
+}
+test('private clipboard verification adopts exact receipt for one separate submit',()=>{
+ const f=beginClipboardFixture();let submits=0;
+ f.doc.querySelector('form').addEventListener('submit',e=>{e.preventDefault();submits++;});
+ assert.equal(result(f).status,'notDispatched');
+ // Simulate the separate physical paste adapter. The receiver never writes it.
+ f.doc.querySelector('input').value='SYNTHETIC-PASTE';
+ const verified=f.receiver.verifyClipboard(f.doc,{attemptId:f.request.attemptId,origin:f.request.origin,password:'SYNTHETIC-PASTE'},()=>true);
+ assert.equal(JSON.stringify(verified),'{"status":"dispatched"}');assert.equal(submits,0);
+ const submit={attemptId:'e'.repeat(64),fillAttemptId:f.request.attemptId,origin:f.request.origin,deadlineUnixMs:Date.now()+5000};
+ assert.equal(f.receiver.submit(f.doc,submit,()=>true).status,'dispatched');
+ assert.equal(f.receiver.submit(f.doc,{...submit,attemptId:'f'.repeat(64)},()=>true).status,'notDispatched');
+ assert.equal(submits,1);f.window.close();
+});
+test('clipboard admission requires empty focused password-only recipient',()=>{
+ for(const mode of ['nonempty','unfocused','plain','pair','foreign','expired','revoked']) {
+  const f=fixture(mode==='pair'?html:passwordOnly),request=clipboardRequest(),input=f.doc.querySelector('input[type="password"]');
+  input.focus();
+  if(mode==='nonempty')input.value='EXISTING';
+  if(mode==='unfocused')input.blur();
+  if(mode==='plain')input.type='text';
+  if(mode==='foreign')request.origin='https://other.example.test';
+  if(mode==='expired')request.deadlineUnixMs=Date.now()-1;
+  assert.equal(f.receiver.beginClipboard(f.doc,request,()=>mode!=='revoked').status,'notDispatched',mode);
+  assert.equal(input.value,mode==='nonempty'?'EXISTING':'');f.window.close();
+ }
+});
+test('clipboard receipt rejects replacement, unmasking, focus loss and changed authority without replay',()=>{
+ for(const mode of ['replacement','unmask','focus','route','wrongValue','revoked','wrongAttempt']) {
+  const f=beginClipboardFixture(),input=f.doc.querySelector('input');input.value='SYNTHETIC-PASTE';
+  if(mode==='replacement'){const replacement=input.cloneNode();replacement.value=input.value;input.replaceWith(replacement);replacement.focus();}
+  if(mode==='unmask')input.type='text';
+  if(mode==='focus')input.blur();
+  if(mode==='route')f.doc.querySelector('form').action='https://other.example.test';
+  const verify={attemptId:mode==='wrongAttempt'?'f'.repeat(64):f.request.attemptId,origin:f.request.origin,password:mode==='wrongValue'?'WRONG':'SYNTHETIC-PASTE'};
+  assert.equal(f.receiver.verifyClipboard(f.doc,verify,()=>mode!=='revoked').status,'unknown',mode);
+  assert.equal(f.receiver.verifyClipboard(f.doc,verify,()=>true).status,'notDispatched');
+  assert.equal(result(f).status,'notDispatched');
+  assert.equal(f.receiver.submit(f.doc,{attemptId:'e'.repeat(64),fillAttemptId:f.request.attemptId,origin:f.request.origin,deadlineUnixMs:Date.now()+5000},()=>true).status,'notDispatched');
+  f.window.close();
+ }
+});
+test('clipboard verification fails closed on expiry and guard-time changes',()=>{
+ for(const mode of ['expired','async','focusDuringGuard','valueDuringGuard']) {
+  const f=beginClipboardFixture(),input=f.doc.querySelector('input');input.value='SYNTHETIC-PASTE';
+  if(mode==='expired')f.window.Date.now=()=>f.request.deadlineUnixMs+1;
+  let calls=0;
+  const guard=()=>{calls++;if(mode==='async')return Promise.resolve(true);if(mode==='focusDuringGuard')input.blur();if(mode==='valueDuringGuard'&&calls===2)input.value='CHANGED';return true;};
+  assert.equal(f.receiver.verifyClipboard(f.doc,{attemptId:f.request.attemptId,origin:f.request.origin,password:'SYNTHETIC-PASTE'},guard).status,'unknown',mode);
+  f.window.close();
+ }
+});
+
+test('clipboard receipt requires exact synthetic probe and removal before verification',()=>{
+ for(const mode of ['skipProbe','wrongProbe','notRemoved']) {
+  const f=fixture(passwordOnly),request=clipboardRequest(),input=f.doc.querySelector('input');input.focus();
+  assert.equal(f.receiver.beginClipboard(f.doc,request,()=>true).status,'dispatched');
+  if(mode!=='skipProbe'){
+   input.value=mode==='wrongProbe'?'y':'x';
+   assert.equal(f.receiver.checkClipboard(f.doc,{attemptId:request.attemptId,origin:request.origin,phase:'probe'},()=>true).status,mode==='wrongProbe'?'unknown':'dispatched');
+   if(mode==='notRemoved')assert.equal(f.receiver.checkClipboard(f.doc,{attemptId:request.attemptId,origin:request.origin,phase:'empty'},()=>true).status,'unknown');
+  }
+  input.value='SYNTHETIC-PASTE';
+  assert.notEqual(f.receiver.verifyClipboard(f.doc,{attemptId:request.attemptId,origin:request.origin,password:'SYNTHETIC-PASTE'},()=>true).status,'dispatched');
+  assert.equal(result(f).status,'notDispatched');f.window.close();
+ }
+});
