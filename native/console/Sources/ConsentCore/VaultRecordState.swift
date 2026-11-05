@@ -29,6 +29,12 @@ public struct VaultRecordState: Equatable, Sendable {
         cleanupRequired = cleanupRequired || status.protection
         outcomeUnconfirmed = outcomeUnconfirmed || status.mutation
     }
+    // A successful fresh durable read can resolve a metadata availability
+    // failure, never an unconfirmed mutation or outstanding protection lease.
+    public mutating func guardRechecked(_ status: VaultRecordGuardStatus) {
+        restoreGuard(status)
+        guardUnavailable = false
+    }
     public mutating func guardFailed() { guardUnavailable = true; keyReady = nil }
     public mutating func recovered() { cleanupRequired = false }
     public mutating func recoveryFailed() { cleanupRequired = true }

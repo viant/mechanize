@@ -28,7 +28,15 @@ import ConsentCore
     func refresh() async {
         guard !state.busy, !state.entryOpen else { return }
         state.busy = true; defer { state.busy = false }
-        let make = factory
+        let make = factory, storage = durableGuard
+        do {
+            let observed = try await Task.detached { try storage.status() }.value
+            state.guardRechecked(observed)
+        } catch {
+            state.guardFailed()
+            message = "The durable safety guard is unavailable. Further changes are blocked."
+            return
+        }
         do {
             let result = try await Task.detached {
                 let client = try make(); try client.connectFromUserAction()
@@ -47,17 +55,18 @@ import ConsentCore
         state.busy = true
         let make = factory, storage = durableGuard
         do {
-            try await Task.detached {
+            let current = try await Task.detached {
                 let observed = try storage.status()
                 let client = try make(); try client.connectFromUserAction(); try client.recoverNativeVaultEntry()
                 if observed.protection, let generation = observed.generation {
                     try storage.acknowledgeProtection(generation: generation)
                 }
+                return try storage.status()
             }.value
-            state.recovered(); state.busy = false
+            state.recovered(); state.guardRechecked(current); state.busy = false
             // Recovery confirms protection only. Keep an unknown mutation blocked
             // until operation-specific reconciliation establishes the outcome.
-            message = state.outcomeUnconfirmed ? "Protection recovered. The previous operation remains unconfirmed; further changes are blocked." : "Protection recovered. Refresh records to check readiness."
+            message = state.cleanupRequired ? "Protection remains active. Finish secure entry before recovering again." : state.outcomeUnconfirmed ? "Protection recovered. The previous operation remains unconfirmed; further changes are blocked." : "Protection recovered. Refresh records to check readiness."
         } catch {
             state.busy = false; state.recoveryFailed()
             message = "Protection recovery could not be confirmed. Observation remains blocked until the broker verifies cleanup."
