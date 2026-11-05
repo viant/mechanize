@@ -15,6 +15,10 @@ the owned clipboard item even on failure. A verified fill is separate from
 submission and successful login. Qualify each native or web adapter; the common
 API alone does not establish support for every app. Do not sign an app out for a
 test until its private re-entry path is qualified.
+For native masked controls, use qualified character-count metadata to confirm
+empty → one synthetic character → empty and the post-paste structure. Do not
+require plaintext read-back or interpret matching counts as password equality.
+Only the subsequent app/account state can establish successful login.
 
 Use the already authenticated session if sufficient. Otherwise confirm the intended exact origin and account context from the user task. For Mechanize private entry, retrieve the live desktop skill and credential tool schemas. Prepare the current origin/tab, inspect the opaque preparation status, apply once, and submit once only when the returned state permits it. Never put a password, raw token, record contents or caller-selected credential record into a public fill/typing tool.
 
