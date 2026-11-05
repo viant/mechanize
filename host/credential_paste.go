@@ -82,6 +82,9 @@ func (s *credentialService) pastePassword(ctx context.Context, p auth.Principal,
 	if clipboard == nil {
 		return
 	}
+	// Keep host authority checks independent of the recipient implementation.
+	// The adapter still owns exact field/focus checks at actual dispatch.
+	target = guardedPasswordPasteTarget{target: target, guard: guard}
 	r := vault.PasteRecordPasswordDuringDelivery(ctx, item.selection, manager, item.protected, item.binding, target, clipboard)
 	out.DispatchState = r.DispatchState
 	if r.Verified && r.CleanupConfirmed && r.DispatchState == "dispatched" {
@@ -108,4 +111,41 @@ func (s *credentialService) pastePassword(ctx context.Context, p auth.Principal,
 		out.FailureStage = "pasteCleanupUnconfirmed"
 	}
 	return
+}
+
+type guardedPasswordPasteTarget struct {
+	target vault.PasswordPasteTarget
+	guard  func(context.Context) error
+}
+
+func (t guardedPasswordPasteTarget) call(ctx context.Context, action func() error) error {
+	if ctx.Err() != nil || t.guard == nil || t.guard(ctx) != nil {
+		return errPrivateCredential
+	}
+	if err := action(); err != nil {
+		return errPrivateCredential
+	}
+	if ctx.Err() != nil || t.guard(ctx) != nil {
+		return errPrivateCredential
+	}
+	return nil
+}
+
+func (t guardedPasswordPasteTarget) CheckEmpty(c context.Context, b vault.Binding) error {
+	return t.call(c, func() error { return t.target.CheckEmpty(c, b) })
+}
+func (t guardedPasswordPasteTarget) SetProbe(c context.Context, b vault.Binding) error {
+	return t.call(c, func() error { return t.target.SetProbe(c, b) })
+}
+func (t guardedPasswordPasteTarget) CheckProbe(c context.Context, b vault.Binding) error {
+	return t.call(c, func() error { return t.target.CheckProbe(c, b) })
+}
+func (t guardedPasswordPasteTarget) RemoveProbe(c context.Context, b vault.Binding) error {
+	return t.call(c, func() error { return t.target.RemoveProbe(c, b) })
+}
+func (t guardedPasswordPasteTarget) PasteOnce(c context.Context, b vault.Binding) error {
+	return t.call(c, func() error { return t.target.PasteOnce(c, b) })
+}
+func (t guardedPasswordPasteTarget) Verify(c context.Context, b vault.Binding, password []byte) error {
+	return t.call(c, func() error { return t.target.Verify(c, b, password) })
 }

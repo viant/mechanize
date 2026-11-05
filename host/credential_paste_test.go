@@ -136,3 +136,75 @@ func TestCredentialPasteOwnedOpaqueDurableOneShot(t *testing.T) {
 		})
 	}
 }
+
+// Exercise every adapter boundary with an implementation that does not perform
+// host authorization itself. Revocation must not depend on provider discipline.
+type pasteBoundaryFixture struct{ calls int }
+
+func (f *pasteBoundaryFixture) CheckEmpty(context.Context, vault.Binding) error {
+	f.calls++
+	return nil
+}
+func (f *pasteBoundaryFixture) SetProbe(context.Context, vault.Binding) error { f.calls++; return nil }
+func (f *pasteBoundaryFixture) CheckProbe(context.Context, vault.Binding) error {
+	f.calls++
+	return nil
+}
+func (f *pasteBoundaryFixture) RemoveProbe(context.Context, vault.Binding) error {
+	f.calls++
+	return nil
+}
+func (f *pasteBoundaryFixture) PasteOnce(context.Context, vault.Binding) error { f.calls++; return nil }
+func (f *pasteBoundaryFixture) Verify(context.Context, vault.Binding, []byte) error {
+	f.calls++
+	return nil
+}
+
+func TestPasswordPasteHostGuardEveryBoundary(t *testing.T) {
+	for _, operation := range []string{"empty", "setProbe", "checkProbe", "removeProbe", "paste", "verify"} {
+		for _, revokeAfter := range []bool{false, true} {
+			t.Run(operation+"/after="+map[bool]string{true: "true", false: "false"}[revokeAfter], func(t *testing.T) {
+				f := &pasteBoundaryFixture{}
+				guardCalls := 0
+				target := guardedPasswordPasteTarget{target: f, guard: func(context.Context) error {
+					guardCalls++
+					if !revokeAfter || f.calls > 0 {
+						return errors.New("PRIVATE-CANARY")
+					}
+					return nil
+				}}
+				ctx := context.Background()
+				b := vault.Binding{}
+				var err error
+				switch operation {
+				case "empty":
+					err = target.CheckEmpty(ctx, b)
+				case "setProbe":
+					err = target.SetProbe(ctx, b)
+				case "checkProbe":
+					err = target.CheckProbe(ctx, b)
+				case "removeProbe":
+					err = target.RemoveProbe(ctx, b)
+				case "paste":
+					err = target.PasteOnce(ctx, b)
+				case "verify":
+					err = target.Verify(ctx, b, []byte("synthetic"))
+				}
+				want := 0
+				if revokeAfter {
+					want = 1
+				}
+				if err != errPrivateCredential || f.calls != want || guardCalls != want+1 {
+					t.Fatal("revoked boundary accepted or replayed", f.calls, guardCalls)
+				}
+			})
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f := &pasteBoundaryFixture{}
+	target := guardedPasswordPasteTarget{target: f, guard: func(context.Context) error { t.Fatal("canceled guard called"); return nil }}
+	if target.PasteOnce(ctx, vault.Binding{}) != errPrivateCredential || f.calls != 0 {
+		t.Fatal("canceled paste dispatched")
+	}
+}
