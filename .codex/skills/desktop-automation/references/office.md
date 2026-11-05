@@ -7,6 +7,31 @@ real documents in the private task workspace; this guide describes generic UI wo
 
 ## Establish the operation
 
+For a multi-document PowerPoint session, app activation need not select the
+intended document. Select its exact freshly observed entry in the Window menu,
+then verify the active target before capture-bound input. Do not close unrelated
+documents to avoid overlapping-window ambiguity.
+
+For native Open dialogs, a focused ListView can lack the AX window evidence
+required by reference keyboard routing. After an explicit pre-dispatch failure,
+fresh physical-window discovery may qualify the separately advertised
+`pressWindowKey` route. Re-observe the Go To Folder sheet and its path field;
+verify the selected filename before opening. Never reuse window IDs or retry an
+unknown key. A truncated full-window tree does not prove locator uniqueness.
+
+PowerPoint Find can fail to match text spanning an explicit line break. Inspect
+the source paragraph/run boundaries read-only and search an exact line; verify
+the expected match count before replacement. Confirm changed slide text and the
+saved package independently. This does not qualify an entire deck or PDF export.
+
+After verifying the current Find/Replace pane's keyboard order, public text
+staging may be batched: from the replacement textbox, Shift+Tab to Find, fill,
+Tab to replacement, fill. Verify the staged strings and expected match count
+before changing the document. A fresh one-use Replace click and Save can form a
+separate batch for an owned disposable copy, followed by saved-file and visual
+checks. Do not reuse coordinates/permits or continue after changed focus/layout.
+This is a public-text recipe, never a credential or clipboard-secret route.
+
 Use disposable copies for qualification. Record the source hash, exact intended
 changes, output formats and quality checks. Preserve unrelated open documents.
 Discover the current app PID, birth token and physical windows; bind actions to
