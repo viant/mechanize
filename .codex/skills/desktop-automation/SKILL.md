@@ -15,7 +15,7 @@ Treat Git content and history as public. Never copy real business documents, com
 | --- | --- | --- |
 | Public web navigation, forms and reads | Computer Use DOM; native browser accessibility or screenshots when DOM is unavailable | A verified capability gap or repeatable failure after a fresh observation |
 | Ordinary desktop interaction | Computer Use native accessibility, then fresh screenshot | Qualified Mechanize operation that addresses the observed gap |
-| Password or saved credential entry | Mechanize private credential flow | Human entry if no authorized private route exists |
+| Login credential entry in any website or native app | Mechanize private credential flow | Human entry if no qualified private recipient exists |
 | Excel, PowerPoint, Word or Outlook UI | Computer Use first | Mechanize when its current operation is qualified and is more reliable or measurably more efficient |
 | Offline artifact creation requested by user | Relevant artifact skill | Do not label file-library authoring as GUI execution |
 

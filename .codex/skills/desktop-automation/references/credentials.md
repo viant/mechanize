@@ -1,5 +1,21 @@
 # Private credential handoff
 
+Use this route for credential entry in every app that requires login, including
+native apps and embedded browser sign-in windows. Computer Use may navigate to
+the form and resume public work after verified login. Secret values must remain
+inside Mechanize’s private store and recipient transport, never ordinary typing
+arguments, clipboard reads, screenshots or agent-visible results. Preserve an
+already signed-in session when it satisfies the task.
+
+Use the qualified private form adapter when available. Clipboard fallback must
+verify an empty masked field, write and validate the fixed synthetic probe `x`,
+remove it, and confirm emptiness before releasing the credential. Retain exact
+recipient/focus authority at paste dispatch; verify delivery privately and clear
+the owned clipboard item even on failure. A verified fill is separate from
+submission and successful login. Qualify each native or web adapter; the common
+API alone does not establish support for every app. Do not sign an app out for a
+test until its private re-entry path is qualified.
+
 Use the already authenticated session if sufficient. Otherwise confirm the intended exact origin and account context from the user task. For Mechanize private entry, retrieve the live desktop skill and credential tool schemas. Prepare the current origin/tab, inspect the opaque preparation status, apply once, and submit once only when the returned state permits it. Never put a password, raw token, record contents or caller-selected credential record into a public fill/typing tool.
 
 Private preparation is not successful login. Verify the resulting account/page through permitted nonsecret state after the private operation releases protection. Preserve the original attempt and use its recovery/status tools after uncertainty. Do not reapply a credential just because the page is unchanged. A missing/ambiguous credential may require the user's local Vault selection; never ask them to paste a secret into chat. MFA, CAPTCHA or security prompts follow their actual runtime requirements.
