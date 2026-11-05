@@ -181,7 +181,7 @@ test('initial qualification separates incomplete inventory injection and exact b
     ['bind rejection','executorBindingFailed'],['bind error reply','executorBindingFailed'],['wrong document','executorBindingFailed']]) {
     const f = await fixture();
     f.state.inventoryTabs = [{id:7,url:f.state.url}];
-    if (failure === 'incomplete') f.state.frameCount = 201;
+    if (failure === 'incomplete') f.state.frameCount = 1025;
     if (failure === 'injection') f.state.rejectInjection = true;
     if (failure === 'bind rejection') f.state.rejectBind = true;
     if (failure === 'bind error reply') f.state.bindError = true;
@@ -1796,7 +1796,7 @@ test('pending input or missing restart journal never proves visibility quiescenc
 });
 
  test('reconnect document limit reports a finite inventory reason without adopting',async()=>{
- const f=await reconnectFixture();f.state.frameCount=201;
+ const f=await reconnectFixture();f.state.frameCount=1025;
  const before=JSON.stringify(f.storage.lastGrant);
  await f.receive({...restartQualification(),brokerEpoch:'limit-broker',channelEpoch:'limit-channel'});
  const result=f.messages.at(-1);
@@ -2768,9 +2768,9 @@ test('extension reload maintenance gates new native renderer dispatch while its 
 
 test('native hello advertises bounded DOM select separately from fingerprint and Playwright versions',async()=>{
  const f=await metadataActivationFixture();f.disconnect();await f.connect();
- const hello=f.messages.find(m=>m.type==='hello');assert.equal(hello.selectOptionVersion,1);assert.equal(hello.privacySourceRetirementVersion,1);assert.equal(hello.workerBuild,39);
+ const hello=f.messages.find(m=>m.type==='hello');assert.equal(hello.selectOptionVersion,1);assert.equal(hello.privacySourceRetirementVersion,1);assert.equal(hello.workerBuild,40);
  const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'../manifest.json'),'utf8'));
- assert.equal(manifest.version,'0.1.87');assert.equal(manifest.action.default_title,'Mechanize browser automation (0.1.87)');
+ assert.equal(manifest.version,'0.1.88');assert.equal(manifest.action.default_title,'Mechanize browser automation (0.1.88)');
  assert.equal(hello.checkOptionVersion,undefined);assert.equal(hello.uncheckOptionVersion,undefined);assert.equal(f.state.deliveries,0);
 });
 

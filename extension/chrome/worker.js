@@ -241,6 +241,7 @@ function suspendDiscardedTab(tab) {
   return true;
 }
 const MAX_INVENTORY_DOCUMENTS = 1024;
+const MAX_INVENTORY_FRAMES_PER_TAB = MAX_INVENTORY_DOCUMENTS;
 const MAX_RECONNECT_FENCES = 202;
 async function inventory(enrollment, qualification) {
   const read=operation=>qualification?qualificationRead(qualification,operation):operation();
@@ -264,7 +265,7 @@ async function inventory(enrollment, qualification) {
       continue;
     }
     const frames=await read(()=>chrome.webNavigation.getAllFrames({tabId:tab.id}))||[];
-    if(frames.length>200){reconnectInventoryLimitDiagnostic={bound:'perTabFrames',count:frames.length,limit:200};return {documents:result,truncated:true};}
+    if(frames.length>MAX_INVENTORY_FRAMES_PER_TAB){reconnectInventoryLimitDiagnostic={bound:'perTabFrames',count:frames.length,limit:MAX_INVENTORY_FRAMES_PER_TAB};return {documents:result,truncated:true};}
     for (const frame of frames) {
       // Chrome error documents can retain an https URL while their privileged
       // error page cannot host an executor. Fenced frames likewise prohibit
@@ -1160,17 +1161,17 @@ async function reconnectTabFrames(tabId,qualification){
  const first=await read();
  const observed=qualification?.orphanFrameEvidence||[];
  if(observed.some(f=>f.tabId===tabId&&(!Array.isArray(first)||!first.some(n=>n.frameId===f.frameId&&n.documentId===f.documentId))))throw reconnectInventoryRefuse('childSourceIdentityUnavailable');
- if(!Array.isArray(first)||!first.length||first.length>200)return first;
+ if(!Array.isArray(first)||!first.length||first.length>MAX_INVENTORY_FRAMES_PER_TAB)return first;
  if(!first.every(f=>f&&Number.isSafeInteger(f.frameId)&&Number.isSafeInteger(f.parentFrameId))||!first.some(f=>f.parentFrameId>=0&&!first.some(p=>p.frameId===f.parentFrameId)))return first;
  const forest=reconnectFrameForest(first,true);
  if(![...forest.values()].includes(null))return first;
  if(qualification){
   for(const f of first)if(!forest.get(f.frameId)&&!observed.some(n=>n.tabId===tabId&&n.frameId===f.frameId&&n.documentId===f.documentId))observed.push({tabId,frameId:f.frameId,documentId:f.documentId});
-  if(observed.length>200)throw reconnectInventoryRefuse('frameLimitExceeded','orphanEvidence',observed.length,200);
+  if(observed.length>MAX_INVENTORY_DOCUMENTS)throw reconnectInventoryRefuse('frameLimitExceeded','orphanEvidence',observed.length,MAX_INVENTORY_DOCUMENTS);
   qualification.orphanFrameEvidence=observed;
  }
  const second=await read();
- if(!Array.isArray(second)||!second.length||second.length>200)return second;
+ if(!Array.isArray(second)||!second.length||second.length>MAX_INVENTORY_FRAMES_PER_TAB)return second;
  reconnectFrameForest(second,true);
  // Do not lose a first-read identity merely because the reread omitted it.
  // Retaining the first tree is conservative and later census checks still
@@ -1182,7 +1183,7 @@ async function reconnectInternalTabCensus(tab,qualification){
   let frames;
   try{frames=await reconnectTabFrames(tab.id,qualification);}catch(error){if(error?.code==='storedFenceMismatch'||error?.code==='inventoryChanged')throw error;throw reconnectInventoryRefuse("frameQueryUnavailable");}
   if(!Array.isArray(frames)||!frames.length)throw reconnectInventoryRefuse("frameListUnavailable");
-  if(frames.length>200)throw reconnectInventoryRefuse("frameListUnavailable","perTabFrames",frames.length,200);
+  if(frames.length>MAX_INVENTORY_FRAMES_PER_TAB)throw reconnectInventoryRefuse("frameListUnavailable","perTabFrames",frames.length,MAX_INVENTORY_FRAMES_PER_TAB);
   const byFrame=new Map(),documents=new Set();
   for(const f of frames){
     if(!f||!Number.isSafeInteger(f.frameId)||f.frameId<0||byFrame.has(f.frameId)||!Number.isSafeInteger(f.parentFrameId))throw reconnectInventoryRefuse("frameMetadataInvalid");
@@ -1356,7 +1357,7 @@ async function reconnectDiscardedTabCensus(tab,qualification){
  suspendDiscardedTab(tab);
  let frames;try{frames=await qualificationRead(qualification,()=>chrome.webNavigation.getAllFrames({tabId:tab.id}));}catch{qualificationCurrent(qualification);frames=null;}
  if(frames!==null&&frames!==undefined&&!Array.isArray(frames))throw reconnectInventoryRefuse('frameListUnavailable');
- frames=frames||[];if(frames.length>200)throw reconnectInventoryRefuse('frameLimitExceeded','perTabFrames',frames.length,200);
+ frames=frames||[];if(frames.length>MAX_INVENTORY_FRAMES_PER_TAB)throw reconnectInventoryRefuse('frameLimitExceeded','perTabFrames',frames.length,MAX_INVENTORY_FRAMES_PER_TAB);
  const result=[{tabId:tab.id,discarded:true,identityUnknown:true,origin:null,executable:false,protected:false}],ids=new Set();
  for(const frame of frames){
   if(!frame||!Number.isSafeInteger(frame.frameId)||frame.frameId<0||ids.has(frame.frameId))throw reconnectInventoryRefuse('frameIDInvalid');ids.add(frame.frameId);
@@ -1391,7 +1392,7 @@ async function reconnectCurrentCensus(enrollment,qualification){
   if(!['http:','https:'].includes(url.protocol))throw reconnectInventoryRefuse('tabSchemeDenied');
   const frames=await reconnectTabFrames(tab.id,qualification);
   if(!Array.isArray(frames)||!frames.length)throw reconnectInventoryRefuse('frameListUnavailable');
-  if(frames.length>200)throw reconnectInventoryRefuse('frameListUnavailable','perTabFrames',frames.length,200);
+  if(frames.length>MAX_INVENTORY_FRAMES_PER_TAB)throw reconnectInventoryRefuse('frameListUnavailable','perTabFrames',frames.length,MAX_INVENTORY_FRAMES_PER_TAB);
   const forest=reconnectFrameForest(frames,true);
   const frameIDs=new Set();let roots=0;
   for(const f of frames){
@@ -2409,7 +2410,7 @@ async function connectNativeOnce(token,valid=()=>true) {
     }catch{metadataStartupBarrier='inventoryUnavailable';}
     // This fixed metadata hello is independent of secret/document visibility.
     // No retained document or input payload is replayed on a replacement port.
-    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,playwrightTargetRetirementVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:39,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
+    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,playwrightTargetRetirementVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:40,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
 
   } catch {
     if (lifecycleGuardId) connectionAttention = "lifecycleInhibited";

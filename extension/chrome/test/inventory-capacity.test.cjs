@@ -29,3 +29,24 @@ test('count and unchanged serialized byte overflow never publish partial executo
  assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));assert.ok(!f.messages.some(m=>m.type==='documents'&&m.truncated===false));assert.equal(JSON.stringify(f.storage.mechanizeReconnect),journal);assert.equal(JSON.stringify(f.storage.lastGrant),lastGrant);assert.equal(f.state.deliveries,inputs);
  });
 });
+
+test('one 220-frame tab recovers with every document retained and no input',async()=>{
+ const {f,next}=await inventoryFixture([220],{recovery:true});
+ await f.receive({...qualification(),...next,executorChallenge:'large-tab'});
+ assert.ok(f.messages.some(m=>m.type==='executorPrepared'),JSON.stringify(f.messages.filter(m=>m.type==='attention')));
+ const inventory=f.messages.filter(m=>m.type==='documents').at(-1);
+ assert.equal(inventory.truncated,false);assert.equal(inventory.documents.length,220);
+ assert.equal(new Set(inventory.documents.map(d=>d.documentId)).size,220);
+ assert.equal((f.state.debuggerInputs||[]).filter(v=>v.method.startsWith('Input.')).length,0);
+ assert.equal(f.state.permissionRequests||0,0);
+});
+test('single-tab frame overflow remains bounded without partial readiness',async()=>{
+ const {f,next}=await inventoryFixture([1025],{recovery:true});
+ const journal=JSON.stringify(f.storage.mechanizeReconnect),lastGrant=JSON.stringify(f.storage.lastGrant);
+ await f.receive({...qualification(),...next,executorChallenge:'overflow-tab'});
+ assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));
+ assert.ok(!f.messages.some(m=>m.type==='documents'&&m.truncated===false));
+ assert.equal(JSON.stringify(f.storage.mechanizeReconnect),journal);
+ assert.equal(JSON.stringify(f.storage.lastGrant),lastGrant);
+ assert.equal((f.state.debuggerInputs||[]).filter(v=>v.method.startsWith('Input.')).length,0);
+});
