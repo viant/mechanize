@@ -277,7 +277,9 @@ func (g *Gateway) extensionMaintenanceExchange(ctx context.Context, p auth.Princ
 	case r = <-pending.done:
 	case <-ctx.Done():
 		out.Reason = "transportUnavailable"
-		return out, ctx.Err()
+		// The worker may already have reloaded. Return the bounded unknown
+		// receipt so callers cannot replace it with a pre-dispatch rejection.
+		return out, nil
 	case <-timer.C:
 		out.Reason = "transportUnavailable"
 		return out, nil

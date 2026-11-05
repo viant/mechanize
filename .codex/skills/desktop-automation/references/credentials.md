@@ -27,9 +27,17 @@ tools or logs. Require a private owned source and the supported local cipher.
 Reject OAuth/SDK resources as website passwords. Preserve failed/uncertain writes
 and inspect before retrying; an import does not prove successful sign-in.
 
-After a broker redeployment, an already-open authenticated page can retain the
-old renderer binding. `publicReadIdentityChanged` may persist after selecting the
-current tab. If the original credential submission is confirmed, independent
+After a broker redeployment, select the current exact tab and attempt a fresh
+public read. Extension 0.1.87 supports a short-lived public-read fence across a
+broker restart while retaining the original mutation binding and receipts.
+The document, permission scope and public-page classification must still match;
+known-value redaction remains required after private credential entry. A passing
+read does not qualify input or a fresh login. Do not repeat credentials, reload
+the page or request new consent merely because the broker restarted.
+
+If `publicReadIdentityChanged` persists on an older renderer, first inspect the
+extension version and current tab identity. If the original credential
+submission is confirmed, independent
 native inspection verifies the expected signed-in dashboard, and no input is
 pending or unknown, one normal reload of that exact non-editing page can create a
 fresh renderer binding. Preserve the original credential receipt and requalify

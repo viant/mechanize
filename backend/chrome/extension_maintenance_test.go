@@ -142,10 +142,12 @@ func TestExtensionMaintenanceLostReplyBlocksOnlyOldConnectionAndDoesNotClearHist
 	g, p, ctx, c, conn := liveTabInventoryFixture(t, 1, 1)
 	bounded, cancel := context.WithTimeout(ctx, 70*time.Millisecond)
 	defer cancel()
-	go func() { ReadFrame(conn) }()
-	out, _ := g.ReloadExtension(bounded, p, "session", "request", "", "", "0.1.70", func(context.Context) error { return nil })
-	if out.DispatchState != "unknown" || out.Reason != "transportUnavailable" {
-		t.Fatal(out)
+	// Cancel only after the peer has received the command, deterministically
+	// exercising the post-write cancellation branch rather than timer expiry.
+	go func() { ReadFrame(conn); cancel() }()
+	out, err := g.ReloadExtension(bounded, p, "session", "request", "", "", "0.1.70", func(context.Context) error { return nil })
+	if err != nil || out.DispatchState != "unknown" || out.Reason != "transportUnavailable" {
+		t.Fatal(out, err)
 	}
 	if _, e := g.broker.call(ctx, c, Command{Action: "executor.acquire", Identity: Identity{TabID: 7}}, false); e == nil {
 		t.Fatal("input crossed uncertain extension reload")
