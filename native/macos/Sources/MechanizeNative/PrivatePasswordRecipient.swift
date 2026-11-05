@@ -73,16 +73,18 @@ struct PrivatePasswordRecipient {
             try check()
         } catch { throw Self.failure() }
     }
-    // Exact private comparison. Mask glyphs, length-only equality and an absent
-    // AXValue cannot attest delivery; unsupported controls remain unqualified.
-    func requireValue(_ expected: [UInt8], check: () throws -> Void,
-                      runtime: PrivatePasswordRecipientRuntime = .system) throws {
+    // Structural delivery evidence only: never read AXValue or selected text.
+    // The adapter must qualify this control's character-count convention. A
+    // matching count does not attest password equality or successful sign-in.
+    func requireCharacterCount(_ expected: Int, check: () throws -> Void,
+                               runtime: PrivatePasswordRecipientRuntime = .system) throws {
         do {
-            guard expected.count <= 4096 else { throw Self.failure() }
+            guard (0...4096).contains(expected) else { throw Self.failure() }
             try validate(check: check, runtime: runtime)
-            let (status, value) = runtime.attribute(element, kAXValueAttribute)
-            guard status == .success, let text = value as? String,
-                  text.utf8.count <= 4096, text.utf8.elementsEqual(expected) else { throw Self.failure() }
+            let (status, value) = runtime.attribute(element, kAXNumberOfCharactersAttribute)
+            guard status == .success, let count = value as? NSNumber,
+                  CFGetTypeID(count) != CFBooleanGetTypeID(),
+                  count.doubleValue.isFinite, count.doubleValue == Double(expected) else { throw Self.failure() }
             try validate(check: check, runtime: runtime)
         } catch { throw Self.failure() }
     }
