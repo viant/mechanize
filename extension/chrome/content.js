@@ -209,8 +209,8 @@ if (!globalThis.__mechanizeExecutor) {
   }
   function scopedPublicRead(message) {
     flush();const scope=publicReadScope;
-    if(!scope||generation!==scope.identity.documentGeneration||message.identity?.documentGeneration!==scope.identity.documentGeneration||!['observe','read','resolve','executor.validate'].includes(message?.action)||!binding||quiesced||reconnectIntent||Date.now()>=scope.deadline)return false;
-    if(['profileChannel','browserInstance','tabId','frameId','documentId'].some(k=>message.identity?.[k]!==scope.identity[k]||binding.identity[k]!==scope.identity[k])||['brokerEpoch','channelEpoch','scopeHash'].some(k=>message[k]!==scope[k]||binding[k]!==scope[k]))return false;
+    if(!scope||scope.binding!==binding||message.controlLease||message.attemptId||message.fingerprintVersion||message.fingerprintSHA256||generation!==scope.identity.documentGeneration||message.identity?.documentGeneration!==scope.identity.documentGeneration||!['observe','read','resolve','executor.validate'].includes(message?.action)||!binding||quiesced||reconnectIntent||Date.now()>=scope.deadline)return false;
+    if(['profileChannel','browserInstance','tabId','frameId','documentId'].some(k=>message.identity?.[k]!==scope.identity[k]||binding.identity[k]!==scope.identity[k])||binding.scopeHash!==scope.scopeHash||['brokerEpoch','channelEpoch','scopeHash'].some(k=>message[k]!==scope[k]))return false;
     try{const u=new URL(document.URL);return u.origin+u.pathname===scope.route&&globalThis.MechanizeDOM.credentialLayout(document).state==='public';}catch{return false;}
   }
   async function qualifyPublicRead(message,sender,reply) {
@@ -220,7 +220,7 @@ if (!globalThis.__mechanizeExecutor) {
     try {
       const keys=[...privateKeys,'redactions'],i=message.identity;
       if(sender.tab||sender.url&&sender.url!==`chrome-extension://${chrome.runtime.id}/worker.js`||Object.keys(message).sort().join()!==keys.sort().join()||!i||Object.keys(i).sort().join()!=='browserInstance,documentGeneration,documentId,frameId,profileChannel,tabId'||i.frameId!==0||window.top!==window||!Number.isSafeInteger(i.documentGeneration)||i.documentGeneration<0||!Number.isSafeInteger(i.tabId)||i.tabId<1||!['profileChannel','browserInstance','documentId'].every(k=>typeof i[k]==='string'&&i[k].length>0&&i[k].length<=128)||!/^[a-f0-9]{64}$/.test(message.requestId)||!['brokerEpoch','channelEpoch','scopeHash'].every(k=>typeof message[k]==='string'&&message[k].length>0&&message[k].length<=128)||!Number.isSafeInteger(message.deadlineUnixMs)||message.deadlineUnixMs<=Date.now()||message.deadlineUnixMs>Date.now()+5000||location.origin!==message.origin||quiesced||reconnectIntent||pendingFingerprints||pendingBrowserInputs||recorder.active)throw Error();
-      if(binding&&(['profileChannel','browserInstance','tabId','frameId','documentId'].some(k=>binding.identity[k]!==i[k])||['brokerEpoch','channelEpoch','scopeHash'].some(k=>binding[k]!==message[k])))throw Error();
+      if(binding&&(['profileChannel','browserInstance','tabId','frameId','documentId'].some(k=>binding.identity[k]!==i[k])||binding.scopeHash!==message.scopeHash))throw Error();
       if(!Array.isArray(message.redactions)||message.redactions.length&&!globalThis.MechanizeSecureInput.validRedactions(message.redactions)||privateInputWritten&&!globalThis.MechanizeSecureInput.validRedactions(message.redactions))throw Error();
       const redactions=[...message.redactions];
       flush();const heldBinding=binding,heldGeneration=generation;
@@ -235,7 +235,9 @@ if (!globalThis.__mechanizeExecutor) {
       if(!current())throw Error();
       if(!binding)binding={identity:{...i,documentGeneration:generation},brokerEpoch:message.brokerEpoch,channelEpoch:message.channelEpoch,scopeHash:message.scopeHash,leaseRequired:true,mutationFingerprintVersion:2};
       const u=new URL(document.URL);
-      publicReadScope={identity:{...binding.identity,documentGeneration:generation},brokerEpoch:binding.brokerEpoch,channelEpoch:binding.channelEpoch,scopeHash:binding.scopeHash,deadline:message.deadlineUnixMs,route:u.origin+u.pathname,redactions};
+      // A fresh worker fence can authorize a bounded public read without
+      // replacing the old executor binding, receipts or mutation lease.
+      publicReadScope={binding,identity:{...binding.identity,documentGeneration:generation},brokerEpoch:message.brokerEpoch,channelEpoch:message.channelEpoch,scopeHash:message.scopeHash,deadline:message.deadlineUnixMs,route:u.origin+u.pathname,redactions};
       reply({requestId:message.requestId,publicDocument:{version:1,identity:{...binding.identity,documentGeneration:generation},routeSHA256:proof.routeSHA256,public:true}});
     }catch{refused();}
   }
@@ -363,7 +365,7 @@ if (!globalThis.__mechanizeExecutor) {
       const command = MechanizeProtocol.validate(message, true);
       if (!binding) throw MechanizeProtocol.error("notEnrolled", "Document is not bound to an enrolled channel");
       const i = command.identity;
-      if (["profileChannel", "browserInstance", "tabId", "frameId", "documentId"].some(k => i[k] !== binding.identity[k]) || command.brokerEpoch !== binding.brokerEpoch || command.channelEpoch !== binding.channelEpoch || command.scopeHash !== binding.scopeHash) throw MechanizeProtocol.error("staleIdentity", "Document/channel/scope identity changed");
+      if (["profileChannel", "browserInstance", "tabId", "frameId", "documentId"].some(k => i[k] !== binding.identity[k]) || (!scopedPublicRead(command) && (command.brokerEpoch !== binding.brokerEpoch || command.channelEpoch !== binding.channelEpoch || command.scopeHash !== binding.scopeHash))) throw MechanizeProtocol.error("staleIdentity", "Document/channel/scope identity changed");
       if (command.action === "executor.receipts") {
         exportReceipts(command).then(reply, error => reply({requestId: command.requestId, error: exportFailure(error)}));
         return true; // Keep only this readonly response channel alive for hashing.
@@ -401,7 +403,7 @@ if (!globalThis.__mechanizeExecutor) {
         if (privateProtected&&!scopedPublicRead(command)) throw MechanizeProtocol.error("secureDocumentRequired","Protected document requires private control");
         flush();
         MechanizeProtocol.validate(command, true);
-        if (["profileChannel", "browserInstance", "tabId", "frameId", "documentId"].some(k => i[k] !== binding.identity[k]) || command.brokerEpoch !== binding.brokerEpoch || command.channelEpoch !== binding.channelEpoch || command.scopeHash !== binding.scopeHash) throw MechanizeProtocol.error("staleIdentity", "Pinned mutation binding changed");
+        if (["profileChannel", "browserInstance", "tabId", "frameId", "documentId"].some(k => i[k] !== binding.identity[k]) || (!scopedPublicRead(command) && (command.brokerEpoch !== binding.brokerEpoch || command.channelEpoch !== binding.channelEpoch || command.scopeHash !== binding.scopeHash))) throw MechanizeProtocol.error("staleIdentity", "Pinned mutation binding changed");
         if (mutation && (binding.leaseRequired || command.controlLease) && !sameLease(controlLease, command.controlLease)) throw MechanizeProtocol.error("staleAuthority", "Pinned renderer lease changed before mutation");
 
       if (mutation && receipts.has(command.attemptId)) {

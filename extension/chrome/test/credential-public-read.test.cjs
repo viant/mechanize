@@ -1,7 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs');
 const base=require('node:path').resolve(__dirname,'..');
 const {JSDOM}=require(base+'/node_modules/jsdom');
-function fixture(html){const dom=new JSDOM(html,{url:'https://bank.example/login',runScripts:'outside-only'}),w=dom.window;w.TextEncoder=TextEncoder;Object.defineProperty(w.crypto,"subtle",{value:require("node:crypto").webcrypto.subtle});w.HTMLElement.prototype.getClientRects=function(){return [{width:100,height:20}]};for(const f of ['protocol.js','accessibility-provider.js'])w.eval(fs.readFileSync(base+'/'+f,'utf8'));w.eval(fs.readFileSync(base+'/dom.js','utf8'));return {w,doc:w.document,api:w.MechanizeDOM};}
+function fixture(html,origin='https://bank.example'){const dom=new JSDOM(html,{url:origin+'/login',runScripts:'outside-only'}),w=dom.window;w.TextEncoder=TextEncoder;Object.defineProperty(w.crypto,"subtle",{value:require("node:crypto").webcrypto.subtle});w.HTMLElement.prototype.getClientRects=function(){return [{width:100,height:20}]};for(const f of ['protocol.js','accessibility-provider.js'])w.eval(fs.readFileSync(base+'/'+f,'utf8'));w.eval(fs.readFileSync(base+'/dom.js','utf8'));return {w,doc:w.document,api:w.MechanizeDOM};}
 test('metadata classification never reads values and rejects login and error',()=>{
  for(const html of ['<input type=password value=CANARY>','<input autocomplete=username value=CANARY>','<h1>nie możemy Cię zalogować</h1>','<h1>Login failed</h1>']){
  const f=fixture(html);for(const input of f.doc.querySelectorAll('input'))Object.defineProperty(input,'value',{get(){throw Error('value read')}});
@@ -34,13 +34,13 @@ test('public scope redacts non-login secret controls and descendant text without
  const output=f.api.withCredentialScope(f.doc,()=>true,()=>({snapshot:f.api.snapshot(f.doc),text:f.api.act(f.doc,'read',{strategy:'id',value:'parent'},{attribute:'text'}),value:f.api.act(f.doc,'read',{strategy:'css',value:'textarea'},{attribute:'value'})}));
  assert.ok(!JSON.stringify(output).includes('CANARY'));assert.equal(output.value.value,'[redacted]');assert.equal(output.text.value,'Public text');f.w.close();
 });
-async function contentFixture(){
- const f=fixture('<form><input type=password value=PASSWORD-CANARY><input autocomplete=username value=USERNAME-CANARY></form>');let receive;
+async function contentFixture(origin='https://bank.example'){
+ const f=fixture('<form><input type=password value=PASSWORD-CANARY><input autocomplete=username value=USERNAME-CANARY></form>',origin);let receive;
  f.w.chrome={runtime:{id:'fixture',onMessage:{addListener(fn){receive=fn}}}};
  for(const file of ['secure-input.js','recorder.js'])f.w.eval(fs.readFileSync(base+'/'+file,'utf8'));
  f.w.eval(fs.readFileSync(base+'/content.js','utf8'));
  const identity={profileChannel:'profile',browserInstance:'browser',tabId:7,frameId:0,documentId:'doc',documentGeneration:1};
- const common={requestId:'a'.repeat(64),identity,brokerEpoch:'broker',channelEpoch:'channel',scopeHash:'b'.repeat(64),deadlineUnixMs:Date.now()+4000,origin:'https://bank.example'};
+ const common={requestId:'a'.repeat(64),identity,brokerEpoch:'broker',channelEpoch:'channel',scopeHash:'b'.repeat(64),deadlineUnixMs:Date.now()+4000,origin};
  const send=(message,sender={id:'fixture',url:'chrome-extension://fixture/worker.js'})=>new Promise(resolve=>receive(message,sender,resolve));
  return {...f,common,send};
 }
@@ -54,26 +54,49 @@ test('actual content scope admits sanitized SPA observation while original priva
  const acquire=await f.send({...command,action:'executor.acquire',controlLease:{id:'d'.repeat(32),generation:2}});assert.equal(acquire.error.code,'secureDocumentRequired');
  f.doc.querySelector('input').hidden=false;const stale=await f.send(command);assert.equal(stale.error.code,'secureDocumentRequired');f.w.close();
 });
-test('content scope rejects foreign binding and expired proof without changing private authority',async()=>{
+test('content scope rejects foreign document or permission scope and expired proof without changing private authority',async()=>{
  const f=await contentFixture();await f.send({...f.common,type:'credentialBind',controlLease:{id:'c'.repeat(32),generation:1}});
  f.doc.body.innerHTML='<h1>History</h1>';
- for(const change of [{brokerEpoch:'foreign'},{identity:{...f.common.identity,documentId:'foreign'}},{deadlineUnixMs:Date.now()-1}]){
+ for(const change of [{scopeHash:'f'.repeat(64)},{identity:{...f.common.identity,documentId:'foreign'}},{deadlineUnixMs:Date.now()-1}]){
   const proof=await f.send({...f.common,type:'credentialPublicScope',redactions:[],...change});assert.equal(proof.publicDocument,null);
  }
  f.w.close();
 });
 
-test('filled private source needs known-value redaction and cannot export reflected password in same-document dashboard',async()=>{
+test('public reads recover after broker restart without adopting the old mutation binding',async()=>{
+ for(const origin of ['https://bank.example','https://workspace.example','https://portal.example'])for(const layout of ['hidden-login','removed-login','public-page']){
+  const f=await contentFixture(origin);
+  await f.send({...f.common,type:'credentialBind',controlLease:{id:'c'.repeat(32),generation:1}});
+  if(layout==='hidden-login')f.doc.querySelectorAll('input').forEach(el=>el.hidden=true);
+  else f.doc.body.innerHTML='';
+  f.doc.body.insertAdjacentHTML('beforeend','<h1>Public dashboard</h1><button>Open report</button>');
+  f.w.history.replaceState(null,'','/'+layout);
+  const next={...f.common,brokerEpoch:'restarted-broker',channelEpoch:'reconnected-channel'};
+  const proof=await f.send({...next,type:'credentialPublicScope',redactions:[]});
+  assert.equal(proof.publicDocument?.public,true,layout);
+  const command={requestId:'current-read',action:'observe',identity:proof.publicDocument.identity,brokerEpoch:next.brokerEpoch,channelEpoch:next.channelEpoch,scopeHash:next.scopeHash,deadlineUnixMs:Date.now()+3000,args:{limit:100}};
+  const read=await f.send(command);assert.equal(read.error,undefined,layout);assert.ok(JSON.stringify(read).includes('Public dashboard'));assert.ok(!JSON.stringify(read).includes('CANARY'));
+  const acquire=await f.send({...command,action:'executor.acquire',controlLease:{id:'d'.repeat(32),generation:2}});assert.ok(acquire.error,'read scope must not grant a mutation lease');
+  const stale=await f.send({...command,brokerEpoch:f.common.brokerEpoch,channelEpoch:f.common.channelEpoch});assert.ok(stale.error,'old fence must not borrow new public read scope');
+  f.doc.body.insertAdjacentHTML('beforeend','<input type=password value=RETURNED-CANARY>');
+  assert.ok((await f.send(command)).error,'return to login must revoke the read');
+  f.w.close();
+ }
+});
+
+test('filled private source needs known-value redaction across broker restart and cannot export reflected password in same-document dashboard',async()=>{
  const f=await contentFixture();f.doc.querySelector('form').setAttribute('method','post');f.doc.querySelector('form').insertAdjacentHTML('beforeend','<button>Login</button>');
  const lease={id:'c'.repeat(32),generation:1};const bound=await f.send({...f.common,type:'credentialBind',controlLease:lease});assert.equal(bound.ready,true);
  const inspected=await f.send({...f.common,type:'credentialInspect',controlLease:lease});assert.ok(inspected.identity.documentGeneration>0);
  const filled=await f.send({...f.common,type:'credentialDelivery',identity:inspected.identity,controlLease:lease,attemptId:'e'.repeat(64),username:'USER-REFLECTED-CANARY',password:'PASSWORD-REFLECTED-CANARY'});assert.equal(filled.status,'dispatched');
  f.doc.querySelectorAll('input').forEach(el=>el.hidden=true);f.doc.body.insertAdjacentHTML('beforeend','<h1>History</h1><h2>PASSWORD-REFLECTED-CANARY</h2>');
  const ordinary=await f.send({requestId:'unscoped-observe',action:'observe',identity:filled.identity||inspected.identity,brokerEpoch:f.common.brokerEpoch,channelEpoch:f.common.channelEpoch,scopeHash:f.common.scopeHash,deadlineUnixMs:Date.now()+3000,args:{limit:100}});assert.equal(ordinary.error.code,'secureDocumentRequired');
- const denied=await f.send({...f.common,type:'credentialPublicScope',redactions:[]});assert.equal(denied.publicDocument,null);
+ const restarted={...f.common,brokerEpoch:'new-broker',channelEpoch:'new-channel'};
+ const denied=await f.send({...restarted,type:'credentialPublicScope',redactions:[]});assert.equal(denied.publicDocument,null);
  const redactions=f.w.MechanizeSecureInput.redactionVariants(['USER-REFLECTED-CANARY','PASSWORD-REFLECTED-CANARY']);
- const proof=await f.send({...f.common,type:'credentialPublicScope',redactions});assert.equal(proof.publicDocument.public,true);
- const observed=await f.send({requestId:'observe',action:'observe',identity:proof.publicDocument.identity,brokerEpoch:f.common.brokerEpoch,channelEpoch:f.common.channelEpoch,scopeHash:f.common.scopeHash,deadlineUnixMs:Date.now()+3000,args:{limit:100}});
+ const forged=await f.send({...restarted,type:'credentialPublicScope',redactions},{id:'fixture',url:'https://bank.example',tab:{id:7}});assert.equal(forged.publicDocument,null);
+ const proof=await f.send({...restarted,type:'credentialPublicScope',redactions});assert.equal(proof.publicDocument.public,true);
+ const observed=await f.send({requestId:'observe',action:'observe',identity:proof.publicDocument.identity,brokerEpoch:restarted.brokerEpoch,channelEpoch:restarted.channelEpoch,scopeHash:restarted.scopeHash,deadlineUnixMs:Date.now()+3000,args:{limit:100}});
  assert.equal(observed.error,undefined);assert.ok(!JSON.stringify(observed).includes('CANARY'));assert.ok(JSON.stringify(observed).includes('History'));f.w.close();
 });
 test('existing scope transport validates public proof against fresh Chrome URL/doc metadata without retiring old source',async()=>{
