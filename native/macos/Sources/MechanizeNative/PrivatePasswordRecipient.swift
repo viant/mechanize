@@ -88,4 +88,18 @@ struct PrivatePasswordRecipient {
             try validate(check: check, runtime: runtime)
         } catch { throw Self.failure() }
     }
+    // Only the fixed public probe can use this setter. Credential bytes never
+    // enter this API. The caller reserves its uncertain input receipt first.
+    func writeProbe(inserting: Bool, check: () throws -> Void,
+                    runtime: PrivatePasswordRecipientRuntime = .system,
+                    write: (AXUIElement, String) -> AXError = { element, value in
+                        AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFString)
+                    }) throws {
+        do {
+            try requireCharacterCount(inserting ? 0 : 1, check: check, runtime: runtime)
+            guard write(element, inserting ? "x" : "") == .success else { throw Self.failure() }
+            try requireCharacterCount(inserting ? 1 : 0, check: check, runtime: runtime)
+        } catch { throw Self.failure() }
+    }
+
 }
