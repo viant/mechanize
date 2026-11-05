@@ -67,6 +67,14 @@ activation of the already verified public task tab is a permissible recovery ste
 It must preserve other tabs and drafts and must not dismiss or interact with an
 unidentified credential prompt. Check system state and native capabilities after
 that action; successful browser activation does not prove Secure Input cleared.
+When an authorized native diagnostic route shows Chrome retaining password focus,
+ordinary address-bar focus (`Command+L`) can release that focus without changing
+the URL, reading a password, submitting the form or closing any tab. Use it only
+after the private input operation is quiescent; never type or paste into the
+address bar during this recovery. A page-body click or activating another tab may
+leave Secure Input active. Verify the focused control and then recheck Mechanize's
+native capabilities before input. This is normal focus recovery, not permission
+to disable the OS protection or bypass an ungranted app scope.
 If protected entry remains active, let the user finish or dismiss it and bring the
 intended app forward. Do not disable Secure Input, terminate its owner,
 reset permissions, or switch executors to bypass the protection. Preserve pending
