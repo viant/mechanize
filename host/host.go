@@ -45,6 +45,7 @@ type Host struct {
 	nativeVaultStore                *vault.Store
 	nativeVaultRecords              *vault.RecordStore
 	credentials                     *credentialService
+	credentialPaste                 *CredentialPasteOptions
 	runtimeListen                   string
 	runtimeSettingsRoot             string
 	frameMu                         sync.Mutex
@@ -124,6 +125,10 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 		return nil, err
 	}
 	h := &Host{owner: ctx, runtimeListen: c.RuntimeListenAddress, runtimeSettingsRoot: c.StorageRoot, captureHelper: c.NativeHelper, captureWindow: native.CaptureWindow, captureWindows: native.ListCaptureWindows, recordingLeases: map[string]*consent.Lease{}, Verifier: verifier, users: map[string]User{}}
+	if options.CredentialPaste != nil {
+		copy := *options.CredentialPaste
+		h.credentialPaste = &copy
+	}
 	h.configureCaptureLaunch(c)
 	if options.NativeVaultInput != nil {
 		h.vaultExposure = options.NativeVaultInput.ExposureGate()
@@ -374,7 +379,7 @@ func NewWithOptions(ctx context.Context, c Config, options HostOptions) (*Host, 
 	if err != nil {
 		return fail(err)
 	}
-	h.Server, err = gateway.New(gateway.Dependencies{ApplicationPresence: h.ApplicationPresence, ExtensionReload: h.ExtensionReload, ExtensionReloadStatus: h.ExtensionReloadStatus, LocalSkills: h.localSkills, CredentialPrepare: h.CredentialPrepare, CredentialRecover: h.CredentialRecover, CredentialResumeManual: h.CredentialResumeManual, CredentialApply: h.CredentialApply, CredentialSubmit: h.CredentialSubmit, CredentialStatus: h.CredentialStatus, BrowserActivateTab: h.BrowserActivateTab, BrowserTabLocationMatches: h.BrowserTabLocationMatches, BrowserOpenOrigin: h.BrowserOpenOrigin, BrowserLocationMatches: h.BrowserLocationMatches, BrowserTabs: h.BrowserTabs, BrowserStatus: h.BrowserStatus, StateStopBoundary: h.durable.StopBoundary, EffectReconcile: h.durable.ReconcileEffect, Recovery: h.recovery, Scenarios: h.scenarios, CaptureWindow: h.CaptureWindow, CaptureWindows: h.CaptureWindows, CaptureWindowFrame: h.CaptureWindowFrame, StateResume: h.ResumeRun, PermissionRequest: h.consent.Request, PermissionStatus: h.consent.RequestStatus, Recording: h.recording, Runtime: h.Runtime, Observe: h.Observe, ObserveNativeRoot: h.ObserveNativeRoot, ObserveNativeWindow: h.ObserveNativeWindow, ObservationPolicy: h.ObservationPolicy, Policy: h.Policy, PlanPolicy: h.PlanPolicy, StateGet: h.durable.StateGet, StatePatch: h.durable.StatePatch, StatePause: h.PauseRun})
+	h.Server, err = gateway.New(gateway.Dependencies{ApplicationPresence: h.ApplicationPresence, ExtensionReload: h.ExtensionReload, ExtensionReloadStatus: h.ExtensionReloadStatus, LocalSkills: h.localSkills, CredentialPrepare: h.CredentialPrepare, CredentialRecover: h.CredentialRecover, CredentialResumeManual: h.CredentialResumeManual, CredentialApply: h.CredentialApply, CredentialPaste: h.CredentialPaste, CredentialSubmit: h.CredentialSubmit, CredentialStatus: h.CredentialStatus, BrowserActivateTab: h.BrowserActivateTab, BrowserTabLocationMatches: h.BrowserTabLocationMatches, BrowserOpenOrigin: h.BrowserOpenOrigin, BrowserLocationMatches: h.BrowserLocationMatches, BrowserTabs: h.BrowserTabs, BrowserStatus: h.BrowserStatus, StateStopBoundary: h.durable.StopBoundary, EffectReconcile: h.durable.ReconcileEffect, Recovery: h.recovery, Scenarios: h.scenarios, CaptureWindow: h.CaptureWindow, CaptureWindows: h.CaptureWindows, CaptureWindowFrame: h.CaptureWindowFrame, StateResume: h.ResumeRun, PermissionRequest: h.consent.Request, PermissionStatus: h.consent.RequestStatus, Recording: h.recording, Runtime: h.Runtime, Observe: h.Observe, ObserveNativeRoot: h.ObserveNativeRoot, ObserveNativeWindow: h.ObserveNativeWindow, ObservationPolicy: h.ObservationPolicy, Policy: h.Policy, PlanPolicy: h.PlanPolicy, StateGet: h.durable.StateGet, StatePatch: h.durable.StatePatch, StatePause: h.PauseRun})
 	if err != nil {
 		return fail(err)
 	}

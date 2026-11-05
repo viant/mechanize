@@ -435,8 +435,17 @@ buffer erasure, and no replay. Run isolated macOS pasteboard tests with
 `MECHANIZE_CLIPBOARD_OS_TESTS=1 go test -race ./vault`; they use synthetic data on
 named pasteboards and return no clipboard contents to the caller.
 
-This is an internal backend, not yet an advertised MCP capability. Production
-browser/native recipient adapters, durable host operation enrollment, and live
-form qualification are still required. Existing credential application remains
-on its established private delivery route; this backend must not be used to
-bypass a denied scope or an unresolved input guard.
+The host exposes `mechanize_credential_paste` with only `sessionId` and
+`preparationId`. It uses the existing durable fill slot, records UNKNOWN before
+input, and preserves uncertain probe/paste/cleanup outcomes without retrying or
+falling back to DOM fill. It does not submit. Website controllers cannot invoke
+this clipboard action. Closed arguments reject values, selectors and record IDs.
+
+Recipient adapters are trusted `HostOptions.CredentialPaste` providers, never
+workflow/JSON assertions. The packaged host has no qualified recipient provider
+yet and returns `pasteTargetUnavailable` without consuming a ready preparation.
+Only an existing verified password-stage preparation can use an enrolled target;
+username/pair stages are refused. Real browser/native adapters and live form
+qualification remain required. Native-form preparation is not established by
+this web preparation API. Existing credential application remains on its private
+DOM route; no denied scope or unresolved input guard is bypassed.

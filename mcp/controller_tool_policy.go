@@ -22,6 +22,7 @@ var controllerToolPolicies = map[string]controllerToolPolicy{
 	"mechanize_capture_windows":              {true, "Authenticated controller identity, canonical authorization and closed typed projection; owned session where required."},
 	"mechanize_application_presence":         {true, "Owned session and native observe consent; exact bundle metadata only; no launch or UI readiness claim; private authority surfaces excluded."},
 	"mechanize_credential_apply":             {true, "Authenticated controller identity, canonical authorization and closed typed projection; owned session where required."},
+	"mechanize_credential_paste":             {false, "Private clipboard delivery requires native connector authority; never exposed to website controllers."},
 	"mechanize_credential_prepare":           {true, "Authenticated controller identity, canonical authorization and closed typed projection; owned session where required."},
 	"mechanize_credential_recover":           {true, "Authenticated controller identity, canonical authorization and closed typed projection; owned session where required."},
 	"mechanize_credential_resume_manual":     {true, "Owned immutable credential preparation, current grant and private redactor qualification; closed credential status only."},

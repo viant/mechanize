@@ -53,6 +53,7 @@ type Dependencies struct {
 	LocalSkills               LocalSkillSource
 	CredentialPrepare         CredentialPrepare
 	CredentialApply           CredentialOperation
+	CredentialPaste           CredentialOperation
 	CredentialSubmit          CredentialOperation
 	CredentialStatus          CredentialOperation
 	CredentialRecover         CredentialRecover

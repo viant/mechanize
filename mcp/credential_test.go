@@ -41,7 +41,7 @@ func TestCredentialMCPClosedOpaqueAndSanitized(t *testing.T) {
 		}
 		return safe, nil
 	}
-	s, e := New(Dependencies{Runtime: rt, Policy: func(context.Context, auth.Principal) (script.Policy, error) { return script.Policy{}, nil }, CredentialApply: callback, CredentialSubmit: callback, CredentialStatus: callback, CredentialResumeManual: callback})
+	s, e := New(Dependencies{Runtime: rt, Policy: func(context.Context, auth.Principal) (script.Policy, error) { return script.Policy{}, nil }, CredentialApply: callback, CredentialPaste: callback, CredentialSubmit: callback, CredentialStatus: callback, CredentialResumeManual: callback})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -49,7 +49,7 @@ func TestCredentialMCPClosedOpaqueAndSanitized(t *testing.T) {
 	if _, e = client.Initialize(ctx); e != nil {
 		t.Fatal(e)
 	}
-	for _, name := range []string{"mechanize_credential_apply", "mechanize_credential_submit", "mechanize_credential_status", "mechanize_credential_resume_manual"} {
+	for _, name := range []string{"mechanize_credential_apply", "mechanize_credential_paste", "mechanize_credential_submit", "mechanize_credential_status", "mechanize_credential_resume_manual"} {
 		for _, field := range []string{"password", "username", "recordId", "revision", "nativeHuman", "target", "values", "secret", "clipboard", "clipboardText", "secretValue"} {
 			args := map[string]any{"sessionId": "session", "preparationId": safe.PreparationID, field: "secret-canary"}
 			out, e := client.CallTool(ctx, &schema.CallToolRequestParams{Name: name, Arguments: args})

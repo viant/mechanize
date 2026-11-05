@@ -169,3 +169,35 @@ func TestPrivatePasswordPasteFromEncryptedRecordAndFailureCleanup(t *testing.T) 
 		})
 	}
 }
+
+func TestPrivatePasswordPasteRequiresActiveDurableLease(t *testing.T) {
+	_, _, ctx, b, _, d := recordDeliveryFixture(t)
+	g := deliveryGate(t)
+	lease, err := g.BeginDelivery(ctx, b, func(context.Context) error { return nil }, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewRecordDeliveryManager(d, func(_ context.Context, b Binding) (Binding, error) { return b, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &pasteFixture{mode: "ok", gate: g, t: t}
+	out := PasteRecordPasswordDuringDelivery(ctx, d, m, lease, b, f, f)
+	if out.Verified || f.probes+f.stages+f.pastes != 0 {
+		t.Fatal("inactive lease admitted input")
+	}
+	if err = lease.WithDelivery(ctx, b, func() error {
+		first := PasteRecordPasswordDuringDelivery(ctx, d, m, lease, b, f, f)
+		if !first.Verified {
+			t.Fatal(first)
+		}
+		before := f.probes + f.stages + f.pastes
+		second := PasteRecordPasswordDuringDelivery(ctx, d, m, lease, b, f, f)
+		if second.Verified || before != f.probes+f.stages+f.pastes {
+			t.Fatal("same active lease replayed paste")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

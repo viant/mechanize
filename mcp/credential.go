@@ -86,7 +86,7 @@ func registerCredentials(base *protocol.DefaultHandler, d Dependencies) error {
 	for _, v := range []struct {
 		name string
 		call CredentialOperation
-	}{{"mechanize_credential_apply", d.CredentialApply}, {"mechanize_credential_submit", d.CredentialSubmit}, {"mechanize_credential_status", d.CredentialStatus}} {
+	}{{"mechanize_credential_apply", d.CredentialApply}, {"mechanize_credential_paste", d.CredentialPaste}, {"mechanize_credential_submit", d.CredentialSubmit}, {"mechanize_credential_status", d.CredentialStatus}} {
 		if v.call == nil {
 			continue
 		}
@@ -126,7 +126,11 @@ func credentialTool(base *protocol.DefaultHandler, name string, typ any, call fu
 	if e := output.Load((*CredentialResult)(nil)); e != nil {
 		return e
 	}
-	base.Registry.RegisterToolWithSchema(name, "Private credential operation using existing reusable control consent and one saved credential bound to the exact website origin. Status privately qualifies the form before apply. Opaque reference and scalar state only; no secret inputs, values, record lookup or login-success assertion. Unknown attempts are never replayed.", input, &output, func(ctx context.Context, r *schema.CallToolRequest) (*schema.CallToolResult, *jsonrpc.Error) {
+	description := "Private credential operation using existing reusable control consent and one saved credential bound to the exact website origin. Status privately qualifies the form before apply. Opaque reference and scalar state only; no secret inputs, values, record lookup or login-success assertion. Unknown attempts are never replayed."
+	if name == "mechanize_credential_paste" {
+		description = "Private password clipboard fallback for one owned ready preparation. Accepts only session/preparation IDs, never values, clipboard contents or selectors. Requires an enrolled exact secure-field adapter; probes with a synthetic character, verifies removal, pastes once, and cleans up its clipboard item. Does not submit or claim login success. Unsupported targets fail closed."
+	}
+	base.Registry.RegisterToolWithSchema(name, description, input, &output, func(ctx context.Context, r *schema.CallToolRequest) (*schema.CallToolResult, *jsonrpc.Error) {
 		unavailable := func() (*schema.CallToolResult, *jsonrpc.Error) {
 			return failure(errors.New("private credential operation unavailable"))
 		}
@@ -201,6 +205,10 @@ func validCredentialResult(r CredentialResult) bool {
 		}
 	case "manualPrivacySourceUnavailable", "manualPrivacyConsentUnavailable", "manualPrivacyAbsenceUnavailable", "manualPrivacyStagingUnavailable", "manualPrivacySelectionUnavailable", "manualPrivacyQualificationUnavailable", "manualPrivacyTransitionUnavailable", "manualPrivacyCleanupUnavailable", "manualPrivacyInvalidRequest", "manualPrivacyAuthorityChanged", "manualPrivacyExpired", "manualPrivacyBusy", "manualPrivacyUnknownEffects", "manualPrivacyLifecycleInhibited", "manualPrivacySourceTabPresent", "manualPrivacyInventoryUnavailable", "manualPrivacyCandidateUnavailable", "manualPrivacyCandidateAmbiguous", "manualPrivacyCandidateChanged", "manualPrivacyDocumentNotReady", "manualPrivacyRedactionUnavailable":
 	case "postSubmitPrivacyNotReady", "postSubmitPrivacyAdmissionUnavailable", "postSubmitPrivacyFenceUnavailable", "postSubmitPrivacyReplyUnavailable", "postSubmitPrivacyCommitUnavailable", "postSubmitPrivacyProbeUnavailable", "postSubmitPrivacyPromotionUnavailable":
+	case "pasteTargetUnavailable", "pastePasswordStageRequired", "pasteProbeUnconfirmed", "pasteClipboardUnavailable", "pasteTargetChanged", "pasteUnconfirmed", "pasteVerificationUnavailable", "pasteCleanupUnconfirmed":
+		if r.State != "needsNativeAction" && r.State != "unknown" {
+			return false
+		}
 	case "", "preparationBarrier", "entryProtection", "preparationAuthority", "preparationReservation", "privateBrowserAdmission", "postSubmitPending", "loginRejected", "privateCandidateUnavailable", "privateCandidateAmbiguous", "privateChannelBusy", "privateAuthorityUnavailable", "privateInspectionUnavailable", "privateLeaseUnavailable", "postSubmitAdvanceUnavailable", "postSubmitPrivacyUnavailable", "postLoginDocumentUnavailable", "deliveryAdmission", "privateBindingFresh", "localVaultRead", "deliveryLane", "deliveryAuthority", "deliveryEncoding", "deliveryTransport", "privateFormReply":
 	default:
 		if r.State != "needsNativeAction" || !(chrome.ValidCredentialInspectionAttention(r.AttentionCode) || validPreparationScopeAttention(r.AttentionCode) || r.AttentionCode == "sourceScopePersistence" || r.AttentionCode == "scopeSourceRetirement") {

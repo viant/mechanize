@@ -20,6 +20,8 @@ import (
 // New remains observe-only. The host owns the supplied manager's lifecycle and
 // binds its enrollment and owner context independently of provider assertions.
 type HostOptions struct {
+	// Trusted private recipient providers; never loaded from workflow/MCP JSON.
+	CredentialPaste *CredentialPasteOptions
 	// NativeRecoveryPolicy supplies deployment-qualified locator contracts and
 	// explicit safe display labels. The host retains observation/consent control;
 	// neither workflow JSON nor MCP clients can supply this resolver.

@@ -331,7 +331,7 @@ func (s *credentialService) operation(ctx context.Context, p auth.Principal, in 
 			item.state = "needsNativeAction"
 			return nil
 		}
-		if kind == "apply" && item.state != "ready" || kind == "submit" && (item.state != "filled" || item.submitAttempt != "") {
+		if (kind == "apply" || kind == "paste") && item.state != "ready" || kind == "submit" && (item.state != "filled" || item.submitAttempt != "") {
 			return nil
 		}
 		lease, e := s.host.authorizeConsentOperation(held, p, item.surface, true, consent.Control)
@@ -382,7 +382,7 @@ func (s *credentialService) operation(ctx context.Context, p auth.Principal, in 
 			return nil
 		}
 		action := func() error { return s.dispatch(held, p, item, kind, guard) }
-		if kind == "apply" {
+		if kind == "apply" || kind == "paste" {
 			return item.protected.WithDelivery(held, item.binding, action)
 		}
 		return item.protected.WithSubmit(held, item.binding, action)
@@ -516,7 +516,7 @@ func (s *credentialService) dispatch(ctx context.Context, p auth.Principal, item
 	item.uncertain = true
 	item.dispatch = "unknown"
 	item.state = "unknown"
-	if kind == "apply" {
+	if kind == "apply" || kind == "paste" {
 		item.fillAttempt = id
 	} else {
 		item.submitAttempt = id
@@ -539,11 +539,15 @@ func (s *credentialService) dispatch(ctx context.Context, p auth.Principal, item
 		if me != nil {
 			return errPrivateCredential
 		}
-		e = item.selection.UseBinding(ctx, item.binding, func(ref vault.Reference, revision string) error {
-			var de error
-			result, de = s.browser().DeliverVaultCredential(ctx, p, a, id, manager, item.binding, ref, revision, guard)
-			return de
-		})
+		if kind == "paste" {
+			result = s.pastePassword(ctx, p, item, id, manager, guard)
+		} else {
+			e = item.selection.UseBinding(ctx, item.binding, func(ref vault.Reference, revision string) error {
+				var de error
+				result, de = s.browser().DeliverVaultCredential(ctx, p, a, id, manager, item.binding, ref, revision, guard)
+				return de
+			})
+		}
 	}
 	// A provider error cannot become a diagnostic or prove no dispatch.
 	if e != nil && result.DispatchState != "notDispatched" {
@@ -573,7 +577,7 @@ func (s *credentialService) dispatch(ctx context.Context, p auth.Principal, item
 	// credential values must never become diagnostics.
 	if result.DispatchState != "dispatched" {
 		switch result.FailureStage {
-		case "deliveryAdmission", "privateBindingFresh", "localVaultRead", "deliveryLane", "deliveryAuthority", "deliveryEncoding", "deliveryTransport", "privateFormReply":
+		case "deliveryAdmission", "privateBindingFresh", "localVaultRead", "deliveryLane", "deliveryAuthority", "deliveryEncoding", "deliveryTransport", "privateFormReply", "pasteTargetUnavailable", "pasteProbeUnconfirmed", "pasteClipboardUnavailable", "pasteTargetChanged", "pasteUnconfirmed", "pasteVerificationUnavailable", "pasteCleanupUnconfirmed":
 			item.attention = result.FailureStage
 		}
 	}

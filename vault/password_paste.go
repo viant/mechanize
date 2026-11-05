@@ -55,6 +55,22 @@ type PasswordPasteResult struct {
 // enrollment requires a qualified recipient adapter and clipboard watchdog.
 func PasteRecordPassword(ctx context.Context, delivery *RecordDelivery, manager *Manager, lease *DeliveryLease, binding Binding, target PasswordPasteTarget, clipboard PasswordPasteClipboard) (out PasswordPasteResult) {
 	out = PasswordPasteResult{DispatchState: "notDispatched", Reason: "unavailable"}
+	if lease == nil {
+		return
+	}
+	_ = lease.WithDelivery(ctx, binding, func() error {
+		out = PasteRecordPasswordDuringDelivery(ctx, delivery, manager, lease, binding, target, clipboard)
+		return nil
+	})
+	return
+}
+
+// PasteRecordPasswordDuringDelivery is for a durable host that already reserved
+// its original UNKNOWN attempt inside WithDelivery. It cannot start outside an
+// active one-shot lease or repeat within that lease; it does not finish/close the
+// host's protection, so durable finalization remains inside the same guard.
+func PasteRecordPasswordDuringDelivery(ctx context.Context, delivery *RecordDelivery, manager *Manager, lease *DeliveryLease, binding Binding, target PasswordPasteTarget, clipboard PasswordPasteClipboard) (out PasswordPasteResult) {
+	out = PasswordPasteResult{DispatchState: "notDispatched", Reason: "unavailable"}
 	if delivery == nil || manager == nil || lease == nil || target == nil || clipboard == nil || delivery.Verify(ctx, binding) != nil {
 		return
 	}
@@ -66,7 +82,19 @@ func PasteRecordPassword(ctx context.Context, delivery *RecordDelivery, manager 
 		}
 		return target.CheckEmpty(ctx, binding)
 	}
-	_ = lease.WithDelivery(ctx, binding, func() error {
+	if !lease.owns(ctx, binding) {
+		return
+	}
+	lease.gate.mu.Lock()
+	ready := lease.gate.delivery == lease && !lease.retired && lease.attempted && lease.inFlight == 1 && !lease.passwordPasteAttempted
+	if ready {
+		lease.passwordPasteAttempted = true
+	}
+	lease.gate.mu.Unlock()
+	if !ready {
+		return
+	}
+	_ = deliveryCall(func() error {
 		if deliveryCall(fresh) != nil {
 			out.Reason = "secureTargetUnavailable"
 			return ErrUnavailable

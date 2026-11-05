@@ -29,18 +29,19 @@ func deliveryCall(call func() error) (err error) {
 // effect before delivery and restore protection after restart; this gate alone
 // is not durable evidence or a browser cleanup provider.
 type DeliveryLease struct {
-	gate                *ExposureGate
-	namespace, clientID string
-	consent             auth.ConsentBinding
-	binding             Binding
-	admit, cleanup      func(context.Context) error
-	retired             bool
-	attempted           bool
-	submitted           bool
-	domOnly             bool
-	manualStaging       bool
-	domReaders          int
-	inFlight            int
+	gate                   *ExposureGate
+	namespace, clientID    string
+	consent                auth.ConsentBinding
+	binding                Binding
+	admit, cleanup         func(context.Context) error
+	retired                bool
+	attempted              bool
+	passwordPasteAttempted bool
+	submitted              bool
+	domOnly                bool
+	manualStaging          bool
+	domReaders             int
+	inFlight               int
 }
 
 func (DeliveryLease) String() string   { return "[private delivery lease withheld]" }
