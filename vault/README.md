@@ -403,3 +403,40 @@ managed runtime installation and live synthetic-secret qualification remain.
 ### Retiring uncertain credential exposure
 
 An unknown credential delivery remains unknown permanently; it is never interpreted as a successful login or automatically replayed. The host can retire its exposure protection only after loading an immutable, verified normal Chrome quit plan, independently checking that the original kernel process birth is gone, and obtaining current reusable control consent. Every child delivery must match that process birth. The generated CAS changes only protection to `retired`, preserves dispatch state and appends an audit revision. Ordinary cleanup and ordinary delivery producers cannot perform this transition. Live processes, changed plans, missing consent, mixed births and stale snapshots remain blocked. Schema 014 preserves existing rows and audits; migrating alone never retires a delivery. A new login requires a new process, preparation and attempt ID.
+
+### Private password clipboard backend
+
+`PasteRecordPassword` composes the existing revision-bound `RecordDelivery`,
+`Manager`, and one-shot `DeliveryLease`. A trusted recipient adapter must verify
+an empty, editable, masked password control, write the public synthetic probe
+`x`, verify it in that same secure control, remove it, and verify empty again.
+Only then may the encrypted record be consumed. The password is never used as
+probe input. Changed/unmasked/nonempty fields, uncertain probes, or failed probe
+removal stop before clipboard staging. Paste must recheck the pinned recipient
+at dispatch; a global keyboard shortcut that follows arbitrary focus is invalid.
+
+`NewLocalPasswordClipboard` supplies the macOS private write path. It has no
+clipboard-value getter. Staging uses current-host-only pasteboard contents,
+transient/concealed markers, an opaque ownership token, and a bounded expiration
+watchdog. Immediate cleanup runs after success, cancellation, verification
+failure, or an uncertain paste. An observed newer clipboard revision is preserved.
+The agent-facing result contains only finite dispatch/verification/cleanup state.
+A failed cleanup cannot be reported as successful verified delivery. No submit,
+automatic retry, public plaintext lookup, or new app permission is introduced.
+
+The system pasteboard remains shared with local processes. Concealment markers
+are advisory; AppKit has no atomic compare-and-clear operation, and an in-process
+watchdog cannot guarantee cleanup after process/OS failure. These limits must not
+be represented as absolute clipboard secrecy or crash-proof erasure.
+
+Tests exercise encrypted-record consumption, observation exclusion, synthetic
+probe failures, cancellation, replacement, uncertain paste, cleanup failures,
+buffer erasure, and no replay. Run isolated macOS pasteboard tests with
+`MECHANIZE_CLIPBOARD_OS_TESTS=1 go test -race ./vault`; they use synthetic data on
+named pasteboards and return no clipboard contents to the caller.
+
+This is an internal backend, not yet an advertised MCP capability. Production
+browser/native recipient adapters, durable host operation enrollment, and live
+form qualification are still required. Existing credential application remains
+on its established private delivery route; this backend must not be used to
+bypass a denied scope or an unresolved input guard.
