@@ -37,3 +37,31 @@ the resulting document through Mechanize. Do not reload an unsaved form, repeat
 login, clear credential protection or treat this as a remedy for denied access.
 Record the native recovery separately from subsequent Mechanize reads; a passing
 read does not qualify plan creation or a new login's automatic handoff.
+
+## Secure Input blocks native control
+
+When native capabilities report `nativeControlUnqualified`, distinguish runtime
+readiness from consent before requesting another grant. On macOS, a read-only
+Secure Input check and `kCGSSessionSecureInputPID` can identify an owning process
+without reading its window, password field or credential values. Secure Input
+being enabled does not prove the screen is locked or that a password was entered.
+Verify the process identity before naming the owning app.
+
+A separately launched helper's doctor result is not evidence of the broker's
+permissions: its launch identity, Accessibility grant and authenticated channel
+can differ. Use live MCP capabilities for the actual automation route; use the
+standalone check only for independently applicable system state.
+
+If Secure Input is active, first distinguish an unfinished private operation from
+ordinary browser focus. When the private operation is terminal, no input is pending
+or unknown, and the browser route remains independently qualified, a normal
+activation of the already verified public task tab is a permissible recovery step.
+It must preserve other tabs and drafts and must not dismiss or interact with an
+unidentified credential prompt. Check system state and native capabilities after
+that action; successful browser activation does not prove Secure Input cleared.
+If protected entry remains active, let the user finish or dismiss it and bring the
+intended app forward. Do not disable Secure Input, terminate its owner,
+reset permissions, or switch executors to bypass the protection. Preserve pending
+private-operation receipts. After the user action, recheck Secure Input and live
+capabilities, then observe the intended window before resuming. A cleared Secure
+Input flag alone does not prove native editing, saving or export is ready.

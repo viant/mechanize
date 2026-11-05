@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 
@@ -91,5 +92,60 @@ func TestNativeLaunchEnrollmentDefaultsAndUID(t *testing.T) {
 	}
 	if (Config{NativeLaunch: &NativeLaunchConfig{}}).Validate() == nil {
 		t.Fatal("incomplete launch enrollment accepted")
+	}
+}
+
+func TestSemanticReadinessDistinguishesSecureInputWithoutGrantingControl(t *testing.T) {
+	uid := uint32(os.Getuid())
+	options, err := launchHostOptions(Config{NativeHelper: "/fixture/helper", NativeLaunch: &NativeLaunchConfig{Mode: "semantic", LockPath: "/fixture/desktop.lock", HelperRequirement: `identifier "fixture"`, ExpectedUID: &uid}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := session.ProcessIdentity{PID: 123, UID: uid, Executable: "/fixture/helper", StartToken: "fixture"}
+	p, _ := auth.NewPrincipal("fixture", "", "user", []string{"desktop:control"})
+	ctx := auth.WithPrincipal(context.Background(), p)
+	for _, state := range []string{"active", "inactive", "missing", "malformed", "untrusted"} {
+		t.Run(state, func(t *testing.T) {
+			f := &launchReadinessFixture{identity: identity, trusted: true, doctor: map[string]any{"brokerIdentityAuthenticated": true, "mutationEnabled": false, "physicalFenceEnrolled": true, "watchdogLive": true, "semanticEnabled": true, "axTrusted": true, "windowSession": map[string]any{"available": true, "onConsole": true, "loginDone": true, "uid": uid}}}
+			switch state {
+			case "active", "untrusted":
+				f.doctor["secureInputEnabled"] = true
+			case "inactive":
+				f.doctor["secureInputEnabled"] = false
+			case "malformed":
+				f.doctor["secureInputEnabled"] = "false"
+			}
+			if state == "untrusted" {
+				f.trusted = false
+			}
+			ready, err := options.NativeControl.QualifyHelper(ctx, p, identity, []string{"com.example.Editor"}, f)
+			if state == "inactive" {
+				if err != nil || !ready.SemanticQualified {
+					t.Fatalf("known inactive input rejected: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrNativeControlUnqualified) || ready.SemanticQualified {
+				t.Fatalf("unqualified control accepted: %+v %v", ready, err)
+			}
+			want := "nativeControlUnqualified"
+			if state == "active" {
+				want = "nativeSecureInputActive"
+			}
+			if got := nativeControlAdmissionReason(err); got != want {
+				t.Fatalf("reason %q, want %q", got, want)
+			}
+		})
+	}
+	// The helper disables keyboard routes during Secure Input. That derived
+	// failure must not hide the actual cause, and must never admit dispatch.
+	options, err = launchHostOptions(Config{NativeHelper: "/fixture/helper", NativeLaunch: &NativeLaunchConfig{Mode: "semantic", LockPath: "/fixture/desktop.lock", HelperRequirement: `identifier "fixture"`, ExpectedUID: &uid, TargetedKeyboard: true, WindowFrameClick: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &launchReadinessFixture{identity: identity, trusted: true, doctor: map[string]any{"brokerIdentityAuthenticated": true, "mutationEnabled": false, "physicalFenceEnrolled": true, "watchdogLive": true, "secureInputEnabled": true, "targetedKeyboardEnabled": false, "windowFrameClickEnabled": false, "windowSession": map[string]any{"available": true, "onConsole": true, "loginDone": true, "uid": uid}}}
+	ready, err := options.NativeControl.QualifyHelper(ctx, p, identity, []string{"com.example.Editor"}, f)
+	if !errors.Is(err, ErrNativeSecureInputActive) || ready.SemanticQualified || ready.WindowFrameClickQualified || ready.TargetedKeyboardQualified {
+		t.Fatalf("derived readiness hid secure input or allowed control: %+v %v", ready, err)
 	}
 }

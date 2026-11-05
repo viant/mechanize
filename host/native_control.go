@@ -18,6 +18,9 @@ import (
 )
 
 var ErrNativeControlUnqualified = errors.New("qualified native control identity, graphical session and permission evidence unavailable")
+
+// Preserve the qualification barrier while exposing a bounded, actionable cause.
+var ErrNativeSecureInputActive = errors.Join(ErrNativeControlUnqualified, errors.New("native secure input active"))
 var ErrNativeControlCleanupUnknown = errors.New("native input cleanup unknown; physical fence retained")
 
 type NativeControlHelper interface {
@@ -360,6 +363,9 @@ func (m *NativeControlManager) qualify(ctx context.Context, p auth.Principal, he
 			return ErrNativeControlUnqualified
 		}
 	} else if m.options.SemanticOnly {
+		if ready.SecureInputEnabled {
+			return ErrNativeSecureInputActive
+		}
 		if !ready.SemanticQualified || !ready.Accessibility || ready.SecureInputEnabled || (m.options.TargetedKeyboard && (!ready.TargetedKeyboardQualified || !ready.EventPost) || m.options.SessionKeyboard && (!ready.SessionKeyboardQualified || !ready.EventPost) || m.options.SessionText && (!ready.SessionTextQualified || !ready.EventPost) || m.options.WindowFrameClick && (!ready.WindowFrameClickQualified || !ready.EventPost)) {
 			return ErrNativeControlUnqualified
 		}

@@ -104,6 +104,8 @@ func (h *Host) controlLeaseEpoch(ctx context.Context, p auth.Principal) (int, er
 
 func nativeControlAdmissionReason(err error) string {
 	switch {
+	case errors.Is(err, ErrNativeSecureInputActive):
+		return "nativeSecureInputActive"
 	case errors.Is(err, ErrNativeControlCleanupUnknown), errors.Is(err, session.ErrCleanupUnknown):
 		return "nativeCleanupUnknown"
 	case errors.Is(err, session.ErrNoLease), errors.Is(err, session.ErrContended):

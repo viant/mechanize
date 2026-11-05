@@ -96,6 +96,11 @@ func launchHostOptions(c Config) (HostOptions, error) {
 		}
 		semantic := enrollment.Mode == "semantic"
 		if semantic {
+			// Secure Input also disables derived keyboard/frame readiness. Report
+			// its authenticated cause before those dependent capability checks.
+			if doctor.SecureInputEnabled != nil && *doctor.SecureInputEnabled {
+				return NativeControlReadiness{}, ErrNativeSecureInputActive
+			}
 			if enrollment.WindowFrameClick && (!doctor.WindowFrameClickEnabled || !doctor.CaptureGranted || !doctor.EventPostGranted) {
 				return NativeControlReadiness{}, ErrNativeControlUnqualified
 			}
@@ -105,7 +110,7 @@ func launchHostOptions(c Config) (HostOptions, error) {
 			if (enrollment.TargetedKeyboard && !doctor.TargetedKeyboardEnabled || enrollment.SessionKeyboard && !doctor.SessionKeyboardEnabled) || (enrollment.TargetedKeyboard || enrollment.SessionKeyboard) && !doctor.EventPostGranted {
 				return NativeControlReadiness{}, ErrNativeControlUnqualified
 			}
-			if !doctor.SemanticEnabled || !doctor.AXTrusted || doctor.SecureInputEnabled == nil || *doctor.SecureInputEnabled {
+			if !doctor.SemanticEnabled || !doctor.AXTrusted || doctor.SecureInputEnabled == nil {
 				return NativeControlReadiness{}, ErrNativeControlUnqualified
 			}
 		} else if !doctor.LaunchEnabled {

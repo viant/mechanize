@@ -11,6 +11,9 @@ import (
 )
 
 func TestNativeAdmissionReasonsAreClosedWithoutBroadeningCapabilities(t *testing.T) {
+	if nativeControlAdmissionReason(ErrNativeSecureInputActive) != "nativeSecureInputActive" || !errors.Is(ErrNativeSecureInputActive, ErrNativeControlUnqualified) {
+		t.Fatal("secure input lost its qualification barrier or bounded cause")
+	}
 	for _, tc := range []struct {
 		err    error
 		reason string
