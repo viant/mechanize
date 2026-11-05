@@ -77,3 +77,34 @@ struct PrivatePasswordRecipientTests {
         #expect(f.countReads == 0)
     }
 }
+
+extension PrivatePasswordRecipientTests {
+    @Test func nativeMenuPasteRechecksSecureFocusBeforePress() throws {
+        for drift in [false, true] {
+            let f = Fixture(), target = try f.pin(), base = f.runtime
+            let menu = AXUIElementCreateApplication(43001), item = AXUIElementCreateApplication(43002)
+            var menuReads = 0, presses = 0
+            let runtime = PrivatePasswordRecipientRuntime(attribute: { element, name in
+                if name == kAXMenuBarAttribute {
+                    menuReads += 1
+                    if drift && menuReads == 2 { f.mode = "background" }
+                    return (.success, menu)
+                }
+                if CFEqual(element, menu) || CFEqual(element, item) {
+                    if name == kAXRoleAttribute { return (.success, (CFEqual(element, menu) ? kAXMenuBarRole : kAXMenuItemRole) as CFString) }
+                    if name == kAXChildrenAttribute { return (.success, (CFEqual(element, menu) ? [item] : []) as CFArray) }
+                    if name == kAXMenuItemCmdCharAttribute { return (.success, "v" as CFString) }
+                    if name == kAXMenuItemCmdModifiersAttribute { return (.success, NSNumber(value: 0)) }
+                    if name == kAXEnabledAttribute { return (.success, NSNumber(value: true)) }
+                }
+                return base.attribute(element, name)
+            }, owner: base.owner, foreground: base.foreground, sessionQualified: base.sessionQualified)
+            do {
+                try target.pasteUsingMenu(check: {}, runtime: runtime, press: { candidate in
+                    #expect(CFEqual(candidate, item)); presses += 1; f.count = 15; return .success
+                })
+                #expect(!drift && presses == 1)
+            } catch { #expect(drift && presses == 0) }
+        }
+    }
+}

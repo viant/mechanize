@@ -102,4 +102,25 @@ struct PrivatePasswordRecipient {
         } catch { throw Self.failure() }
     }
 
+    // Called only inside the private attempt's held executor fence. The OS
+    // performs the app's own Paste command; Secure Input is never disabled.
+    func pasteUsingMenu(check: () throws -> Void,
+                        runtime: PrivatePasswordRecipientRuntime = .system,
+                        press: (AXUIElement) -> AXError = { AXUIElementPerformAction($0, kAXPressAction as CFString) }) throws {
+        do {
+            try requireCharacterCount(0, check: check, runtime: runtime)
+            func resolve() throws -> AXUIElement {
+                try privatePasteMenuItem(application: self.application, check: check,
+                    ownerMatches: { runtime.owner($0).match(pid: self.pid, uid: self.uid, birth: self.birth, bundle: self.bundle) == .matched },
+                    attribute: runtime.attribute)
+            }
+            let item = try resolve()
+            try requireCharacterCount(0, check: check, runtime: runtime)
+            guard CFEqual(item, try resolve()) else { throw Self.failure() }
+            try requireCharacterCount(0, check: check, runtime: runtime)
+            guard press(item) == .success else { throw Self.failure() }
+            try validate(check: check, runtime: runtime)
+        } catch { throw Self.failure() }
+    }
+
 }

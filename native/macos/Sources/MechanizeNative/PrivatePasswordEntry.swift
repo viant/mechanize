@@ -54,4 +54,12 @@ final class PrivatePasswordEntry {
             return .dispatched
         } catch { return .unknown }
     }
+    func pasteUsingMenu(expectedCharacters: Int, check: @escaping () throws -> Void,
+                        runtime: PrivatePasswordRecipientRuntime = .system) -> Result {
+        paste(expectedCharacters: expectedCharacters, check: check, runtime: runtime) { revalidate in
+            try revalidate()
+            try self.recipient.pasteUsingMenu(check: check, runtime: runtime)
+        }
+    }
+
 }
