@@ -11,7 +11,7 @@ import (
 )
 
 func TestConsentReconnectProofRequiresActualPreparedHandshakeAndUnchangedInventory(t *testing.T) {
-	for _, mode := range []string{"complete", "build33", "build34", "build35", "build36", "build37", "build38", "futureBuild", "retiredUnknown", "retiredMissingProof", "retiredWrongLease", "absent", "notPrepared", "newChallenge", "documentChanged", "activeWork", "unknown", "private", "newWorkCompleted", "peerChanged", "foreign", "incomplete"} {
+	for _, mode := range []string{"complete", "build33", "build34", "build35", "build36", "build37", "build38", "build39", "futureBuild", "retiredUnknown", "retiredMissingProof", "retiredWrongLease", "absent", "notPrepared", "newChallenge", "documentChanged", "activeWork", "unknown", "private", "newWorkCompleted", "peerChanged", "foreign", "incomplete"} {
 		t.Run(mode, func(t *testing.T) {
 			build := 32
 			switch mode {
@@ -27,8 +27,10 @@ func TestConsentReconnectProofRequiresActualPreparedHandshakeAndUnchangedInvento
 				build = 37
 			case "build38":
 				build = 38
-			case "futureBuild":
+			case "build39":
 				build = 39
+			case "futureBuild":
+				build = maxQualifiedWorkerBuild + 1
 			}
 			f := newLifecycleFixtureBuild(t, 0, build, mode != "absent")
 			b, c := f.gateway.broker, f.channel
@@ -90,7 +92,7 @@ func TestConsentReconnectProofRequiresActualPreparedHandshakeAndUnchangedInvento
 			b.mu.Unlock()
 			calls := 0
 			err := f.gateway.WithConsentReconnectProof(ctx, p, func() error { calls++; return nil })
-			expected := mode == "complete" || mode == "build33" || mode == "build34" || mode == "build35" || mode == "build36" || mode == "build37" || mode == "build38" || mode == "retiredUnknown"
+			expected := mode == "complete" || mode == "build33" || mode == "build34" || mode == "build35" || mode == "build36" || mode == "build37" || mode == "build38" || mode == "build39" || mode == "retiredUnknown"
 			if (err == nil) != expected || calls != map[bool]int{true: 1, false: 0}[expected] {
 				t.Fatalf("mode%s calls%d err%v", mode, calls, err)
 			}
