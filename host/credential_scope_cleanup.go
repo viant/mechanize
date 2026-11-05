@@ -136,7 +136,7 @@ func (s *credentialService) retireAbsentCredentialSources(ctx context.Context, p
 				}
 				continue
 			}
-			if snapshot.Scope.ClientID != p.ClientID || snapshot.Scope.Origin != targetOrigin {
+			if snapshot.Scope.ClientID != p.ClientID {
 				return errOtherCredentialScopeHeld
 			}
 			prep, attempts, e := h.durable.LoadCredentialRecovery(held, p, snapshot.Scope.PreparationID)
@@ -221,6 +221,13 @@ func (s *credentialService) retireAbsentCredentialSources(ctx context.Context, p
 			return c.Err()
 		}
 		if e = verifyAll(held); e != nil {
+			// A new site's login may retire this client's absent old source,
+			// but a still-live or unproved source retains the same closed barrier.
+			for _, w := range work {
+				if w.snapshot.Scope.Origin != targetOrigin {
+					return errOtherCredentialScopeHeld
+				}
+			}
 			return e
 		}
 		for _, w := range work {
