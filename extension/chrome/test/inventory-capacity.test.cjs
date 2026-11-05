@@ -50,3 +50,22 @@ test('single-tab frame overflow remains bounded without partial readiness',async
  assert.equal(JSON.stringify(f.storage.lastGrant),lastGrant);
  assert.equal((f.state.debuggerInputs||[]).filter(v=>v.method.startsWith('Input.')).length,0);
 });
+
+test('reconnect handler installation is bounded and drained before inspection',async()=>{
+ const {f,next}=await inventoryFixture([19],{recovery:true});let active=0,peak=0,finished=0;
+ f.state.injectionWait=async()=>{active++;peak=Math.max(peak,active);await new Promise(resolve=>setTimeout(resolve,5));active--;finished++;};
+ await f.receive({...qualification(),...next,executorChallenge:'parallel-install'});
+ assert.ok(peak>1&&peak<=8);assert.equal(active,0);assert.equal(finished,19);
+ assert.ok(f.messages.some(m=>m.type==='executorPrepared'));
+});
+test('failed installation keeps qualification owned until sibling installations drain',async()=>{
+ const {f,next}=await inventoryFixture([9],{recovery:true});let started=0,release,entered;
+ const enteredPromise=new Promise(resolve=>entered=resolve),held=new Promise(resolve=>release=resolve);
+ f.state.injectionWait=async()=>{started++;if(started===1)throw Error('PRIVATE_CANARY');if(started===8)entered();await held;};
+ let completed=false;const flight=f.receive({...qualification(),...next,executorChallenge:'failed-install'}).finally(()=>completed=true);
+ await enteredPromise;await Promise.resolve();assert.equal(started,8);assert.equal(completed,false);
+ assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));
+ release();await flight;assert.equal(started,8);
+ assert.ok(!f.messages.some(m=>m.type==='executorPrepared'));
+ assert.ok(!JSON.stringify(f.messages).includes('PRIVATE_CANARY'));
+});

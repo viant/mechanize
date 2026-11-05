@@ -25,7 +25,7 @@ import (
 )
 
 // Increment only alongside reviewed worker changes and reconnect qualification tests.
-const maxQualifiedWorkerBuild = 40
+const maxQualifiedWorkerBuild = 41
 
 type Enrollment struct {
 	AllWebsites        bool           `json:"allWebsites,omitempty"`

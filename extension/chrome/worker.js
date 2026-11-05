@@ -1641,14 +1641,19 @@ async function prepareNativeReconnect(previous,candidate,enrollment,command,ownP
   }
   const recoveryRenderers=[],currentFences=[];
   reconnectDiagnosticPhase = "inspect";
+  // Handler installation sends no business input and each document has its own
+  // isolated world. Drain every started installation before leaving the lane,
+  // including after failure or deadline; never abandon sibling promises.
+  for(let offset=0;offset<snapshot.documents.length;offset+=8) {
+    current();
+    const installs=await Promise.allSettled(snapshot.documents.slice(offset,offset+8).map(async item=>
+      chrome.scripting.executeScript({target:{tabId:item.tabId,documentIds:[item.documentId]},world:"ISOLATED",injectImmediately:true,files:["protocol.js","fingerprint.js","accessibility-provider.js","dom.js","recorder.js","secure-input.js","content.js"]})));
+    current();
+    const failed=installs.find(result=>result.status==='rejected');
+    if(failed)throw reconnectRefuse(injectionFailureReason(failed.reason));
+  }
   for(const item of snapshot.documents) {
     const identity=Object.fromEntries(["profileChannel","browserInstance","tabId","frameId","documentId","documentGeneration"].map(key=>[key,item[key]]));
-    // Executor installation only registers guarded handlers/observers. It does
-    // not require a completed DOM; later requests still prove document/fence
-    // identity. Avoid document_idle keeping this qualification lane pending on
-    // a loading page. A genuinely unresolved injection still owns the lane.
-    try {await chrome.scripting.executeScript({target:{tabId:identity.tabId,documentIds:[identity.documentId]},world:"ISOLATED",injectImmediately:true,files:["protocol.js","fingerprint.js","accessibility-provider.js","dom.js","recorder.js","secure-input.js","content.js"]});}
-    catch (error) {throw reconnectRefuse(injectionFailureReason(error));}
     if(recoveryBinding){
       const fences=[oldFence,...recoveryBinding.bindings.filter(r=>r.identity.tabId===identity.tabId&&r.identity.documentId===identity.documentId).map(r=>r.fence),...candidateFences];
       const unique=[...new Map(fences.map(f=>[reconnectCanonical(f),f])).values()];
@@ -2410,7 +2415,7 @@ async function connectNativeOnce(token,valid=()=>true) {
     }catch{metadataStartupBarrier='inventoryUnavailable';}
     // This fixed metadata hello is independent of secret/document visibility.
     // No retained document or input payload is replayed on a replacement port.
-    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,playwrightTargetRetirementVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:40,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
+    if(port===connectedPort&&valid())connectedPort.postMessage({type:'hello',protocolVersion:1,playwrightTargetRetirementVersion:1,selectOptionVersion:1,privacySourceRetirementVersion:1,setupMetadataVersion:1,manualPrivacyDocumentVersion:1,focusedLocationVersion:1,tabMetadataVersion:1,tabInventoryVersion:1,extensionMaintenanceVersion:1,openOriginVersion:1,protectionScopeVersion:1,credentialPublicReadVersion:2,controllerResultChunkVersion:1,privateInspectionDiagnosticVersion:1,controlBadgeVersion:2,visibilityUnknownVersion:1,workerBuild:41,...(chrome.runtime.getManifest().permissions?.includes('debugger')?{playwrightRelayVersion:1,playwrightLocatorVersion:1}:{}),extensionVersion:chrome.runtime.getManifest().version,profileChannel:enrollment.profileChannel,browserInstance:enrollment.browserInstance,lastGrant,documents:[]});
 
   } catch {
     if (lifecycleGuardId) connectionAttention = "lifecycleInhibited";
