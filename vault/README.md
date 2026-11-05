@@ -435,6 +435,14 @@ buffer erasure, and no replay. Run isolated macOS pasteboard tests with
 `MECHANIZE_CLIPBOARD_OS_TESTS=1 go test -race ./vault`; they use synthetic data on
 named pasteboards and return no clipboard contents to the caller.
 
+The same opt-in run also delivers an encrypted synthetic record through the OS
+pasteboard into an off-screen AppKit `NSSecureTextField`. The fixture verifies
+character counts without reading the field value, checks clipboard cleanup after
+success and failed verification, and rejects replay. It uses its own named
+pasteboard, never the user's general clipboard. This qualifies that local
+composition only; cross-process AX targeting, native host enrollment and actual
+account sign-in remain separate integration requirements.
+
 The host exposes `mechanize_credential_paste` with only `sessionId` and
 `preparationId`. It uses the existing durable fill slot, records UNKNOWN before
 input, and preserves uncertain probe/paste/cleanup outcomes without retrying or
