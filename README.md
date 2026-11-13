@@ -2,10 +2,60 @@
 
 **reliable automation infrastructure for people, scripts, and LLM agents.**
 
-Mechanize exposes supported desktop and browser automation through a typed
-model and an authenticated [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)
-gateway. Clients discover capabilities, inspect current state, target semantic
-controls, perform authorized actions, and check available postconditions.
+Mechanize exposes desktop and browser automation through a typed DSL and
+[Model Context Protocol (MCP)](https://modelcontextprotocol.io/) tools.
+Choose the runtime that fits your task:
+
+| Runtime | Use it for | Requirements |
+| --- | --- | --- |
+| [Browser-only MCP server in Docker](#browser-only-mcp-server-in-docker) | Control Chromium, extract DOM, and capture screenshots | Docker; no OAuth, native app, or Chrome extension |
+| [Native desktop gateway](#native-desktop-quick-start) | Automate supported macOS apps and an enrolled Chrome browser | macOS helper, private configuration, authentication and permissions |
+
+## Browser-only MCP server in Docker
+
+Run a standalone Chromium MCP server with **no authentication setup**. Each MCP
+session gets an isolated tab that is reused between requests and closed on
+session termination or after five idle minutes.
+
+From the repository root, start an anonymous browser:
+
+```sh
+export MECHANIZE_RUNTIME_DIR="$HOME/.config/mechanize-browser"
+mkdir -p "$MECHANIZE_RUNTIME_DIR/secrets"
+chmod 700 "$MECHANIZE_RUNTIME_DIR" "$MECHANIZE_RUNTIME_DIR/secrets"
+cp docker/browser-mcp/config.example.json "$MECHANIZE_RUNTIME_DIR/config.json"
+chmod 600 "$MECHANIZE_RUNTIME_DIR/config.json"
+export MECHANIZE_CONFIG="$MECHANIZE_RUNTIME_DIR/config.json"
+export MECHANIZE_SECRETS_DIR="$MECHANIZE_RUNTIME_DIR/secrets"
+export MECHANIZE_UID="$(id -u)" MECHANIZE_GID="$(id -g)"
+unset MECHANIZE_STORAGE_STATE
+docker compose -f docker/browser-mcp/compose.yaml up -d --build
+```
+
+Connect your MCP client to **`http://127.0.0.1:8080/mcp`** using stateful
+Streamable HTTP, protocol `2025-11-25`. No bearer token or API key is required.
+The sample configuration allows `https://example.org`; edit `allowedOrigins`
+in your private config for other websites. Preserve a customized config when
+rerunning setup. Compose publishes the service to host loopback.
+
+- **Anonymous mode:** leave `MECHANIZE_STORAGE_STATE` unset.
+- **Profile mode:** provide a private Playwright storage-state JSON export and
+  set `MECHANIZE_STORAGE_STATE=/run/browser-secrets/storage-state.json`.
+  See the [profile setup instructions](docker/browser-mcp/README.md#quick-start-profile-browser).
+- **Browser control:** call `mechanize_script_run` with Mechanize DSL.
+- **DOM extraction:** call `mechanize_browser_dom` with `{}`.
+- **Screenshots:** call `mechanize_browser_screenshot` with `{}` for full size
+  or `{"scale":0.5}` for half-size PNG image content.
+
+Example arguments for `mechanize_script_run`:
+
+```json
+{"source":"web.tab(origin: \"https://example.org\").openOrigin(); let heading = web.tab(origin: \"https://example.org\").getByRole(\"heading\").read(\"text\")"}
+```
+
+See the **[browser MCP deployment guide](docker/browser-mcp/README.md)** for
+profile export requirements, configuration settings, logs, shutdown, and tests.
+Browser profiles and login exports belong outside Git and the Docker image.
 
 ## What it provides
 
@@ -24,7 +74,7 @@ Available tools and actions depend on the configured host, authenticated
 identity, granted permissions, and advertised backend capabilities. Parsing a
 script does not imply that a live adapter can execute it.
 
-## Quick start
+## Native desktop quick start
 
 Mechanize is under active development. Dependencies are pinned to published Go
 module revisions, including the Datly 1.0 (`v1`) development line; sibling
@@ -53,7 +103,7 @@ serves MCP over stdio. An explicit loopback HTTP listener can be selected with
 anonymous default. See [local development installation](docs/local-installation.md)
 for the development install workflow and its platform prerequisites.
 
-## Connect an MCP client
+## Connect a native desktop MCP client
 
 Configure an MCP client to launch the `mechanize` executable with `serve` and
 the absolute path to its private configuration file. For a stdio client, the
