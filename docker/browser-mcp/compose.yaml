@@ -1,0 +1,18 @@
+services:
+  browser-mcp:
+    build:
+      context: ../..
+      dockerfile: docker/browser-mcp/Dockerfile
+    image: mechanize-browser-mcp:local
+    user: "${MECHANIZE_UID:-1000}:${MECHANIZE_GID:-1000}"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MECHANIZE_PORT:-8080}:8080"
+    shm_size: 1gb
+    environment:
+      MECHANIZE_IDLE_MS: ${MECHANIZE_IDLE_MS:-300000}
+      MECHANIZE_MAX_SESSIONS: ${MECHANIZE_MAX_SESSIONS:-32}
+      MECHANIZE_STORAGE_STATE: ${MECHANIZE_STORAGE_STATE:-}
+    volumes:
+      - ${MECHANIZE_CONFIG:?Set MECHANIZE_CONFIG to private config JSON}:/run/secrets/browser-config.json:ro
+      - ${MECHANIZE_SECRETS_DIR:?Set MECHANIZE_SECRETS_DIR to a private runtime directory}:/run/browser-secrets:ro

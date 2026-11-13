@@ -1,0 +1,8 @@
+{
+  "listen": "0.0.0.0:8080",
+  "node": "node",
+  "worker": "/app/browser/container-worker.mjs",
+  "allowedOrigins": ["https://example.org"],
+  "allowMutation": true,
+  "operationTimeoutSeconds": 60
+}

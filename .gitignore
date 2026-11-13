@@ -72,3 +72,11 @@ vault-storage/
 vault-keys/
 .key-write.lock
 .vault-write.lock
+
+# Browser login material stays outside Git; these rules are defense in depth.
+**/chrome-profiles/
+**/chromium-profiles/
+**/profile-archives/
+**/watcher-google/
+**/storage-state*.json
+**/storage-state*.json.enc

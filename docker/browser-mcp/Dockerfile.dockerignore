@@ -1,0 +1,13 @@
+**
+!go.mod
+!go.sum
+!model/**
+!script/**
+!auth/**
+!backend/containerbrowser/**
+!cmd/mechanize-browser-mcp/**
+!browser/playwright/package.json
+!browser/playwright/package-lock.json
+!browser/playwright/sessions.mjs
+!browser/playwright/container-worker.mjs
+!browser/playwright/container-executor.mjs
