@@ -2,7 +2,7 @@
   "listen": "0.0.0.0:8080",
   "node": "node",
   "worker": "/app/browser/container-worker.mjs",
-  "allowedOrigins": ["https://example.org"],
+  "allowAllWeb": true,
   "allowMutation": true,
   "operationTimeoutSeconds": 60
 }

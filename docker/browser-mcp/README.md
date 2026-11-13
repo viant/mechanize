@@ -27,8 +27,8 @@ docker compose -f docker/browser-mcp/compose.yaml up -d --build
 docker compose -f docker/browser-mcp/compose.yaml ps
 ```
 
-The sample permits `https://example.org`. Edit the private config's
-`allowedOrigins` for your target sites, then restart the service. If you rerun
+The default allows all websites (`allowAllWeb: true`). To restrict websites,
+configure the allowlist described below and restart the service. If you rerun
 setup, avoid copying the sample over your customized configuration.
 Connect your MCP client to `http://127.0.0.1:8080/mcp`; no API key is required.
 
@@ -45,7 +45,7 @@ Example configuration (all identities and origins are synthetic):
   "listen": "0.0.0.0:8080",
   "node": "node",
   "worker": "/app/browser/container-worker.mjs",
-  "allowedOrigins": ["https://example.org"],
+  "allowAllWeb": true,
   "allowMutation": true,
   "operationTimeoutSeconds": 60
 }
@@ -56,9 +56,21 @@ Compose publishes to host loopback. Anyone who can reach the endpoint can create
 sessions, so retain that binding or use a deployment network boundary.
 MCP session IDs select isolated tabs; they are not user identities.
 
-`allowedOrigins` uses the existing DSL policy. `allowAllWeb` defaults to false;
-enable it only as an explicit deployment decision. `allowMutation` defaults to
-false. Configure deployment network egress separately, including which internal
+`allowAllWeb` defaults to `true`, including when omitted. `allowedOrigins` means
+websites Chromium may control, not the MCP server URL. To enforce an allowlist,
+explicitly set `allowAllWeb` to `false`:
+
+```json
+{
+  "allowAllWeb": false,
+  "allowedOrigins": ["https://example.org", "https://www.youtube.com"]
+}
+```
+
+Each origin is the exact scheme, hostname and optional port, without a path.
+An empty allowlist with `allowAllWeb: false` permits no websites. The allowlist
+does not restrict browsing while `allowAllWeb` is true. `allowMutation` defaults
+to false. Configure deployment network egress separately, including which internal
 addresses browser navigation and page subresources can reach.
 
 ## Quick start: profile browser

@@ -34,8 +34,9 @@ docker compose -f docker/browser-mcp/compose.yaml up -d --build
 
 Connect your MCP client to **`http://127.0.0.1:8080/mcp`** using stateful
 Streamable HTTP, protocol `2025-11-25`. No bearer token or API key is required.
-The sample configuration allows `https://example.org`; edit `allowedOrigins`
-in your private config for other websites. Preserve a customized config when
+All websites are allowed by default (`allowAllWeb: true`). To restrict browsing,
+set `allowAllWeb: false` and list website origins in `allowedOrigins`; these are
+website addresses, not the MCP endpoint. Preserve a customized config when
 rerunning setup. Compose publishes the service to host loopback.
 
 - **Anonymous mode:** leave `MECHANIZE_STORAGE_STATE` unset.

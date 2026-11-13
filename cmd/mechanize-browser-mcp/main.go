@@ -52,14 +52,9 @@ func run() error {
 	if info.Mode().Perm()&0077 != 0 {
 		return errors.New("configuration must be private (0600)")
 	}
-	var c config
-	decoder := json.NewDecoder(io.LimitReader(file, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(&c); err != nil {
+	c, err := decodeConfig(file)
+	if err != nil {
 		return err
-	}
-	if decoder.Decode(new(any)) != io.EOF {
-		return errors.New("trailing configuration")
 	}
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:8080"
@@ -110,4 +105,17 @@ func run() error {
 		return fmt.Errorf("browser MCP serve: %w", err)
 	}
 	return nil
+}
+
+func decodeConfig(reader io.Reader) (config, error) {
+	c := config{AllowAllWeb: true}
+	decoder := json.NewDecoder(io.LimitReader(reader, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&c); err != nil {
+		return c, err
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return c, errors.New("trailing configuration")
+	}
+	return c, nil
 }
