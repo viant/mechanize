@@ -13,24 +13,24 @@ const livePages = new Set();
 const fixture = createServer((req,res) => {
   if(req.url==='/live'){
     res.writeHead(200,{'Content-Type':'text/event-stream'});res.write(': connected\n\n');
-    livePages.add(res);req.on('close',()=>livePages.delete(res));return;
+    livePages.add(res);res.on('close',()=>livePages.delete(res));return;
   }
   res.setHeader('Content-Type','text/html');
   res.end('<input id="query"><div id="profile"></div><script>window.live=new EventSource("/live");document.querySelector("#profile").textContent=localStorage.getItem("seed")||"empty";</script>');
 });
 await new Promise(resolve => fixture.listen(0,'0.0.0.0',resolve));
-const origin = `http://host.docker.internal:${fixture.address().port}`;
+const origin = `http://${process.env.MECHANIZE_FIXTURE_HOST||'host.docker.internal'}:${fixture.address().port}`;
 let started = false;
 const withProfile = !process.argv.includes('--without-profile');
 const docker = (...args) => execFileSync('docker',args,{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
 try {
   await writeFile(join(dir,'state.json'),JSON.stringify({cookies:[],origins:[{origin,localStorage:[{name:'seed',value:'deployment-fixture'}]}]}),{mode:0o600});
   await writeFile(join(dir,'config.json'),JSON.stringify({listen:'0.0.0.0:8080',worker:'/app/browser/container-worker.mjs',
-    allowedOrigins:[origin],allowMutation:true}),{mode:0o600});
+    allowAllWeb:false,allowedOrigins:[origin],allowMutation:true}),{mode:0o600});
   docker('run','-d','--name',name,'--user',`${process.getuid()}:${process.getgid()}`,'--shm-size','1gb','-p','127.0.0.1::8080',
     '-v',`${resolve(dir)}:/run/browser-secrets:ro`,'-e','MECHANIZE_IDLE_MS=5000',
     ...(withProfile?['-e','MECHANIZE_STORAGE_STATE=/run/browser-secrets/state.json']:[]),
-    'mechanize-browser-mcp:local','-config','/run/browser-secrets/config.json');
+    process.env.MECHANIZE_IMAGE||'mechanize-browser-mcp:local','-config','/run/browser-secrets/config.json');
   started = true;
   const port = docker('port',name,'8080/tcp').split(':').at(-1);
   const url = `http://127.0.0.1:${port}/mcp`;

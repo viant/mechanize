@@ -3,14 +3,26 @@ import {readFile} from 'node:fs/promises';
 import {chromium} from 'playwright-core';
 import {BrowserSessions} from './sessions.mjs';
 import {executeStep} from './container-executor.mjs';
+import {assertAllowed, selectFrame, restrictNavigation} from './container-policy.mjs';
+import {NetworkEvidence} from './network-evidence.mjs';
 
 // Deployment-only path, never a tool argument. No profile content goes to logs.
 const profile = process.env.MECHANIZE_STORAGE_STATE;
 const storageState = profile ? JSON.parse(await readFile(profile, 'utf8')) : undefined;
-const sessions = new BrowserSessions({storageState,
+const policy = JSON.parse(process.env.MECHANIZE_BROWSER_POLICY || '{"allowAllWeb":true}');
+new NetworkEvidence(policy.networkRules);
+const evidence = new WeakMap();
+const sessions = new BrowserSessions({storageState, inspectionOnly: policy.inspectionOnly,
   idleMs: Number(process.env.MECHANIZE_IDLE_MS || 300000),
   maxSessions: Number(process.env.MECHANIZE_MAX_SESSIONS || 32),
-  launch: () => chromium.launch({headless: true, executablePath: process.env.CHROMIUM_PATH || undefined}),
+  launch: () => chromium.launch({headless: true, executablePath: process.env.CHROMIUM_PATH || undefined,
+    ...(process.env.MECHANIZE_PROXY_SERVER ? {proxy: {server: process.env.MECHANIZE_PROXY_SERVER, bypass: '<-loopback>'}} : {})}),
+  prepareContext: async context => {
+    if (policy.inspectionOnly) await restrictNavigation(context, policy);
+    const collector = new NetworkEvidence(policy.networkRules);
+    collector.attach(context);
+    evidence.set(context, collector);
+  },
 });
 const lines = createInterface({input: process.stdin, crlfDelay: Infinity});
 const active = new Set();
@@ -23,12 +35,33 @@ async function dispatch(message) {
   switch (message.method) {
     case 'register': sessions.register(message.session); return {};
     case 'terminate': await sessions.terminate(message.session); return {};
-    case 'execute': return sessions.use(message.session, page => executeStep(page, message.step));
+    case 'execute': return sessions.use(message.session, page => executeStep(page, message.step, policy));
     case 'dom': return sessions.use(message.session, async page => {
-      const html=await page.content(),text=await page.locator('body').innerText({timeout:5000});
-      return {origin:new URL(page.url()).origin,url:page.url(),title:await page.title(),html:html.slice(0,300000),text:text.slice(0,64000),truncated:html.length>300000||text.length>64000};
+      const scope = Object.fromEntries(Object.entries(message.step?.target?.scope?.frame ?? {}).map(([key,value])=>[key,value.string]));
+      const target = await selectFrame(page, scope, policy);
+      const html=await target.content(),text=await target.locator('body').innerText({timeout:5000}),title=await target.title();
+      const url=assertAllowed(target.url(),policy);
+      assertAllowed(page.url(),policy);
+      return {origin:url.origin,url:url.href,title,html:html.slice(0,300000),text:text.slice(0,64000),truncated:html.length>300000||text.length>64000};
     });
+    case 'frames': return sessions.use(message.session, async page => {
+      const origin=assertAllowed(page.url(),policy).origin,frames=[];
+      let omitted=0;
+      for(const frame of page.frames()) {
+        if(frame===page.mainFrame())continue;
+        try {assertAllowed(frame.url(),policy);} catch {omitted++;continue;}
+        const element=await frame.frameElement();
+        let id;
+        try {id=await element.getAttribute('id');} finally {await element.dispose();}
+        frames.push({id:id||undefined,name:frame.name()||undefined,origin:new URL(frame.url()).origin});
+      }
+      assertAllowed(page.url(),policy);
+      return {origin,frames:frames.slice(0,100),truncated:frames.length>100,omitted};
+    });
+    case 'network': return sessions.use(message.session, page => ({origin:assertAllowed(page.url(),policy).origin,
+      ...evidence.get(page.context()).snapshot()}));
     case 'screenshot': return sessions.use(message.session, async page => {
+      assertAllowed(page.url(),policy);
       const scale=message.scale??1;
       if(!Number.isFinite(scale)||scale<=0||scale>1)throw Error('Invalid screenshot scale');
       let data;
@@ -40,6 +73,7 @@ async function dispatch(message) {
           ({data}=await session.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false,clip:{x:view.pageX,y:view.pageY,width:view.clientWidth,height:view.clientHeight,scale}}));
         } finally {await session.detach();}
       }
+      assertAllowed(page.url(),policy);
       return {origin:new URL(page.url()).origin,url:page.url(),mimeType:'image/png',data};
     });
     default: throw Error('Unsupported worker operation');

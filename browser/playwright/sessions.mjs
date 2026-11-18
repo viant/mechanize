@@ -1,11 +1,11 @@
 // Container-owned contexts. IDs are supplied by the trusted MCP transport,
 // never selected from tool arguments.
 export class BrowserSessions {
-  constructor({launch, idleMs = 300000, maxSessions = 32, storageState,
-    setTimer = setTimeout, clearTimer = clearTimeout}) {
+  constructor({launch, idleMs = 300000, maxSessions = 32, storageState, inspectionOnly = false,
+    setTimer = setTimeout, clearTimer = clearTimeout, prepareContext = async () => {}}) {
     if (typeof launch !== 'function' || !Number.isSafeInteger(idleMs) || idleMs <= 0 ||
         !Number.isSafeInteger(maxSessions) || maxSessions <= 0) throw Error('Invalid browser session configuration');
-    Object.assign(this, {launch, idleMs, maxSessions, storageState, setTimer, clearTimer});
+    Object.assign(this, {launch, idleMs, maxSessions, storageState, inspectionOnly, setTimer, clearTimer, prepareContext});
     this.entries = new Map();
     this.browser = null;
     this.closed = false;
@@ -78,9 +78,11 @@ export class BrowserSessions {
     try {
         const browser = await this.browserFor();
         if (entry.terminated) throw Error('Session terminated');
-        const context = await browser.newContext(this.storageState ? {storageState: structuredClone(this.storageState)} : {});
+        const context = await browser.newContext({...(this.inspectionOnly ? {serviceWorkers:'block'} : {}), ...(this.storageState ? {storageState: structuredClone(this.storageState)} : {})});
         entry.browser = browser;
         entry.context = context;
+        if (entry.terminated) throw Error('Session terminated');
+        await this.prepareContext(context);
         if (entry.terminated) throw Error('Session terminated');
         const page = await context.newPage();
         if (entry.terminated) throw Error('Session terminated');

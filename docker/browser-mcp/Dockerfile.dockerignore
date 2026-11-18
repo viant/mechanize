@@ -11,3 +11,5 @@
 !browser/playwright/sessions.mjs
 !browser/playwright/container-worker.mjs
 !browser/playwright/container-executor.mjs
+!browser/playwright/container-policy.mjs
+!browser/playwright/network-evidence.mjs

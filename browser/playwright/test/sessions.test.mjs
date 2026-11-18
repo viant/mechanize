@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {BrowserSessions} from '../sessions.mjs';
 
-function fixture() {
+function fixture(inspectionOnly = false) {
   let launches = 0;
   const contexts = [], timers = [];
   const browser = new EventEmitter();
@@ -14,7 +14,7 @@ function fixture() {
     return context;
   };
   browser.close = async () => browser.emit('disconnected');
-  const sessions = new BrowserSessions({launch: async () => {launches++; return browser;},
+  const sessions = new BrowserSessions({launch: async () => {launches++; return browser;}, inspectionOnly,
     storageState: {cookies: [], origins: []}, setTimer: fn => {timers.push(fn); return fn;}, clearTimer: () => {}});
   return {sessions, contexts, timers, launches: () => launches};
 }
@@ -32,11 +32,19 @@ test('transport sessions reuse tabs and isolate contexts and deployment state', 
   const b = await f.sessions.use('b', page => page);
   assert.notEqual(a, b);
   assert.notEqual(f.contexts[0].options.storageState, f.contexts[1].options.storageState);
+  assert.equal(f.contexts[0].options.serviceWorkers,undefined);
   assert.equal(f.launches(), 1);
   await f.sessions.terminate('a');
   assert.equal(f.contexts[0].closed, true);
   assert.equal(f.contexts[1].closed, false);
   await assert.rejects(f.sessions.use('a', () => {}), /terminated/);
+  await f.sessions.close();
+});
+
+test('inspection contexts block service-worker navigation bypass', async () => {
+  const f = fixture(true); f.sessions.register('a');
+  await f.sessions.use('a', () => {});
+  assert.equal(f.contexts[0].options.serviceWorkers,'block');
   await f.sessions.close();
 });
 

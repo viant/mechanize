@@ -125,11 +125,15 @@ isolation does not make a shared account into separate website identities.
 
 Connect to `http://127.0.0.1:8080/mcp` using stateful Streamable HTTP and protocol
 `2025-11-25`. Retain the returned `Mcp-Session-Id` for subsequent requests.
-No Authorization header is required. Use HTTP DELETE to terminate the session.
+No Authorization header is required in the default local mode. When
+`bearerTokenFile` is configured, use the hosted authentication contract below.
+Use HTTP DELETE to terminate the session.
 Stateless protocol modes do not provide this server's reuse contract.
 
 Tools: `mechanize_capabilities`, `mechanize_script_validate`,
-`mechanize_script_run`, and `mechanize_session_close`. The last closes browser
+`mechanize_script_run`, `mechanize_browser_dom`, `mechanize_browser_screenshot`,
+`mechanize_browser_frames`, `mechanize_browser_network`, and
+`mechanize_session_close`. The last closes browser
 resources and prevents further execution in that session; initialize a new one.
 
 After opening a tab, `mechanize_browser_dom` returns its URL, title, rendered HTML
@@ -152,19 +156,102 @@ let heading = web.tab(origin: "https://example.org").getByRole("heading").read("
 The canonical Mechanize compiler validates source and typed bindings. This
 executor supports browser navigation, activation, strict locators, text/value/
 checked/enabled/visible reads, click, fill, check/uncheck, select, focus, keyboard
-input and bounded element assertions. Unsupported native and frame capabilities
-are rejected. New tabs opened by pages are closed; each session retains one tab.
+input and bounded element assertions. Exact frame `id`/`name` scope is supported;
+native capabilities remain unavailable. New tabs opened by pages are closed;
+each session retains one tab. Inspection-only contexts block service workers so
+they cannot bypass navigation interception; normal browsing keeps its existing
+service-worker behavior.
 Concurrent scripts in the same session return busy rather than interleaving.
 
 Execution completion is distinct from a website business outcome. Mutations
 are not automatically retried. A lost reply or cancellation may leave the effect
 unknown; inspect the site before deciding whether to repeat an action.
 
+## Inspection-only mode and frames
+
+Use [config.inspection.example.json](config.inspection.example.json) as a starting
+point, with your own approved origins and private token file. `inspectionOnly`
+requires `allowAllWeb:false` and a nonempty explicit origin list. It permits
+navigation, activation, reads and assertions. Clicks, input, keyboard actions
+and selections are rejected for the entire script before any step executes.
+Worker dispatch repeats the operation check. Navigation requests, redirects and
+frame documents must also remain on permitted origins.
+HTTP redirects are followed as at most 10 separately checked navigations,
+preserving the final document URL and context cookies. Request evidence retains
+the server's actual response status when a redirect is handled internally.
+After a blocked navigation, close the session and initialize a fresh one before
+continuing; Chromium may retain an error document from the rejected navigation.
+
+`mechanize_browser_frames({})` returns up to 100 permitted frames with their DOM
+iframe IDs, names and origins. Unavailable or blocked frames are not proof that
+an implementation is absent. Select an exact frame using existing DSL:
+
+```text
+let value = web.tab(origin: "https://shop.example").frame(id: "store-frame").getById("amount").read("text")
+```
+
+Both `id` and `name` can narrow the selection. Missing or ambiguous matches fail;
+the adapter does not silently choose the first frame. The current frame origin
+is checked before returning read evidence. DOM reads also accept
+`{"frame":{"id":"store-frame"}}`; omit `frame` for the main document. Screenshots
+remain scoped to the main viewport. No arbitrary JavaScript API is added.
+
+Inspection mode blocks explicit input operations. Visiting a website still runs
+its normal page code and can generate network traffic. It is not a guarantee
+that every GET request has no website side effect.
+
+## Minimized request evidence
+
+`mechanize_browser_network({})` returns a session-local snapshot of naturally
+observed requests. Capture starts before page creation and defaults to no
+configured endpoints. Deployment `networkRules` match exact origins and paths;
+callers cannot widen the capture policy through tool arguments. Rule parameters
+choose `value` for safe diagnostic values or `presence` to report only whether
+a field is supplied/nonempty. Never configure personal identifiers, credentials
+or sensitive records as `value`; use `presence` or omit them.
+
+Evidence includes request method/type, configured parameter projections, frame
+origin, response status when observed, elapsed time and failure flags. It does
+not include full query strings, request headers, cookies, raw request/response
+bodies or unconfigured fields. Queries, URL-encoded forms and flat scalar JSON
+payloads up to 16 KiB are supported. Unsupported, oversized or malformed payloads
+are explicit, with unknown fields distinguished from confirmed absence.
+
+Each session keeps at most 100 records, five values per configured key and 128
+characters per value. Truncation/dropped counts are explicit. Evidence is copied
+on read with a 512 KiB serialized-record budget, below the worker response limit,
+including multibyte values. Evidence is
+discarded with its browser context, including idle recreation.
+Requests are observed, never replayed. A successful HTTP response does not prove
+application-level receipt, matching or a completed business transaction.
+
+## Hosted authentication and network boundary
+
+The legacy anonymous loopback service remains supported. For a hosted service,
+set `bearerTokenFile` to a private 0600 file containing at least 32 random bytes.
+Every MCP HTTP request must then include `Authorization: Bearer ...` and
+`X-Mechanize-Owner`. The trusted application backend supplies an opaque owner
+derived from the authenticated user and conversation; do not accept an owner
+chosen by an untrusted browser client. Owner binding applies to initialize,
+tool calls, streaming and transport termination. Another owner cannot reuse a
+known MCP session ID. The service token stays on the backend and is not forwarded
+to websites or returned in tools. No OAuth or token storage system is added.
+
+Retain loopback/private-network binding and terminate TLS at the approved
+gateway. `MECHANIZE_PROXY_SERVER` configures Chromium's outbound proxy, including
+loopback destinations. In production, use an approved proxy/firewall that blocks
+private, loopback, link-local and metadata destinations, including DNS rebinding
+and page subresources. A permitted document origin alone does not enforce that
+network boundary. Do not expose the service publicly or claim production egress
+qualification from local tests. The client must retain a separate MCP transport
+session for each authenticated user/conversation owner.
+
 ## Settings and verification
 
 - `MECHANIZE_IDLE_MS`: browser idle timeout, default `300000`.
 - `MECHANIZE_MAX_SESSIONS`: worker session capacity, default `32`.
 - `MECHANIZE_STORAGE_STATE`: optional runtime-mounted seed JSON.
+- `MECHANIZE_PROXY_SERVER`: optional approved outbound proxy URL.
 - `CHROMIUM_PATH`: optional compatible executable override.
 - `MECHANIZE_PORT`: host-loopback published port, default `8080`.
 - `MECHANIZE_UID` / `MECHANIZE_GID`: container user/group, default `1000:1000`.
@@ -172,9 +259,10 @@ unknown; inspect the site before deciding whether to repeat an action.
 
 ```sh
 go test -race ./backend/containerbrowser ./cmd/mechanize-browser-mcp
-node --test browser/playwright/test/sessions.test.mjs
+node --test browser/playwright/test/{container-policy,network-evidence,sessions}.test.mjs
 node scripts/browser-mcp-smoke.mjs
 node scripts/browser-mcp-smoke.mjs --without-profile
+node scripts/browser-inspection-smoke.mjs
 ```
 
 The smoke test builds synthetic browser state in a temporary directory and
@@ -188,3 +276,9 @@ measurements include different workloads and are not a comparative benchmark.
 It requires Docker Desktop's `host.docker.internal` routing. It never uses a real
 website login. Production network/profile qualification remains specific
 to the deployment; local tests do not prove those external conditions.
+
+For another Docker runtime, set `MECHANIZE_FIXTURE_HOST` to its host gateway and
+`TMPDIR` to a directory shared with that VM. `MECHANIZE_IMAGE` selects a separately
+built test image. The inspection smoke test verifies actual HTTP MCP auth/owner
+binding, frame discovery/DSL/DOM, GET/POST field minimization, blocked navigation
+and input, isolated request buffers and cleanup using only synthetic pages.

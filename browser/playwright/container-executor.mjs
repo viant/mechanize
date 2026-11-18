@@ -1,5 +1,6 @@
 // Receives validated, resolved Mechanize steps over private child-process IPC.
 // This adapter owns container pages; it does not impersonate the desktop broker.
+import {assertAllowed, selectFrame, inspectionActions, finishNavigation} from './container-policy.mjs';
 export const actions = ['browser.openOrigin', 'browser.navigate', 'browser.activate',
   'element.press', 'element.fill', 'element.check', 'element.uncheck',
   'element.select', 'element.pressKey', 'element.focus', 'element.read', 'expect'];
@@ -43,9 +44,13 @@ async function read(target, attribute) {
   }
 }
 
-export async function executeStep(page, step) {
+export async function executeStep(page, step, policy = {allowAllWeb: true}) {
   const state = {dispatched: false};
-  try { return await execute(page, step, state); }
+  try {
+    const result = await execute(page, step, state, policy);
+    assertAllowed(page.url(), policy);
+    return result;
+  }
   catch (cause) {
     const error = new Error('Browser step failed', {cause});
     error.code = cause.code ?? (cause.name === 'TimeoutError' ? 'deadline' : 'browserStepFailed');
@@ -54,9 +59,10 @@ export async function executeStep(page, step) {
   }
 }
 
-async function execute(page, step, state) {
+async function execute(page, step, state, policy) {
   if (!actions.includes(step.action) || step.target.surface.kind !== 'web' ||
-      Object.keys(step.target.scope?.frame ?? {}).length || Object.keys(step.target.scope?.window ?? {}).length) {
+      Object.keys(step.target.scope?.window ?? {}).length ||
+      (policy.inspectionOnly && !inspectionActions.includes(step.action))) {
     throw Error('Unsupported browser step');
   }
   const timeout = step.timeoutMs;
@@ -72,12 +78,16 @@ async function execute(page, step, state) {
     const url = step.action === 'browser.openOrigin' ? surface.origin : stringValue(step.arguments.url);
     const parsed = new URL(url);
     if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw Error('Invalid navigation URL');
+    assertAllowed(url, policy);
     state.dispatched = true;
     await page.goto(url, {timeout, waitUntil: 'domcontentloaded'});
+    await finishNavigation(page);
     return page.url();
   }
   if (step.action === 'browser.activate') {state.dispatched = true; await page.bringToFront(); return null;}
-  const target = locator(page, step.target);
+  const scope = Object.fromEntries(Object.entries(step.target.scope?.frame ?? {}).map(([key, value]) => [key, stringValue(value)]));
+  const root = await selectFrame(page, scope, policy);
+  const target = locator(root, step.target);
   if (step.action === 'expect') {
     const assertion = step.assertion;
     const deadline = Date.now() + timeout;
@@ -94,7 +104,7 @@ async function execute(page, step, state) {
           default: throw Error('Unsupported assertion');
         }
       } else if (await target.count() > 1) throw Error('Ambiguous assertion target');
-      if (assertion.not ? !matches : matches) return true;
+      if (assertion.not ? !matches : matches) { assertAllowed(root.url(), policy); return true; }
       if (Date.now() >= deadline) throw Object.assign(Error('Assertion deadline exceeded'), {code:'deadline'});
       await page.waitForTimeout(Math.min(50, deadline - Date.now()));
     }
@@ -105,6 +115,7 @@ async function execute(page, step, state) {
     if (count > step.target.limit) throw Error('Read result exceeds declared limit');
     const values = [];
     for (let i = 0; i < count; i++) values.push(await read(target.nth(i), stringValue(step.arguments.attribute)));
+    assertAllowed(root.url(), policy);
     return values;
   }
   await target.waitFor({state: 'attached', timeout});
@@ -118,7 +129,12 @@ async function execute(page, step, state) {
     case 'element.select': await target.selectOption(stringValue(step.arguments.value), {timeout}); break;
     case 'element.pressKey': await target.press(stringValue(step.arguments.key), {timeout}); break;
     case 'element.focus': await target.focus({timeout}); break;
-    case 'element.read': return read(target, stringValue(step.arguments.attribute));
+    case 'element.read': {
+      const value = await read(target, stringValue(step.arguments.attribute));
+      assertAllowed(root.url(), policy);
+      return value;
+    }
   }
+  assertAllowed(root.url(), policy);
   return null;
 }

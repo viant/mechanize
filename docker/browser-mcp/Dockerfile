@@ -14,6 +14,7 @@ WORKDIR /app/browser
 COPY browser/playwright/package.json browser/playwright/package-lock.json ./
 RUN npm ci --omit=dev && npx playwright-core install --with-deps chromium
 COPY browser/playwright/sessions.mjs browser/playwright/container-worker.mjs browser/playwright/container-executor.mjs ./
+COPY browser/playwright/container-policy.mjs browser/playwright/network-evidence.mjs ./
 COPY --from=build /out/mechanize-browser-mcp /usr/local/bin/mechanize-browser-mcp
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 RUN mv /root/.cache/ms-playwright /opt/browsers && chmod -R a+rX /opt/browsers
