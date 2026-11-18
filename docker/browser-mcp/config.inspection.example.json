@@ -1,0 +1,17 @@
+{
+  "listen": "0.0.0.0:8080",
+  "node": "node",
+  "worker": "/app/browser/container-worker.mjs",
+  "allowAllWeb": false,
+  "allowedOrigins": ["https://shop.example", "https://store.example"],
+  "inspectionOnly": true,
+  "bearerTokenFile": "/run/browser-secrets/service-token",
+  "operationTimeoutSeconds": 60,
+  "networkRules": [
+    {
+      "origin": "https://metrics.example",
+      "path": "/collect",
+      "parameters": {"pixel": "value", "amount": "value", "currency": "value", "order": "presence"}
+    }
+  ]
+}

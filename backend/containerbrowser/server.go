@@ -25,6 +25,13 @@ type Source struct {
 	Source string `json:"source"`
 }
 type Empty struct{}
+type FrameInput struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+type DOMInput struct {
+	Frame *FrameInput `json:"frame,omitempty"`
+}
 type ScreenshotInput struct {
 	Scale *float64 `json:"scale,omitempty"`
 }
@@ -44,14 +51,17 @@ type browserSession struct {
 	registered  bool
 	terminated  bool
 	transportID string
+	owner       string
 }
 type Host struct {
-	Worker      *Worker
-	Policy      script.Policy
-	Timeout     time.Duration
-	mu          sync.Mutex
-	sessions    map[transport.Notifier]*browserSession
-	byTransport map[string]*browserSession
+	Worker         *Worker
+	Policy         script.Policy
+	Timeout        time.Duration
+	mu             sync.Mutex
+	sessions       map[transport.Notifier]*browserSession
+	byTransport    map[string]*browserSession
+	InspectionOnly bool
+	BearerToken    []byte
 }
 
 func BrowserCapabilities() map[string]bool {
@@ -59,6 +69,7 @@ func BrowserCapabilities() map[string]bool {
 	for _, name := range []string{"browser.openOrigin", "browser.navigate", "browser.activate", "semanticPress", "replaceValue", "ensureChecked", "selectOption", "targetedKeyboard", "targetedFocus", "attributeRead", "boundedObservation", "roleLocator", "idLocator", "testIdLocator", "textLocator", "labelRelationships", "ancestorScope", "indexedQuery", "orderedQuery", "checkedObservation"} {
 		capabilities["web:"+name] = true
 	}
+	capabilities["web:frameScope"] = true
 	return capabilities
 }
 func NewHost(worker *Worker, policy script.Policy, timeout time.Duration) (*Host, *server.Server, error) {
@@ -72,7 +83,7 @@ func NewHost(worker *Worker, policy script.Policy, timeout time.Duration) (*Host
 		if _, err := rand.Read(entropy[:]); err != nil {
 			return nil, err
 		}
-		s := &browserSession{id: hex.EncodeToString(entropy[:]), lane: make(chan struct{}, 1)}
+		s := &browserSession{id: hex.EncodeToString(entropy[:]), lane: make(chan struct{}, 1), owner: ownerFromContext(ctx)}
 		if err := s.authorize(ctx); err != nil {
 			return nil, err
 		}
@@ -88,13 +99,21 @@ func NewHost(worker *Worker, policy script.Policy, timeout time.Duration) (*Host
 			if in != nil && in.Scale != nil {
 				scale = *in.Scale
 			}
-			return h.inspect(ctx, s, "screenshot", scale)
+			return h.inspect(ctx, s, "screenshot", nil, scale)
 		}); err != nil {
 			return nil, err
 		}
-		for name, method := range map[string]string{"mechanize_browser_dom": "dom"} {
-			if err := protocol.RegisterTool[*Empty, *Result](base.Registry, name, "Read the current owned browser tab. Open an allowed origin with DSL first. DOM is bounded HTML and text; screenshot is viewport PNG.", func(ctx context.Context, _ *Empty) (*schema.CallToolResult, *jsonrpc.Error) {
-				return h.inspect(ctx, s, method)
+		if err := protocol.RegisterTool[*DOMInput, *Result](base.Registry, "mechanize_browser_dom", "Read bounded HTML and text from the owned tab or one permitted frame selected by DOM id/name.", func(ctx context.Context, in *DOMInput) (*schema.CallToolResult, *jsonrpc.Error) {
+			if in == nil {
+				in = &DOMInput{}
+			}
+			return h.inspect(ctx, s, "dom", in.Frame)
+		}); err != nil {
+			return nil, err
+		}
+		for name, method := range map[string]string{"mechanize_browser_frames": "frames", "mechanize_browser_network": "network"} {
+			if err := protocol.RegisterTool[*Empty, *Result](base.Registry, name, "Read permitted frame metadata or bounded, deployment-configured sanitized request evidence from the owned session. No headers, cookies or raw bodies are returned.", func(ctx context.Context, _ *Empty) (*schema.CallToolResult, *jsonrpc.Error) {
+				return h.inspect(ctx, s, method, nil)
 			}); err != nil {
 				return nil, err
 			}
@@ -125,7 +144,7 @@ func NewHost(worker *Worker, policy script.Policy, timeout time.Duration) (*Host
 			return nil, err
 		}
 		if err := protocol.RegisterTool[*Empty, *Result](base.Registry, "mechanize_capabilities", "Discover supported browser capabilities; native actions are unavailable.", func(ctx context.Context, _ *Empty) (*schema.CallToolResult, *jsonrpc.Error) {
-			return toolResult(map[string]any{"capabilities": policy.Capabilities, "sourceFormats": []string{"dsl"}, "idleTimeoutSeconds": 300})
+			return toolResult(map[string]any{"capabilities": policy.Capabilities, "sourceFormats": []string{"dsl"}, "idleTimeoutSeconds": 300, "inspectionOnly": h.InspectionOnly, "networkEvidence": true})
 		}); err != nil {
 			return nil, err
 		}
@@ -158,6 +177,15 @@ func (h *Host) compile(in *Source) (*model.Plan, error) {
 	}
 	if err = (script.Validator{}).CheckPolicy(p, h.Policy); err != nil {
 		return nil, err
+	}
+	if h.InspectionOnly {
+		for _, step := range p.Steps {
+			switch step.Action {
+			case "browser.openOrigin", "browser.navigate", "browser.activate", "element.read", "expect":
+			default:
+				return nil, errors.New("action unavailable in inspection mode")
+			}
+		}
 	}
 	return p, nil
 }
@@ -258,6 +286,9 @@ func (s *browserSession) authorize(ctx context.Context) error {
 	defer s.mu.Unlock()
 	if s.terminated {
 		return errors.New("session terminated")
+	}
+	if s.owner != "" && s.owner != ownerFromContext(ctx) {
+		return errors.New("session owner mismatch")
 	}
 	return ctx.Err()
 }

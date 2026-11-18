@@ -2,15 +2,38 @@ package containerbrowser
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"net/http"
+	"strings"
 )
 
 type sessionCaptureKey struct{}
 type sessionCapture struct{ session *browserSession }
+type ownerKey struct{}
+
+func ownerFromContext(ctx context.Context) string {
+	owner, _ := ctx.Value(ownerKey{}).(string)
+	return owner
+}
 
 // HTTP indexes transport sessions and rejects unknown session references.
 func (h *Host) HTTP(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(h.BearerToken) > 0 {
+			provided := sha256.Sum256([]byte(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")))
+			expected := sha256.Sum256(h.BearerToken)
+			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || subtle.ConstantTimeCompare(provided[:], expected[:]) != 1 {
+				http.Error(w, "service authentication required", http.StatusUnauthorized)
+				return
+			}
+			owner := r.Header.Get("X-Mechanize-Owner")
+			if strings.TrimSpace(owner) == "" || len(owner) > 256 {
+				http.Error(w, "opaque session owner required", http.StatusBadRequest)
+				return
+			}
+			r = r.WithContext(context.WithValue(r.Context(), ownerKey{}, owner))
+		}
 		if version := r.Header.Get("MCP-Protocol-Version"); version != "" && version != "2025-11-25" && version != "2025-06-18" && version != "2025-03-26" {
 			http.Error(w, "stateful MCP protocol version required", http.StatusBadRequest)
 			return

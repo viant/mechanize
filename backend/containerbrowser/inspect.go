@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"github.com/viant/jsonrpc"
 	"github.com/viant/mcp-protocol/schema"
+	"github.com/viant/mechanize/model"
 	"math"
 )
 
-func (h *Host) inspect(parent context.Context, s *browserSession, method string, scales ...float64) (*schema.CallToolResult, *jsonrpc.Error) {
+func (h *Host) inspect(parent context.Context, s *browserSession, method string, frame *FrameInput, scales ...float64) (*schema.CallToolResult, *jsonrpc.Error) {
 	scale := 1.0
 	if len(scales) > 0 {
 		scale = scales[0]
@@ -33,7 +34,21 @@ func (h *Host) inspect(parent context.Context, s *browserSession, method string,
 	}
 	ctx, cancel := context.WithTimeout(parent, h.Timeout)
 	defer cancel()
-	raw, err := h.Worker.Call(ctx, method, s.id, nil, scale)
+	var target *model.Step
+	if frame != nil {
+		if frame.ID == "" && frame.Name == "" || len(frame.ID) > 256 || len(frame.Name) > 256 {
+			return failureResult("invalidFrame", "notDispatched")
+		}
+		scope := map[string]model.Value{}
+		if frame.ID != "" {
+			scope["id"] = model.Value{Kind: model.StringValue, String: frame.ID}
+		}
+		if frame.Name != "" {
+			scope["name"] = model.Value{Kind: model.StringValue, String: frame.Name}
+		}
+		target = &model.Step{Target: model.Selector{Scope: model.Scope{Frame: scope}}}
+	}
+	raw, err := h.Worker.Call(ctx, method, s.id, target, scale)
 	if err != nil {
 		if ctx.Err() != nil {
 			_ = h.closeSession(s)

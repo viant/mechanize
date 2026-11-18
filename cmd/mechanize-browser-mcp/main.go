@@ -9,8 +9,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,13 +21,21 @@ import (
 )
 
 type config struct {
-	Listen                  string   `json:"listen"`
-	Node                    string   `json:"node"`
-	Worker                  string   `json:"worker"`
-	AllowedOrigins          []string `json:"allowedOrigins"`
-	AllowAllWeb             bool     `json:"allowAllWeb"`
-	AllowMutation           bool     `json:"allowMutation"`
-	OperationTimeoutSeconds int      `json:"operationTimeoutSeconds"`
+	Listen                  string        `json:"listen"`
+	Node                    string        `json:"node"`
+	Worker                  string        `json:"worker"`
+	AllowedOrigins          []string      `json:"allowedOrigins"`
+	AllowAllWeb             bool          `json:"allowAllWeb"`
+	AllowMutation           bool          `json:"allowMutation"`
+	OperationTimeoutSeconds int           `json:"operationTimeoutSeconds"`
+	InspectionOnly          bool          `json:"inspectionOnly"`
+	BearerTokenFile         string        `json:"bearerTokenFile"`
+	NetworkRules            []networkRule `json:"networkRules,omitempty"`
+}
+type networkRule struct {
+	Origin     string            `json:"origin"`
+	Path       string            `json:"path"`
+	Parameters map[string]string `json:"parameters"`
 }
 
 func main() {
@@ -71,10 +81,38 @@ func run() error {
 	if c.OperationTimeoutSeconds < 1 || c.OperationTimeoutSeconds > 3600 {
 		return errors.New("operation timeout must be 1..3600 seconds")
 	}
+	var bearerToken []byte
+	if c.BearerTokenFile != "" {
+		info, err := os.Stat(c.BearerTokenFile)
+		if err != nil {
+			return errors.New("cannot read service token file")
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 4096 {
+			return errors.New("service token file must be private and bounded")
+		}
+		bearerToken, err = os.ReadFile(c.BearerTokenFile)
+		if err != nil {
+			return errors.New("cannot read service token file")
+		}
+		bearerToken = []byte(strings.TrimSpace(string(bearerToken)))
+		if len(bearerToken) < 32 {
+			return errors.New("service token requires at least 32 bytes")
+		}
+	}
+	workerPolicy, err := json.Marshal(struct {
+		AllowedOrigins []string      `json:"allowedOrigins"`
+		AllowAllWeb    bool          `json:"allowAllWeb"`
+		InspectionOnly bool          `json:"inspectionOnly"`
+		NetworkRules   []networkRule `json:"networkRules,omitempty"`
+	}{c.AllowedOrigins, c.AllowAllWeb, c.InspectionOnly, c.NetworkRules})
+	if err != nil {
+		return err
+	}
+	workerEnv := append(os.Environ(), "MECHANIZE_BROWSER_POLICY="+string(workerPolicy))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// Worker lifetime outlasts request cancellation; shutdown closes contexts first.
-	worker, err := containerbrowser.Start(context.Background(), c.Node, c.Worker, os.Environ(), os.Stderr)
+	worker, err := containerbrowser.Start(context.Background(), c.Node, c.Worker, workerEnv, os.Stderr)
 	if err != nil {
 		return err
 	}
@@ -88,6 +126,8 @@ func run() error {
 		return err
 	}
 	defer host.Close()
+	host.InspectionOnly = c.InspectionOnly
+	host.BearerToken = bearerToken
 	mcp.UseStreamableHTTP(true)
 	httpServer := mcp.HTTP(ctx, c.Listen)
 	httpServer.Handler = host.HTTP(httpServer.Handler)
@@ -116,6 +156,32 @@ func decodeConfig(reader io.Reader) (config, error) {
 	}
 	if decoder.Decode(new(any)) != io.EOF {
 		return c, errors.New("trailing configuration")
+	}
+	if c.InspectionOnly {
+		if c.AllowAllWeb || len(c.AllowedOrigins) == 0 {
+			return c, errors.New("inspection mode requires an explicit origin allowlist")
+		}
+		// Navigation has an effect in the shared compiler; the host narrows actions.
+		c.AllowMutation = true
+	}
+	if len(c.NetworkRules) > 20 {
+		return c, errors.New("too many network rules")
+	}
+	for _, rule := range c.NetworkRules {
+		u, err := url.Parse(rule.Origin)
+		if err != nil || u.User != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.Scheme+"://"+u.Host != rule.Origin || !strings.HasPrefix(rule.Path, "/") || strings.ContainsAny(rule.Path, "?#") || rule.Parameters == nil || len(rule.Parameters) > 20 {
+			return c, errors.New("invalid network rule")
+		}
+		for key, mode := range rule.Parameters {
+			if key == "" || len(key) > 64 || (mode != "value" && mode != "presence") {
+				return c, errors.New("invalid network parameter rule")
+			}
+			for _, char := range key {
+				if !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || strings.ContainsRune("_.-", char)) {
+					return c, errors.New("invalid network parameter name")
+				}
+			}
+		}
 	}
 	return c, nil
 }

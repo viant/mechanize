@@ -13,6 +13,7 @@ services:
       MECHANIZE_IDLE_MS: ${MECHANIZE_IDLE_MS:-300000}
       MECHANIZE_MAX_SESSIONS: ${MECHANIZE_MAX_SESSIONS:-32}
       MECHANIZE_STORAGE_STATE: ${MECHANIZE_STORAGE_STATE:-}
+      MECHANIZE_PROXY_SERVER: ${MECHANIZE_PROXY_SERVER:-}
     volumes:
       - ${MECHANIZE_CONFIG:?Set MECHANIZE_CONFIG to private config JSON}:/run/secrets/browser-config.json:ro
       - ${MECHANIZE_SECRETS_DIR:?Set MECHANIZE_SECRETS_DIR to a private runtime directory}:/run/browser-secrets:ro
