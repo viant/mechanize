@@ -36,10 +36,13 @@ func (h *Host) inspect(parent context.Context, s *browserSession, method string,
 	defer cancel()
 	var target *model.Step
 	if frame != nil {
-		if frame.ID == "" && frame.Name == "" || len(frame.ID) > 256 || len(frame.Name) > 256 {
+		if frame.ID == "" && frame.Name == "" && frame.Ref == "" || len(frame.ID) > 256 || len(frame.Name) > 256 || len(frame.Ref) > 256 {
 			return failureResult("invalidFrame", "notDispatched")
 		}
 		scope := map[string]model.Value{}
+		if frame.Ref != "" {
+			scope["ref"] = model.Value{Kind: model.StringValue, String: frame.Ref}
+		}
 		if frame.ID != "" {
 			scope["id"] = model.Value{Kind: model.StringValue, String: frame.ID}
 		}

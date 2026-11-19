@@ -34,7 +34,7 @@ const site=createServer((req,res)=>{
   if(req.url==='/redirect-safe'){res.writeHead(302,{Location:'/redirect'});res.end();return;}
   if(req.url==='/redirect'){res.writeHead(302,{Location:forbidden});res.end();return;}
   res.setHeader('Content-Type','text/html');
-  res.end(req.url==='/empty'?'<h1>Empty page</h1>':`<p>MAIN_ONLY</p><input id="query"><iframe id="store-frame" name="store" src="${storeOrigin}/redirect-frame"></iframe>`);
+  res.end(req.url==='/empty'?'<h1>Empty page</h1>':`<p>MAIN_ONLY</p><input id="query"><iframe src="/empty"></iframe><iframe id="store-frame" name="store" src="${storeOrigin}/redirect-frame"></iframe>`);
 });
 for(const server of [denied,store,site])await new Promise(resolve=>server.listen(0,'0.0.0.0',resolve));
 const origin=`http://${host}:${site.address().port}`;
@@ -121,6 +121,12 @@ try {
   const deadline=Date.now()+5000;
   do {frames=value(await call(a,'mechanize_browser_frames'));if(frames.frames.some(frame=>frame.id==='store-frame'))break;await new Promise(resolve=>setTimeout(resolve,50));}while(Date.now()<deadline);
   assert.ok(frames.frames.some(frame=>frame.id==='store-frame'&&frame.name==='store'&&frame.origin===storeOrigin));
+  const storeRef=frames.frames.find(frame=>frame.id==='store-frame').ref;
+  assert.ok(storeRef);
+  const unnamed = frames.frames.find(frame => !frame.id && !frame.name && frame.origin === origin);
+  assert.ok(unnamed?.ref);
+  assert.equal(value(await call(a,'mechanize_browser_dom',{frame:{ref:unnamed.ref}})).text.trim(),'Empty page');
+  assert.equal(value(await call(a,'mechanize_browser_dom',{frame:{ref:storeRef}})).origin,storeOrigin);
   const read=value(await run(a,`let title = ${tab}.frame(id: "store-frame").getById("frame-title").read("text")`));
   assert.equal(read.values.title,'Store setup');
   const dom=value(await call(a,'mechanize_browser_dom',{frame:{name:'store'}}));
@@ -159,6 +165,8 @@ try {
   value(await run(b,`${tab}.openOrigin(); ${tab}.navigate(${JSON.stringify(origin+'/empty')})`,'user-b/chat-b'));
   assert.equal(value(await call(b,'mechanize_browser_network',{},'user-b/chat-b')).requests.length,0);
   assert.equal(value(await call(a,'mechanize_session_close')).status,'closed');
+  assert.equal((await fetch(url,{method:'DELETE',headers:headers('user-b/chat-b',a)})).status,403);
+  assert.ok((await fetch(url,{method:'DELETE',headers:headers('user-a/chat-a',a)})).ok);
   assert.equal(value(await call(b,'mechanize_session_close',{},'user-b/chat-b')).status,'closed');
   const closeDeadline=Date.now()+3000;
   while(streamClients.size&&Date.now()<closeDeadline)await new Promise(resolve=>setTimeout(resolve,50));

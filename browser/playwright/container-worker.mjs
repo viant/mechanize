@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {chromium} from 'playwright-core';
 import {BrowserSessions} from './sessions.mjs';
 import {executeStep} from './container-executor.mjs';
-import {assertAllowed, selectFrame, restrictNavigation} from './container-policy.mjs';
+import {assertAllowed, selectFrame, restrictNavigation, frameReference} from './container-policy.mjs';
 import {NetworkEvidence} from './network-evidence.mjs';
 
 // Deployment-only path, never a tool argument. No profile content goes to logs.
@@ -53,7 +53,7 @@ async function dispatch(message) {
         const element=await frame.frameElement();
         let id;
         try {id=await element.getAttribute('id');} finally {await element.dispose();}
-        frames.push({id:id||undefined,name:frame.name()||undefined,origin:new URL(frame.url()).origin});
+        frames.push({ref:frameReference(frame),id:id||undefined,name:frame.name()||undefined,origin:new URL(frame.url()).origin});
       }
       assertAllowed(page.url(),policy);
       return {origin,frames:frames.slice(0,100),truncated:frames.length>100,omitted};

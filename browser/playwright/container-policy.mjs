@@ -1,4 +1,11 @@
 import {navigationResponses} from './network-evidence.mjs';
+import {randomUUID} from 'node:crypto';
+
+const frameRefs = new WeakMap();
+export function frameReference(frame) {
+  if (!frameRefs.has(frame)) frameRefs.set(frame, randomUUID());
+  return frameRefs.get(frame);
+}
 
 export function assertAllowed(url, policy = {allowAllWeb: true}) {
   const parsed = new URL(url);
@@ -12,10 +19,11 @@ export async function selectFrame(page, scope, policy) {
   await finishNavigation(page);
   assertAllowed(page.url(), policy);
   if (!scope || !Object.keys(scope).length) return page;
-  if (Object.keys(scope).some(key => !['id', 'name'].includes(key))) throw Error('Unsupported frame selector');
+  if (Object.keys(scope).some(key => !['id', 'name', 'ref'].includes(key))) throw Error('Unsupported frame selector');
   const matches = [];
   for (const frame of page.frames()) {
     if (frame === page.mainFrame()) continue;
+    if (scope.ref !== undefined && frameRefs.get(frame) !== scope.ref) continue;
     if (scope.name !== undefined && frame.name() !== scope.name) continue;
     if (scope.id !== undefined) {
       const element = await frame.frameElement();

@@ -44,7 +44,7 @@ func (h *Host) HTTP(next http.Handler) http.Handler {
 				http.Error(w, "session unavailable", http.StatusNotFound)
 				return
 			}
-			if err := s.authorize(r.Context()); err != nil {
+			if err := s.authorizeRequest(r.Context(), r.Method == http.MethodDelete); err != nil {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					http.Error(w, "request canceled or timed out", http.StatusRequestTimeout)
 					return

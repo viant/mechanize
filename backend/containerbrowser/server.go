@@ -27,6 +27,7 @@ type Source struct {
 }
 type Empty struct{}
 type FrameInput struct {
+	Ref  string `json:"ref,omitempty"`
 	ID   string `json:"id,omitempty"`
 	Name string `json:"name,omitempty"`
 }
@@ -108,7 +109,7 @@ func NewHost(worker *Worker, policy script.Policy, timeout time.Duration) (*Host
 		}); err != nil {
 			return nil, err
 		}
-		if err := protocol.RegisterTool[*DOMInput, *Result](base.Registry, "mechanize_browser_dom", "Read bounded HTML and text from the owned tab or one permitted frame selected by DOM id/name.", func(ctx context.Context, in *DOMInput) (*schema.CallToolResult, *jsonrpc.Error) {
+		if err := protocol.RegisterTool[*DOMInput, *Result](base.Registry, "mechanize_browser_dom", "Read bounded HTML and text from the owned tab or a permitted frame. Pass frame.ref from mechanize_browser_frames to select an unnamed frame, or use frame.id or frame.name.", func(ctx context.Context, in *DOMInput) (*schema.CallToolResult, *jsonrpc.Error) {
 			if in == nil {
 				in = &DOMInput{}
 			}
@@ -287,6 +288,10 @@ func (h *Host) run(parent context.Context, s *browserSession, in *Source) (*sche
 }
 
 func (s *browserSession) authorize(ctx context.Context) error {
+	return s.authorizeRequest(ctx, false)
+}
+
+func (s *browserSession) authorizeRequest(ctx context.Context, allowTerminated bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -296,7 +301,7 @@ func (s *browserSession) authorize(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.terminated {
+	if s.terminated && !allowTerminated {
 		return errors.New("session terminated")
 	}
 	if s.owner == "" || s.owner != owner {
