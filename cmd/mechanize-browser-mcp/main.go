@@ -16,21 +16,24 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/backend/containerbrowser"
 	"github.com/viant/mechanize/script"
+	"github.com/viant/scy/auth/jwt/verifier"
 )
 
 type config struct {
-	Listen                  string        `json:"listen"`
-	Node                    string        `json:"node"`
-	Worker                  string        `json:"worker"`
-	AllowedOrigins          []string      `json:"allowedOrigins"`
-	AllowAllWeb             bool          `json:"allowAllWeb"`
-	AllowMutation           bool          `json:"allowMutation"`
-	OperationTimeoutSeconds int           `json:"operationTimeoutSeconds"`
-	InspectionOnly          bool          `json:"inspectionOnly"`
-	BearerTokenFile         string        `json:"bearerTokenFile"`
-	NetworkRules            []networkRule `json:"networkRules,omitempty"`
+	Listen                  string          `json:"listen"`
+	Node                    string          `json:"node"`
+	Worker                  string          `json:"worker"`
+	AllowedOrigins          []string        `json:"allowedOrigins"`
+	AllowAllWeb             bool            `json:"allowAllWeb"`
+	AllowMutation           bool            `json:"allowMutation"`
+	OperationTimeoutSeconds int             `json:"operationTimeoutSeconds"`
+	InspectionOnly          bool            `json:"inspectionOnly"`
+	Keys                    verifier.Config `json:"keys"`
+	IdentityPolicy          auth.Policy     `json:"identityPolicy"`
+	NetworkRules            []networkRule   `json:"networkRules,omitempty"`
 }
 type networkRule struct {
 	Origin     string            `json:"origin"`
@@ -81,23 +84,11 @@ func run() error {
 	if c.OperationTimeoutSeconds < 1 || c.OperationTimeoutSeconds > 3600 {
 		return errors.New("operation timeout must be 1..3600 seconds")
 	}
-	var bearerToken []byte
-	if c.BearerTokenFile != "" {
-		info, err := os.Stat(c.BearerTokenFile)
-		if err != nil {
-			return errors.New("cannot read service token file")
-		}
-		if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 4096 {
-			return errors.New("service token file must be private and bounded")
-		}
-		bearerToken, err = os.ReadFile(c.BearerTokenFile)
-		if err != nil {
-			return errors.New("cannot read service token file")
-		}
-		bearerToken = []byte(strings.TrimSpace(string(bearerToken)))
-		if len(bearerToken) < 32 {
-			return errors.New("service token requires at least 32 bytes")
-		}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	identityVerifier, err := c.newVerifier(ctx)
+	if err != nil {
+		return fmt.Errorf("configure OAuth access-token verification: %w", err)
 	}
 	workerPolicy, err := json.Marshal(struct {
 		AllowedOrigins []string      `json:"allowedOrigins"`
@@ -109,8 +100,6 @@ func run() error {
 		return err
 	}
 	workerEnv := append(os.Environ(), "MECHANIZE_BROWSER_POLICY="+string(workerPolicy))
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	// Worker lifetime outlasts request cancellation; shutdown closes contexts first.
 	worker, err := containerbrowser.Start(context.Background(), c.Node, c.Worker, workerEnv, os.Stderr)
 	if err != nil {
@@ -127,7 +116,7 @@ func run() error {
 	}
 	defer host.Close()
 	host.InspectionOnly = c.InspectionOnly
-	host.BearerToken = bearerToken
+	host.Verifier = identityVerifier
 	mcp.UseStreamableHTTP(true)
 	httpServer := mcp.HTTP(ctx, c.Listen)
 	httpServer.Handler = host.HTTP(httpServer.Handler)
@@ -145,6 +134,23 @@ func run() error {
 		return fmt.Errorf("browser MCP serve: %w", err)
 	}
 	return nil
+}
+
+func (c config) newVerifier(ctx context.Context) (*auth.Verifier, error) {
+	if len(c.IdentityPolicy.RequiredScopes) == 0 {
+		return nil, errors.New("OAuth requiredScopes are required")
+	}
+	for _, scope := range c.IdentityPolicy.RequiredScopes {
+		if strings.TrimSpace(scope) == "" {
+			return nil, errors.New("OAuth required scopes must be nonempty")
+		}
+	}
+	// Browser MCP trusts the configured IdP regardless of the OAuth client.
+	// The native host retains its explicit audience and client policies.
+	policy := c.IdentityPolicy
+	policy.Audience = ""
+	policy.Clients = nil
+	return auth.NewVerifier(ctx, &c.Keys, policy)
 }
 
 func decodeConfig(reader io.Reader) (config, error) {

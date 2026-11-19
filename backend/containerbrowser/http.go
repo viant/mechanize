@@ -2,37 +2,35 @@ package containerbrowser
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
+	"errors"
 	"net/http"
-	"strings"
+
+	"github.com/viant/mechanize/auth"
 )
 
 type sessionCaptureKey struct{}
 type sessionCapture struct{ session *browserSession }
-type ownerKey struct{}
 
-func ownerFromContext(ctx context.Context) string {
-	owner, _ := ctx.Value(ownerKey{}).(string)
-	return owner
+func ownerFromContext(ctx context.Context) (string, error) {
+	p, err := auth.FromContext(ctx)
+	if err != nil {
+		return "", auth.ErrUnauthorized
+	}
+	return p.Namespace, nil
 }
 
 // HTTP indexes transport sessions and rejects unknown session references.
 func (h *Host) HTTP(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if len(h.BearerToken) > 0 {
-			provided := sha256.Sum256([]byte(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")))
-			expected := sha256.Sum256(h.BearerToken)
-			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || subtle.ConstantTimeCompare(provided[:], expected[:]) != 1 {
-				http.Error(w, "service authentication required", http.StatusUnauthorized)
-				return
-			}
-			owner := r.Header.Get("X-Mechanize-Owner")
-			if strings.TrimSpace(owner) == "" || len(owner) > 256 {
-				http.Error(w, "opaque session owner required", http.StatusBadRequest)
-				return
-			}
-			r = r.WithContext(context.WithValue(r.Context(), ownerKey{}, owner))
+	if h.Verifier == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "OAuth verifier unavailable", http.StatusServiceUnavailable)
+		})
+	}
+	return h.Verifier.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := ownerFromContext(r.Context()); err != nil {
+			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+			http.Error(w, "verified identity is required", http.StatusUnauthorized)
+			return
 		}
 		if version := r.Header.Get("MCP-Protocol-Version"); version != "" && version != "2025-11-25" && version != "2025-06-18" && version != "2025-03-26" {
 			http.Error(w, "stateful MCP protocol version required", http.StatusBadRequest)
@@ -47,6 +45,10 @@ func (h *Host) HTTP(next http.Handler) http.Handler {
 				return
 			}
 			if err := s.authorize(r.Context()); err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					http.Error(w, "request canceled or timed out", http.StatusRequestTimeout)
+					return
+				}
 				http.Error(w, "session owner mismatch", http.StatusForbidden)
 				return
 			}
@@ -58,7 +60,7 @@ func (h *Host) HTTP(next http.Handler) http.Handler {
 		// reach the caller, so the next request cannot race index registration.
 		writer := &sessionResponse{ResponseWriter: w, host: h, capture: capture}
 		next.ServeHTTP(writer, r.WithContext(context.WithValue(r.Context(), sessionCaptureKey{}, capture)))
-	})
+	}))
 }
 
 type sessionResponse struct {

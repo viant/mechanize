@@ -8,16 +8,16 @@ Choose the runtime that fits your task:
 
 | Runtime | Use it for | Requirements |
 | --- | --- | --- |
-| [Browser-only MCP server in Docker](#browser-only-mcp-server-in-docker) | Control Chromium, extract DOM, and capture screenshots | Docker; no OAuth, native app, or Chrome extension |
+| [Browser-only MCP server in Docker](#browser-only-mcp-server-in-docker) | Control Chromium, extract DOM, and capture screenshots | Docker and provider-signed bearer tokens; no native app or Chrome extension |
 | [Native desktop gateway](#native-desktop-quick-start) | Automate supported macOS apps and an enrolled Chrome browser | macOS helper, private configuration, authentication and permissions |
 
 ## Browser-only MCP server in Docker
 
-Run a standalone Chromium MCP server with **no authentication setup**. Each MCP
+Run a standalone Chromium MCP server with **provider-signed token authentication**. Each MCP
 session gets an isolated tab that is reused between requests and closed on
 session termination or after five idle minutes.
 
-From the repository root, start an anonymous browser:
+From the repository root, prepare a browser with no website login state:
 
 ```sh
 export MECHANIZE_RUNTIME_DIR="$HOME/.config/mechanize-browser"
@@ -29,17 +29,24 @@ export MECHANIZE_CONFIG="$MECHANIZE_RUNTIME_DIR/config.json"
 export MECHANIZE_SECRETS_DIR="$MECHANIZE_RUNTIME_DIR/secrets"
 export MECHANIZE_UID="$(id -u)" MECHANIZE_GID="$(id -g)"
 unset MECHANIZE_STORAGE_STATE
+# Set keys and identityPolicy in "$MECHANIZE_CONFIG" for your OAuth provider first.
 docker compose -f docker/browser-mcp/compose.yaml up -d --build
 ```
 
+Before starting the container, configure `keys` and `identityPolicy` in the private
+config with your OAuth issuer, accepted algorithms and required
+scopes. The example uses synthetic placeholders.
 Connect your MCP client to **`http://127.0.0.1:8080/mcp`** using stateful
-Streamable HTTP, protocol `2025-11-25`. No bearer token or API key is required.
+Streamable HTTP, protocol `2025-11-25`. Every request requires
+`Authorization: Bearer <provider-issued ID token>`. Anonymous access and shared service
+tokens are unsupported; no custom owner header is required. Sessions bind to the
+verified user, including across token refresh.
 All websites are allowed by default (`allowAllWeb: true`). To restrict browsing,
 set `allowAllWeb: false` and list website origins in `allowedOrigins`; these are
 website addresses, not the MCP endpoint. Preserve a customized config when
 rerunning setup. Compose publishes the service to host loopback.
 
-- **Anonymous mode:** leave `MECHANIZE_STORAGE_STATE` unset.
+- **No website login state:** leave `MECHANIZE_STORAGE_STATE` unset. MCP still requires OAuth.
 - **Profile mode:** provide a private Playwright storage-state JSON export and
   set `MECHANIZE_STORAGE_STATE=/run/browser-secrets/storage-state.json`.
   See the [profile setup instructions](docker/browser-mcp/README.md#quick-start-profile-browser).

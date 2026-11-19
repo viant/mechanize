@@ -17,6 +17,7 @@ import (
 	"github.com/viant/mcp-protocol/schema"
 	protocol "github.com/viant/mcp-protocol/server"
 	server "github.com/viant/mcp/server"
+	"github.com/viant/mechanize/auth"
 	"github.com/viant/mechanize/model"
 	"github.com/viant/mechanize/script"
 )
@@ -61,7 +62,7 @@ type Host struct {
 	sessions       map[transport.Notifier]*browserSession
 	byTransport    map[string]*browserSession
 	InspectionOnly bool
-	BearerToken    []byte
+	Verifier       *auth.Verifier
 }
 
 func BrowserCapabilities() map[string]bool {
@@ -83,7 +84,11 @@ func NewHost(worker *Worker, policy script.Policy, timeout time.Duration) (*Host
 		if _, err := rand.Read(entropy[:]); err != nil {
 			return nil, err
 		}
-		s := &browserSession{id: hex.EncodeToString(entropy[:]), lane: make(chan struct{}, 1), owner: ownerFromContext(ctx)}
+		owner, err := ownerFromContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		s := &browserSession{id: hex.EncodeToString(entropy[:]), lane: make(chan struct{}, 1), owner: owner}
 		if err := s.authorize(ctx); err != nil {
 			return nil, err
 		}
@@ -282,12 +287,19 @@ func (h *Host) run(parent context.Context, s *browserSession, in *Source) (*sche
 }
 
 func (s *browserSession) authorize(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	owner, err := ownerFromContext(ctx)
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.terminated {
 		return errors.New("session terminated")
 	}
-	if s.owner != "" && s.owner != ownerFromContext(ctx) {
+	if s.owner == "" || s.owner != owner {
 		return errors.New("session owner mismatch")
 	}
 	return ctx.Err()

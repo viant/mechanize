@@ -6,9 +6,11 @@ import {randomBytes} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {createServer} from 'node:http';
 import assert from 'node:assert/strict';
+import {browserOAuthFixture} from './browser-oauth-fixture.mjs';
 
 const dir = await mkdtemp(join(tmpdir(), 'mechanize-browser-smoke-'));
 const name = `mechanize-browser-smoke-${randomBytes(5).toString('hex')}`;
+const oauth = await browserOAuthFixture(dir);
 const livePages = new Set();
 const fixture = createServer((req,res) => {
   if(req.url==='/live'){
@@ -26,7 +28,7 @@ const docker = (...args) => execFileSync('docker',args,{encoding:'utf8',stdio:['
 try {
   await writeFile(join(dir,'state.json'),JSON.stringify({cookies:[],origins:[{origin,localStorage:[{name:'seed',value:'deployment-fixture'}]}]}),{mode:0o600});
   await writeFile(join(dir,'config.json'),JSON.stringify({listen:'0.0.0.0:8080',worker:'/app/browser/container-worker.mjs',
-    allowAllWeb:false,allowedOrigins:[origin],allowMutation:true}),{mode:0o600});
+    allowAllWeb:false,allowedOrigins:[origin],allowMutation:true,...oauth.config}),{mode:0o600});
   docker('run','-d','--name',name,'--user',`${process.getuid()}:${process.getgid()}`,'--shm-size','1gb','-p','127.0.0.1::8080',
     '-v',`${resolve(dir)}:/run/browser-secrets:ro`,'-e','MECHANIZE_IDLE_MS=5000',
     ...(withProfile?['-e','MECHANIZE_STORAGE_STATE=/run/browser-secrets/state.json']:[]),
@@ -36,7 +38,7 @@ try {
   const url = `http://127.0.0.1:${port}/mcp`;
   let serial = 0;
   async function rpc(method,params,session,subject='fixture-user') {
-    const response = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream','MCP-Protocol-Version':'2025-11-25',...(session?{'Mcp-Session-Id':session}:{})},body:JSON.stringify({jsonrpc:'2.0',id:++serial,method,params})});
+    const response = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream','MCP-Protocol-Version':'2025-11-25',...oauth.authorization(subject),...(session?{'Mcp-Session-Id':session}:{})},body:JSON.stringify({jsonrpc:'2.0',id:++serial,method,params})});
     const text = await response.text();
     assert.equal(response.ok,true,`HTTP ${response.status}: ${text}`);
     const json = JSON.parse(text.startsWith('event:')||text.startsWith('data:')?text.split('\n').find(line=>line.startsWith('data:')).slice(5):text);
@@ -95,7 +97,7 @@ try {
   reply=await run(a,`${tab}.getById("query").fill("temporary"); ${tab}.getById("query").fill(""); expect(${tab}.getById("query")).toHaveValue(""); let cleared = ${tab}.getById("query").read("value")`);
   assert.ok(!reply.error,JSON.stringify(reply));assert.equal(reply.value.values.cleared,'');
   await pageCount(1);
-  const closed=await fetch(url,{method:'DELETE',headers:{'Mcp-Session-Id':a,'MCP-Protocol-Version':'2025-11-25'}});
+  const closed=await fetch(url,{method:'DELETE',headers:{...oauth.authorization(),'Mcp-Session-Id':a,'MCP-Protocol-Version':'2025-11-25'}});
   assert.ok(closed.ok,`termination HTTP ${closed.status}`);
   await pageCount(0);
   const d=(await initialize()).session;
@@ -103,13 +105,13 @@ try {
   await pageCount(1);
   const pending=run(d,`let missing = ${tab}.getById("missing").read("text", timeout: 20s)`);
   await new Promise(resolve=>setTimeout(resolve,200));
-  const deleted=await fetch(url,{method:'DELETE',headers:{'Mcp-Session-Id':d,'MCP-Protocol-Version':'2025-11-25'}});
+  const deleted=await fetch(url,{method:'DELETE',headers:{...oauth.authorization(),'Mcp-Session-Id':d,'MCP-Protocol-Version':'2025-11-25'}});
   assert.ok(deleted.ok);await pageCount(0);
   assert.equal((await pending).error,true,'active operation must fail on termination');
   const e=(await initialize()).session;
   await run(e,`${tab}.openOrigin()`);await pageCount(1);
   const controller=new AbortController();
-  const aborted=fetch(url,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream','Mcp-Session-Id':e,'MCP-Protocol-Version':'2025-11-25'},body:JSON.stringify({jsonrpc:'2.0',id:++serial,method:'tools/call',params:{name:'mechanize_script_run',arguments:{source:`let missing = ${tab}.getById("missing").read("text", timeout: 20s)`}}})});
+  const aborted=fetch(url,{method:'POST',signal:controller.signal,headers:{...oauth.authorization(),'Content-Type':'application/json',Accept:'application/json, text/event-stream','Mcp-Session-Id':e,'MCP-Protocol-Version':'2025-11-25'},body:JSON.stringify({jsonrpc:'2.0',id:++serial,method:'tools/call',params:{name:'mechanize_script_run',arguments:{source:`let missing = ${tab}.getById("missing").read("text", timeout: 20s)`}}})});
   const abortCheck=assert.rejects(aborted,error=>error.name==='AbortError');
   await new Promise(resolve=>setTimeout(resolve,200));controller.abort();
   await abortCheck;await pageCount(0);

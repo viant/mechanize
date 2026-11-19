@@ -7,7 +7,7 @@ Requests reuse that tab. Five idle minutes close the context; another request in
 the same live MCP session creates a fresh context. Explicit session termination
 closes its context. Login state is not written back automatically.
 
-## Quick start: anonymous browser
+## Quick start: OAuth-authenticated browser
 
 Requirements: Docker with Compose. From the repository root, prepare private
 runtime configuration outside Git and start with no website login state:
@@ -23,6 +23,7 @@ export MECHANIZE_SECRETS_DIR="$MECHANIZE_RUNTIME_DIR/secrets"
 export MECHANIZE_UID="$(id -u)"
 export MECHANIZE_GID="$(id -g)"
 unset MECHANIZE_STORAGE_STATE
+# Set keys and identityPolicy in "$MECHANIZE_CONFIG" for your OAuth provider first.
 docker compose -f docker/browser-mcp/compose.yaml up -d --build
 docker compose -f docker/browser-mcp/compose.yaml ps
 ```
@@ -30,7 +31,10 @@ docker compose -f docker/browser-mcp/compose.yaml ps
 The default allows all websites (`allowAllWeb: true`). To restrict websites,
 configure the allowlist described below and restart the service. If you rerun
 setup, avoid copying the sample over your customized configuration.
-Connect your MCP client to `http://127.0.0.1:8080/mcp`; no API key is required.
+Before starting, set `keys` and `identityPolicy` in the private config to your
+OAuth provider's verification keys/JWKS URL, issuer, algorithms and
+required scopes. The sample values are synthetic.
+Connect your MCP client to `http://127.0.0.1:8080/mcp` with a provider-issued ID token.
 
 Create the private configuration outside Git with mode `0600`. The default image
 runs as UID/GID `1000:1000`; mounted files and directories must be readable by
@@ -47,14 +51,23 @@ Example configuration (all identities and origins are synthetic):
   "worker": "/app/browser/container-worker.mjs",
   "allowAllWeb": true,
   "allowMutation": true,
+  "keys": {"CertURL": "https://issuer.example/.well-known/jwks.json"},
+  "identityPolicy": {
+    "issuer": "https://issuer.example",
+    "algorithms": ["RS256"],
+    "requiredScopes": ["browser:use"]
+  },
   "operationTimeoutSeconds": 60
 }
 ```
 
-This standalone server requires no OAuth configuration or bearer token.
-Compose publishes to host loopback. Anyone who can reach the endpoint can create
-sessions, so retain that binding or use a deployment network boundary.
-MCP session IDs select isolated tabs; they are not user identities.
+The server requires signed bearer tokens on every MCP request, including
+initialization, streaming and termination. It validates signature, issuer,
+subject, expiry and scopes against the configured policy.
+Missing OAuth configuration fails startup. Shared service tokens and anonymous
+access are unsupported. Compose publishes to host loopback; retain that binding
+or use a deployment network boundary. MCP session IDs select isolated tabs and
+remain bound to the verified user.
 
 `allowAllWeb` defaults to `true`, including when omitted. `allowedOrigins` means
 websites Chromium may control, not the MCP server URL. To enforce an allowlist,
@@ -79,7 +92,7 @@ The supported profile format is Playwright storage-state JSON, supplied before
 startup. It contains cookies and origin storage; it is sensitive login material.
 Each session receives an independent copy of that seed state.
 
-Complete the anonymous setup first. Place an existing Playwright storage-state
+Complete the OAuth-authenticated setup first. Place an existing Playwright storage-state
 export at `$MECHANIZE_SECRETS_DIR/storage-state.json` outside Git. This is a
 JSON export, not a ZIP, encrypted archive, or Chromium `Default` directory.
 
@@ -90,7 +103,7 @@ docker compose -f docker/browser-mcp/compose.yaml up -d --force-recreate
 ```
 
 The environment value is the path **inside the container**. The host directory
-is mounted read-only there. To switch back to anonymous mode:
+is mounted read-only there. To remove website login state (MCP still requires OAuth):
 
 ```sh
 unset MECHANIZE_STORAGE_STATE
@@ -125,8 +138,7 @@ isolation does not make a shared account into separate website identities.
 
 Connect to `http://127.0.0.1:8080/mcp` using stateful Streamable HTTP and protocol
 `2025-11-25`. Retain the returned `Mcp-Session-Id` for subsequent requests.
-No Authorization header is required in the default local mode. When
-`bearerTokenFile` is configured, use the hosted authentication contract below.
+Every request requires `Authorization: Bearer <provider-issued ID token>`.
 Use HTTP DELETE to terminate the session.
 Stateless protocol modes do not provide this server's reuse contract.
 
@@ -170,7 +182,7 @@ unknown; inspect the site before deciding whether to repeat an action.
 ## Inspection-only mode and frames
 
 Use [config.inspection.example.json](config.inspection.example.json) as a starting
-point, with your own approved origins and private token file. `inspectionOnly`
+point, with your approved origins and provider settings. `inspectionOnly`
 requires `allowAllWeb:false` and a nonempty explicit origin list. It permits
 navigation, activation, reads and assertions. Clicks, input, keyboard actions
 and selections are rejected for the entire script before any step executes.
@@ -227,15 +239,19 @@ application-level receipt, matching or a completed business transaction.
 
 ## Hosted authentication and network boundary
 
-The legacy anonymous loopback service remains supported. For a hosted service,
-set `bearerTokenFile` to a private 0600 file containing at least 32 random bytes.
-Every MCP HTTP request must then include `Authorization: Bearer ...` and
-`X-Mechanize-Owner`. The trusted application backend supplies an opaque owner
-derived from the authenticated user and conversation; do not accept an owner
-chosen by an untrusted browser client. Owner binding applies to initialize,
-tool calls, streaming and transport termination. Another owner cannot reuse a
-known MCP session ID. The service token stays on the backend and is not forwarded
-to websites or returned in tools. No OAuth or token storage system is added.
+Clients present a signed token from the configured provider. Configure `keys` and
+`identityPolicy` using the existing Scy verifier contract. For rotating issuer
+keys, set `keys.CertURL` to the provider's trusted JWKS endpoint; key caching stays
+with Scy. Set an explicit issuer, algorithm list and required scopes. Browser MCP accepts tokens issued to any client when their signature, issuer, subject, expiry and scope satisfy the policy.
+
+Every MCP HTTP request includes `Authorization: Bearer <provider-issued ID token>`.
+`X-Mechanize-Owner` is not used. User identity is derived from the
+verified token and bind initialize, tool calls, streaming and transport
+termination to the same identity. A different user cannot reuse a known
+MCP session ID; a refreshed token for the same identity can. Each conversation
+uses its own MCP session. Tokens are never forwarded to controlled websites.
+The removed `bearerTokenFile` setting is rejected; migrate configuration before
+upgrading. Website storage-state imports remain independent of MCP authentication.
 
 Retain loopback/private-network binding and terminate TLS at the approved
 gateway. `MECHANIZE_PROXY_SERVER` configures Chromium's outbound proxy, including
@@ -244,7 +260,7 @@ private, loopback, link-local and metadata destinations, including DNS rebinding
 and page subresources. A permitted document origin alone does not enforce that
 network boundary. Do not expose the service publicly or claim production egress
 qualification from local tests. The client must retain a separate MCP transport
-session for each authenticated user/conversation owner.
+session for each authenticated user/conversation.
 
 ## Settings and verification
 

@@ -3,6 +3,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY model ./model
+COPY auth ./auth
 COPY script ./script
 COPY backend/containerbrowser ./backend/containerbrowser
 COPY cmd/mechanize-browser-mcp ./cmd/mechanize-browser-mcp

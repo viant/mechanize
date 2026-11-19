@@ -4,5 +4,11 @@
   "worker": "/app/browser/container-worker.mjs",
   "allowAllWeb": true,
   "allowMutation": true,
+  "keys": {"CertURL": "https://issuer.example/.well-known/jwks.json"},
+  "identityPolicy": {
+    "issuer": "https://issuer.example",
+    "algorithms": ["RS256"],
+    "requiredScopes": ["browser:use"]
+  },
   "operationTimeoutSeconds": 60
 }

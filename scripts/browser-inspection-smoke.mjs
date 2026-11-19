@@ -7,10 +7,11 @@ import {execFileSync,spawnSync} from 'node:child_process';
 import {createServer,request as httpRequest} from 'node:http';
 import {connect} from 'node:net';
 import assert from 'node:assert/strict';
+import {browserOAuthFixture} from './browser-oauth-fixture.mjs';
 
 const directory=await mkdtemp(join(tmpdir(),'mechanize-inspection-'));
 const name=`mechanize-inspection-${randomBytes(5).toString('hex')}`;
-const token=randomBytes(32).toString('hex');
+const oauth=await browserOAuthFixture(directory);
 const host=process.env.MECHANIZE_FIXTURE_HOST||'host.docker.internal';
 const image=process.env.MECHANIZE_IMAGE||'mechanize-browser-mcp:local';
 const docker=(...args)=>execFileSync('docker',args,{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
@@ -71,9 +72,8 @@ proxy.on('connect',(req,client,head)=>{
 });
 await new Promise(resolve=>proxy.listen(0,'0.0.0.0',resolve));
 try {
-  await writeFile(join(directory,'token'),token,{mode:0o600});
   await writeFile(join(directory,'config.json'),JSON.stringify({listen:'0.0.0.0:8080',worker:'/app/browser/container-worker.mjs',
-    allowAllWeb:false,allowedOrigins:[origin,storeOrigin],inspectionOnly:true,bearerTokenFile:'/run/browser-secrets/token',
+    allowAllWeb:false,allowedOrigins:[origin,storeOrigin],inspectionOnly:true,...oauth.config,
     networkRules:[{origin:storeOrigin,path:'/collect',parameters:{pixel:'value',amount:'value',currency:'value',order:'presence'}},
       {origin,path:'/redirect-ok',parameters:{}}]}),{mode:0o600});
   docker('run','-d','--name',name,'--user',`${process.getuid()}:${process.getgid()}`,'--shm-size','1gb','-p','127.0.0.1::8080',
@@ -93,7 +93,7 @@ try {
   for(let i=0;i<80;i++){try{await fetch(url);break;}catch{await new Promise(resolve=>setTimeout(resolve,100));}}
   assert.equal((await fetch(url)).status,401,'anonymous access must be denied');
   const headers=(owner,session)=>({'Content-Type':'application/json',Accept:'application/json, text/event-stream',
-    'MCP-Protocol-Version':'2025-11-25',Authorization:`Bearer ${token}`,'X-Mechanize-Owner':owner,...(session?{'Mcp-Session-Id':session}:{})});
+    'MCP-Protocol-Version':'2025-11-25',...oauth.authorization(owner),...(session?{'Mcp-Session-Id':session}:{})});
   async function rpc(method,params,session,owner='user-a/chat-a') {
     const response=await fetch(url,{method:'POST',headers:headers(owner,session),body:JSON.stringify({jsonrpc:'2.0',id:++serial,method,params})});
     assert.ok(response.ok,`MCP HTTP ${response.status}`);
@@ -163,7 +163,7 @@ try {
   const closeDeadline=Date.now()+3000;
   while(streamClients.size&&Date.now()<closeDeadline)await new Promise(resolve=>setTimeout(resolve,50));
   assert.equal(streamClients.size,0,'session cleanup must close long-lived page connections');
-  console.log(JSON.stringify({status:'passed',checks:['service authentication','opaque owner/conversation binding','input rejection before navigation',
+  console.log(JSON.stringify({status:'passed',checks:['OAuth access-token authentication','verified identity session binding','input rejection before navigation',
     'cross-origin frame discovery','canonical frame DSL read','frame DOM read','sanitized GET and POST request fields','response status',
     'allowed frame and cross-origin redirect chains preserve URL/cookies','real redirect response status is preserved','unapproved origin and redirect blocked before contact',
     'configured proxy covers navigation inspection and subresources','long-lived stream support and cleanup','cross-owner POST/GET/DELETE rejection','request evidence isolation','explicit session cleanup'],

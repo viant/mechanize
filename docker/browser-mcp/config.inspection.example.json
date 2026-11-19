@@ -5,7 +5,12 @@
   "allowAllWeb": false,
   "allowedOrigins": ["https://shop.example", "https://store.example"],
   "inspectionOnly": true,
-  "bearerTokenFile": "/run/browser-secrets/service-token",
+  "keys": {"CertURL": "https://issuer.example/.well-known/jwks.json"},
+  "identityPolicy": {
+    "issuer": "https://issuer.example",
+    "algorithms": ["RS256"],
+    "requiredScopes": ["browser:use"]
+  },
   "operationTimeoutSeconds": 60,
   "networkRules": [
     {

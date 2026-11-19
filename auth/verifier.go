@@ -16,19 +16,22 @@ type Policy struct {
 	// Clients maps signed client_id claims to operator-enrolled display names.
 	Clients        map[string]string `json:"clients,omitempty"`
 	Issuer         string            `json:"issuer"`
-	Audience       string            `json:"audience"`
+	Audience       string            `json:"audience,omitempty"` // The native host requires this; browser MCP does not.
 	Algorithms     []string          `json:"algorithms"`
 	RequiredScopes []string          `json:"requiredScopes"`
 	TenantClaim    string            `json:"tenantClaim,omitempty"`
 }
 type Verifier struct {
-	scy    *verifier.Service
-	policy Policy
+	scy        *verifier.Service
+	policy     Policy
+	remoteKeys bool
 }
 
+var ErrVerificationUnavailable = errors.New("identity verification dependency unavailable")
+
 func NewVerifier(ctx context.Context, cfg *verifier.Config, policy Policy) (*Verifier, error) {
-	if cfg == nil || strings.TrimSpace(policy.Issuer) == "" || strings.TrimSpace(policy.Audience) == "" || len(policy.Algorithms) == 0 {
-		return nil, errors.New("Scy keys and explicit issuer, audience and algorithms are required")
+	if cfg == nil || strings.TrimSpace(policy.Issuer) == "" || len(policy.Algorithms) == 0 {
+		return nil, errors.New("Scy keys and explicit issuer and algorithms are required")
 	}
 	for _, a := range policy.Algorithms {
 		if a == "" || a == "none" {
@@ -49,14 +52,28 @@ func NewVerifier(ctx context.Context, cfg *verifier.Config, policy Policy) (*Ver
 	policy.Clients = clients
 	policy.Algorithms = append([]string(nil), policy.Algorithms...)
 	policy.RequiredScopes = append([]string(nil), policy.RequiredScopes...)
-	return &Verifier{scy: service, policy: policy}, nil
+	return &Verifier{scy: service, policy: policy, remoteKeys: cfg.CertURL != ""}, nil
 }
 func (v *Verifier) Verify(ctx context.Context, raw string) (Principal, error) {
+	if err := ctx.Err(); err != nil {
+		return Principal{}, err
+	}
 	if raw == "" || len(raw) > 32768 {
 		return Principal{}, ErrUnauthorized
 	}
 	token, err := v.scy.Validate(ctx, raw)
-	if err != nil || token == nil || !token.Valid {
+	if err != nil {
+		if ctx.Err() != nil {
+			return Principal{}, errors.Join(ctx.Err(), err)
+		}
+		// Scy returns JWKS retrieval errors before JWT parsing. Preserve dependency
+		// failures rather than telling clients their valid credential was denied.
+		if v.remoteKeys && !errors.Is(err, jwt.ErrTokenMalformed) && !errors.Is(err, jwt.ErrTokenUnverifiable) && !errors.Is(err, jwt.ErrTokenSignatureInvalid) && !errors.Is(err, jwt.ErrTokenInvalidClaims) {
+			return Principal{}, errors.Join(ErrVerificationUnavailable, err)
+		}
+		return Principal{}, errors.Join(ErrUnauthorized, err)
+	}
+	if token == nil || !token.Valid {
 		return Principal{}, ErrUnauthorized
 	}
 	allowed := false
@@ -77,18 +94,20 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (Principal, error) {
 	if err != nil || issuer != v.policy.Issuer {
 		return Principal{}, ErrUnauthorized
 	}
-	aud, err := claims.GetAudience()
-	if err != nil {
-		return Principal{}, ErrUnauthorized
-	}
-	matches := false
-	for _, a := range aud {
-		if a == v.policy.Audience {
-			matches = true
+	if v.policy.Audience != "" {
+		aud, err := claims.GetAudience()
+		if err != nil {
+			return Principal{}, ErrUnauthorized
 		}
-	}
-	if !matches {
-		return Principal{}, ErrUnauthorized
+		matches := false
+		for _, a := range aud {
+			if a == v.policy.Audience {
+				matches = true
+			}
+		}
+		if !matches {
+			return Principal{}, ErrUnauthorized
+		}
 	}
 	expiry, err := claims.GetExpirationTime()
 	if err != nil || expiry == nil || !time.Now().Before(expiry.Time) {
@@ -153,6 +172,14 @@ func (v *Verifier) Middleware(next http.Handler) http.Handler {
 		}
 		p, err := v.Verify(r.Context(), parts[1])
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				http.Error(w, "identity verification canceled or timed out", http.StatusRequestTimeout)
+				return
+			}
+			if errors.Is(err, ErrVerificationUnavailable) {
+				http.Error(w, "identity verification temporarily unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			w.Header().Set("WWW-Authenticate", "Bearer error=\"invalid_token\"")
 			http.Error(w, "invalid credential", http.StatusUnauthorized)
 			return
