@@ -23,24 +23,53 @@ From the repository root, prepare a browser with no website login state:
 export MECHANIZE_RUNTIME_DIR="$HOME/.config/mechanize-browser"
 mkdir -p "$MECHANIZE_RUNTIME_DIR/secrets"
 chmod 700 "$MECHANIZE_RUNTIME_DIR" "$MECHANIZE_RUNTIME_DIR/secrets"
-cp docker/browser-mcp/config.example.json "$MECHANIZE_RUNTIME_DIR/config.json"
+test -e "$MECHANIZE_RUNTIME_DIR/config.json" || cp docker/browser-mcp/config.example.json "$MECHANIZE_RUNTIME_DIR/config.json"
 chmod 600 "$MECHANIZE_RUNTIME_DIR/config.json"
 export MECHANIZE_CONFIG="$MECHANIZE_RUNTIME_DIR/config.json"
 export MECHANIZE_SECRETS_DIR="$MECHANIZE_RUNTIME_DIR/secrets"
 export MECHANIZE_UID="$(id -u)" MECHANIZE_GID="$(id -g)"
 unset MECHANIZE_STORAGE_STATE
-# Set keys and identityPolicy in "$MECHANIZE_CONFIG" for your OAuth provider first.
+```
+
+In `$MECHANIZE_CONFIG`, set the following two fields alongside the existing browser
+settings. Copy the exact `issuer` and `jwks_uri` values from your provider's
+OpenID Connect discovery document. Choose a signing algorithm your provider uses
+and scopes it actually includes in the ID token's signed `scope` claim.
+
+```json
+{
+  "keys": {"CertURL": "https://issuer.example/.well-known/jwks.json"},
+  "identityPolicy": {
+    "issuer": "https://issuer.example",
+    "algorithms": ["RS256"],
+    "requiredScopes": ["openid"]
+  }
+}
+```
+
+Start the service with the configured provider.
+
+```sh
 docker compose -f docker/browser-mcp/compose.yaml up -d --build
 ```
 
-Before starting the container, configure `keys` and `identityPolicy` in the private
-config with your OAuth issuer, accepted algorithms and required
-scopes. The example uses synthetic placeholders.
+For a provider supporting Scy's out-of-band flow, obtain an ID token using PKCE.
+Supply the paths to your encrypted OAuth client and sign-in credentials.
+
+```sh
+MECHANIZE_ID_TOKEN=$(scy authorize -a=OOB -p \
+  -c="$OAUTH_CLIENT_CONFIG" -e="$SIGN_IN_CREDENTIALS" \
+  -k=blowfish://default -s=openid --tokenType=id)
+```
+
 Connect your MCP client to **`http://127.0.0.1:8080/mcp`** using stateful
-Streamable HTTP, protocol `2025-11-25`. Every request requires
-`Authorization: Bearer <provider-issued ID token>`. Anonymous access and shared service
-tokens are unsupported; no custom owner header is required. Sessions bind to the
-verified user, including across token refresh.
+Streamable HTTP, protocol `2025-11-25`. Send the value of `MECHANIZE_ID_TOKEN`
+as `Authorization: Bearer <ID token>` on every request. After `initialize`, reuse
+the returned `Mcp-Session-Id` for tool discovery and calls. Omit `X-Mechanize-Owner`.
+The server verifies the signature, issuer, subject, expiry and required scopes.
+It accepts tokens issued to any client of that provider without checking `aud`
+or `client_id`. Sessions bind to the verified user across token refresh.
+
 All websites are allowed by default (`allowAllWeb: true`). To restrict browsing,
 set `allowAllWeb: false` and list website origins in `allowedOrigins`; these are
 website addresses, not the MCP endpoint. Preserve a customized config when
